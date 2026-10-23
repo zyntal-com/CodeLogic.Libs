@@ -137,6 +137,59 @@ public sealed class InsertIgnoreAndAggregateNullablesTests
         var res = await repo.InsertIgnoreAsync(evtTrunc);
         Assert.False(res.IsSuccess, "Data truncation should not be silently swallowed by InsertIgnoreAsync");
         Assert.Equal("mysql.insert_failed", res.Error?.Code);
+
+        // INSERT IGNORE writes the truncated row before the warning is seen; the call must
+        // roll it back so a failure Result means nothing was written.
+        Assert.Equal(0, (await Mysql.Query<EventIgnoreRow>().CountAsync()).Value);
+    }
+
+    [DbFact]
+    public async Task InsertManyIgnoreAsync_Truncation_Rolls_Back_The_Whole_Call()
+    {
+        await _fx.Exec("DROP TABLE IF EXISTS it_event_ignore");
+        Assert.True((await Mysql.SyncTableAsync<EventIgnoreRow>(createBackup: false)).IsSuccess);
+
+        var repo = Mysql.GetRepository<EventIgnoreRow>();
+        var batch = new[]
+        {
+            new EventIgnoreRow { ClientEventId = "ok-1", Payload = "a" },
+            new EventIgnoreRow { ClientEventId = "ok-2", Payload = "b" },
+            new EventIgnoreRow { ClientEventId = new string('y', 100), Payload = "too long key" }
+        };
+
+        var res = await repo.InsertManyIgnoreAsync(batch);
+        Assert.False(res.IsSuccess);
+        Assert.Equal("mysql.bulk_insert_failed", res.Error?.Code);
+        Assert.Equal(0, (await Mysql.Query<EventIgnoreRow>().CountAsync()).Value);
+    }
+
+    [DbFact]
+    public async Task InsertIgnore_Inside_Transaction_Rolls_Back_Only_Its_Own_Write()
+    {
+        await _fx.Exec("DROP TABLE IF EXISTS it_event_ignore");
+        Assert.True((await Mysql.SyncTableAsync<EventIgnoreRow>(createBackup: false)).IsSuccess);
+
+        await using (var tx = await Mysql.BeginTransactionAsync())
+        {
+            var txRepo = Mysql.GetRepository<EventIgnoreRow>(tx);
+            Assert.True((await txRepo.InsertAsync(new EventIgnoreRow { ClientEventId = "earlier", Payload = "kept" })).IsSuccess);
+
+            var dup = await txRepo.InsertIgnoreAsync(new EventIgnoreRow { ClientEventId = "earlier", Payload = "dup" });
+            Assert.True(dup.IsSuccess);
+            Assert.Equal(InsertOutcome.Duplicate, dup.Value);
+
+            var bad = await txRepo.InsertIgnoreAsync(new EventIgnoreRow { ClientEventId = new string('z', 100) });
+            Assert.False(bad.IsSuccess);
+
+            var added = await txRepo.InsertIgnoreAsync(new EventIgnoreRow { ClientEventId = "later", Payload = "kept" });
+            Assert.Equal(InsertOutcome.Inserted, added.Value);
+            await tx.CommitAsync();
+        }
+
+        // The failed call rolled back to its savepoint; the caller's earlier and later work survived.
+        var ids = (await Mysql.Query<EventIgnoreRow>().OrderBy(r => r.Id).ToListAsync()).Value!
+            .Select(r => r.ClientEventId).ToArray();
+        Assert.Equal(new[] { "earlier", "later" }, ids);
     }
 
     [DbFact]

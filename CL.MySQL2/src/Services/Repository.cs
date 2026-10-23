@@ -894,41 +894,21 @@ public sealed class Repository<T> where T : class, new()
             LogQuery(sql);
             var sw = Stopwatch.StartNew();
 
-            var (affected, lastId) = await ExecuteAsync<(int, long)>(async (MySqlConnection conn) =>
+            var (affected, lastId) = await ExecuteInsertIgnoreAtomicAsync<(int, long)>(
+                async (conn, tx, throwIfWarned) =>
             {
-                Exception? warningException = null;
-                void OnInfoMessage(object sender, MySqlInfoMessageEventArgs args)
-                {
-                    foreach (var err in args.Errors)
-                    {
-                        if (err.ErrorCode != MySqlErrorCode.DuplicateKeyEntry && (int)err.ErrorCode != 1062)
-                        {
-                            warningException = new InvalidOperationException(err.Message);
-                            break;
-                        }
-                    }
-                }
-
-                conn.InfoMessage += OnInfoMessage;
-                try
-                {
-                    await using var cmd = NewCommand(conn);
-                    cmd.CommandText = sql;
-                    foreach (var col in insertCols)
-                        cmd.Parameters.Add(TypeConverter.CreateParameter(
-                            $"@{col.ColumnName}",
-                            TypeConverter.ToDbValue(col.Get(entity), col.EffectiveStorageType),
-                            col.Attribute,
-                            col.Property.PropertyType));
-                    var rows = await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
-                    if (warningException is not null)
-                        throw warningException;
-                    return (rows, cmd.LastInsertedId);
-                }
-                finally
-                {
-                    conn.InfoMessage -= OnInfoMessage;
-                }
+                await using var cmd = NewCommand(conn);
+                cmd.Transaction = tx;
+                cmd.CommandText = sql;
+                foreach (var col in insertCols)
+                    cmd.Parameters.Add(TypeConverter.CreateParameter(
+                        $"@{col.ColumnName}",
+                        TypeConverter.ToDbValue(col.Get(entity), col.EffectiveStorageType),
+                        col.Attribute,
+                        col.Property.PropertyType));
+                var rows = await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+                throwIfWarned();
+                return (rows, cmd.LastInsertedId);
             }, ct).ConfigureAwait(false);
 
             sw.Stop();
@@ -974,45 +954,25 @@ public sealed class Repository<T> where T : class, new()
             var inserted = 0;
             var sw = Stopwatch.StartNew();
 
-            await ExecuteAsync<int>(async conn =>
+            inserted = await ExecuteInsertIgnoreAtomicAsync<int>(async (conn, tx, throwIfWarned) =>
             {
-                Exception? warningException = null;
-                void OnInfoMessage(object sender, MySqlInfoMessageEventArgs args)
+                var total = 0;
+                for (var start = 0; start < list.Count; start += _maxBatchInsertSize)
                 {
-                    foreach (var err in args.Errors)
-                    {
-                        if (err.ErrorCode != MySqlErrorCode.DuplicateKeyEntry && (int)err.ErrorCode != 1062)
-                        {
-                            warningException = new InvalidOperationException(err.Message);
-                            break;
-                        }
-                    }
-                }
+                    var end = Math.Min(start + _maxBatchInsertSize, list.Count);
+                    var count = end - start;
 
-                conn.InfoMessage += OnInfoMessage;
-                try
-                {
-                    for (var start = 0; start < list.Count; start += _maxBatchInsertSize)
-                    {
-                        var end = Math.Min(start + _maxBatchInsertSize, list.Count);
-                        var count = end - start;
+                    await using var cmd = NewCommand(conn);
+                    cmd.Transaction = tx;
+                    var valueTuples = BuildBatchParameters(cmd, list, start, count, insertCols);
 
-                        await using var cmd = NewCommand(conn);
-                        var valueTuples = BuildBatchParameters(cmd, list, start, count, insertCols);
-
-                        cmd.CommandText = $"INSERT IGNORE INTO {MySqlDialect.Quote(table)} ({columnList}) VALUES {string.Join(", ", valueTuples)};";
-                        LogQuery(cmd.CommandText);
-                        var affected = await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
-                        if (warningException is not null)
-                            throw warningException;
-                        inserted += affected;
-                    }
-                    return inserted;
+                    cmd.CommandText = $"INSERT IGNORE INTO {MySqlDialect.Quote(table)} ({columnList}) VALUES {string.Join(", ", valueTuples)};";
+                    LogQuery(cmd.CommandText);
+                    var affected = await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+                    throwIfWarned();
+                    total += affected;
                 }
-                finally
-                {
-                    conn.InfoMessage -= OnInfoMessage;
-                }
+                return total;
             }, ct).ConfigureAwait(false);
 
             sw.Stop();
@@ -1027,6 +987,86 @@ public sealed class Repository<T> where T : class, new()
             return Result<int>.Failure(Error.FromException(ex, "mysql.bulk_insert_failed"));
         }
     }
+
+    private const string InsertIgnoreSavepoint = "cl_mysql2_insert_ignore";
+
+    /// <summary>
+    /// Runs INSERT IGNORE statement(s) atomically. <c>INSERT IGNORE</c> downgrades not only
+    /// duplicate keys but also errors such as truncation (1265/1406) or a missing NOT NULL
+    /// value (1364) to warnings, and still writes the affected row. Any warning other than
+    /// ER_DUP_ENTRY (1062) therefore fails the call and everything the call wrote is rolled
+    /// back, so a failure Result always means nothing was written. Without an ambient
+    /// <see cref="TransactionScope"/> the call uses its own transaction; inside one it rolls
+    /// back to a savepoint, leaving earlier work in the caller's transaction untouched.
+    /// </summary>
+    private Task<TResult> ExecuteInsertIgnoreAtomicAsync<TResult>(
+        Func<MySqlConnection, MySqlTransaction, Action, Task<TResult>> body,
+        CancellationToken ct)
+        => ExecuteAsync(async conn =>
+        {
+            Exception? warning = null;
+            void OnInfoMessage(object sender, MySqlInfoMessageEventArgs args)
+            {
+                foreach (var err in args.Errors)
+                {
+                    if (err.ErrorCode == MySqlErrorCode.DuplicateKeyEntry) continue;
+                    warning ??= new InvalidOperationException(
+                        $"INSERT IGNORE produced MySQL warning {(int)err.ErrorCode}: {err.Message}");
+                    break;
+                }
+            }
+            void ThrowIfWarned()
+            {
+                if (warning is not null) throw warning;
+            }
+
+            var ownTransaction = _transactionScope is null
+                ? await conn.BeginTransactionAsync(ct).ConfigureAwait(false)
+                : null;
+            var transaction = ownTransaction ?? _transactionScope!.Transaction;
+            try
+            {
+                if (ownTransaction is null)
+                    await transaction.SaveAsync(InsertIgnoreSavepoint, ct).ConfigureAwait(false);
+
+                conn.InfoMessage += OnInfoMessage;
+                TResult result;
+                try
+                {
+                    result = await body(conn, transaction, ThrowIfWarned).ConfigureAwait(false);
+                }
+                finally
+                {
+                    conn.InfoMessage -= OnInfoMessage;
+                }
+
+                if (ownTransaction is not null)
+                    await ownTransaction.CommitAsync(ct).ConfigureAwait(false);
+                else
+                    await transaction.ReleaseAsync(InsertIgnoreSavepoint, ct).ConfigureAwait(false);
+                return result;
+            }
+            catch
+            {
+                try
+                {
+                    if (ownTransaction is not null)
+                        await ownTransaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+                    else
+                        await transaction.RollbackAsync(InsertIgnoreSavepoint, CancellationToken.None).ConfigureAwait(false);
+                }
+                catch (Exception rollbackEx)
+                {
+                    _logger?.Warning($"[MySQL2] INSERT IGNORE rollback failed: {rollbackEx.Message}");
+                }
+                throw;
+            }
+            finally
+            {
+                if (ownTransaction is not null)
+                    await ownTransaction.DisposeAsync().ConfigureAwait(false);
+            }
+        }, ct);
 
     private static (string Table, ColumnMetadata[] InsertCols, string ColumnList, string ConflictCol) GetInsertMetadata()
     {

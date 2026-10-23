@@ -4,7 +4,7 @@ All notable changes to **CodeLogic.MySQL2** are documented here. Versions follow
 [Semantic Versioning](https://semver.org/). The version listed here matches the
 NuGet package version of `CodeLogic.MySQL2`.
 
-## [4.9.0] - 2026-10-23
+## 2026-10-23
 
 ### Added
 
@@ -12,6 +12,7 @@ NuGet package version of `CodeLogic.MySQL2`.
   - `Task<Result<InsertOutcome>> InsertIgnoreAsync(T entity, CancellationToken ct = default)` inserts a single entity while treating duplicate-key conflicts (UNIQUE index or PRIMARY KEY) as a normal outcome. Returns `InsertOutcome.Inserted` (with auto-generated PK populated on the entity) or `InsertOutcome.Duplicate`, without raising an exception and without logging at Error level (Debug at most).
   - `Task<Result<int>> InsertManyIgnoreAsync(IEnumerable<T> entities, CancellationToken ct = default)` bulk-inserts entities in batches, returning the count of rows actually inserted (duplicates contribute 0).
   - Built with `INSERT IGNORE` and connection-level warning validation: under MySqlConnector's default found-rows semantics (`UseAffectedRows=false`), `INSERT IGNORE` accurately distinguishes inserts (1) from duplicates (0), while connection warnings are intercepted so that non-duplicate errors (such as data truncation or NOT NULL constraint violations) are not silently swallowed.
+  - **Atomic on failure.** `INSERT IGNORE` still writes a row when it downgrades such an error to a warning, so both methods run in a transaction and roll back everything the call wrote when any warning other than 1062 appears or anything throws: a failure `Result` always means nothing was written. Inside an explicit `TransactionScope` the call rolls back to a savepoint instead, leaving the caller's other work in that transaction intact.
 - **Opt-in `mysql.duplicate_key` error code for `InsertAsync` and `InsertManyAsync`**:
   - Configurable via `MySqlDatabaseConfig.DistinguishDuplicateKeyError` in connection configuration, `Repository<T>.DistinguishDuplicateKeyError` property, or constructor overload.
   - When enabled, MySQL error 1062 (`ER_DUP_ENTRY`) returns the distinct error code `mysql.duplicate_key` and logs at Warning instead of Error.
