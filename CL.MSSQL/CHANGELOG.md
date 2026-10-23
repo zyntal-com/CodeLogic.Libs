@@ -1,5 +1,32 @@
 # Changelog
 
+## 2026-10-23
+
+### Added
+
+- **`Repository<T>.InsertIgnoreAsync` and `InsertManyIgnoreAsync`** (API parity with CL.MySQL2).
+  A duplicate key (SQL Server error 2627 / 2601) is a normal outcome: `InsertIgnoreAsync` returns
+  `InsertOutcome.Inserted` (auto PK populated from `OUTPUT INSERTED`) or `InsertOutcome.Duplicate`;
+  `InsertManyIgnoreAsync` returns the number of rows actually inserted. No exception, no Error log.
+  - SQL Server has no `INSERT IGNORE`: each insert runs under a savepoint and a duplicate rolls back
+    to it. `InsertManyIgnoreAsync` sends each batch as one multi-row `INSERT` and only falls back to
+    row-by-row inserts for a batch that hit a duplicate.
+  - **Atomic on failure**: the call runs in its own transaction, or a savepoint inside an explicit
+    `TransactionScope`; any non-duplicate error rolls back everything the call wrote, so a failure
+    `Result` means nothing was written. (With `SET XACT_ABORT ON` on the session a duplicate dooms
+    the whole transaction, so the call fails instead of skipping the row.)
+- **Opt-in `DistinguishDuplicateKeyError`** (`SqlServerDatabaseConfig` or `Repository<T>` property):
+  a duplicate key in `InsertAsync` / `InsertManyAsync` returns error code `mssql.duplicate_key` and
+  logs at Warning. Default `false` keeps `mssql.insert_failed` / `mssql.bulk_insert_failed` at Error.
+- **Nullable aggregate results**: `MaxAsync` / `MinAsync` / `SumAsync` accept nullable selectors
+  such as `r => (DateTime?)r.CreatedUtc` and return `null` for SQL NULL (for example no matching
+  rows). Non-nullable selectors still return `default(TResult)`.
+
+### Known behaviour (unchanged)
+
+- String parameters are sized from `[Column(Size)]`, so SqlClient truncates over-long values
+  client-side and SQL Server never reports truncation. This affects every insert and update path.
+
 ## 2026-09-13
 
 ### Changed — behaviour

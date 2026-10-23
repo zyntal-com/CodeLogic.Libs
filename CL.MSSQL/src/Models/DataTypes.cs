@@ -25,3 +25,15 @@ public enum SortOrder { Asc, Desc }
 public enum SchemaSyncLevel { None = 0, Safe = 1, Additive = 2, Full = 3 }
 
 public enum SyncMode { Developer = 0, Production = 1, Migration = 2 }
+
+/// <summary>
+/// Result outcome of an <see cref="Services.Repository{T}.InsertIgnoreAsync"/> operation.
+/// </summary>
+public enum InsertOutcome
+{
+    /// <summary>Row was successfully inserted.</summary>
+    Inserted,
+
+    /// <summary>A row with matching unique/primary key already existed; insert was ignored.</summary>
+    Duplicate
+}
