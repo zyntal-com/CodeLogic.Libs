@@ -114,6 +114,7 @@ Every desired schema is hashed into `__schema_state`. An unchanged model takes t
 | Operation | Purpose |
 |-----------|---------|
 | `InsertAsync` / `InsertManyAsync` | Insert one row with its generated key populated, or insert chunked batches and return the affected count. |
+| `InsertIgnoreAsync` / `InsertManyIgnoreAsync` | Insert one row or batches while ignoring duplicate-key conflicts; returns `InsertOutcome` (`Inserted` with generated Id populated, or `Duplicate`) or inserted count. |
 | `UpsertAsync` / `UpsertManyAsync` | Insert or update on duplicate key. |
 | `UpsertWithIncrementsAsync` | Insert a seed or atomically accumulate selected numeric columns. |
 | `GetByIdAsync` / `GetByColumnAsync` / `GetAllAsync` / `FindAsync` | Typed entity retrieval. |
@@ -216,7 +217,7 @@ Result<List<DailyTotal>> totals = await mysql.Query<Order>()
     .ToListAsync();
 ```
 
-Single-value terminals include `CountAsync`, `MinAsync`, `MaxAsync`, `SumAsync`, and `AverageAsync`. `Select(...)` also supports anonymous or DTO projections without first materializing the entity.
+Single-value terminals include `CountAsync`, `MinAsync`, `MaxAsync`, `SumAsync`, and `AverageAsync`. Aggregates (`MaxAsync`, `MinAsync`, `SumAsync`) accept nullable selectors such as `r => (DateTime?)r.CreatedUtc` or `r => (int?)r.Score`, returning `null` on an empty set while non-nullable selectors preserve their standard defaults (`DateTime.MinValue`, `0`). `Select(...)` also supports anonymous or DTO projections without first materializing the entity.
 
 ### Set-based updates and deletes
 

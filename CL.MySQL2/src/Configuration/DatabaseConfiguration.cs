@@ -243,6 +243,17 @@ public sealed class MySqlDatabaseConfig
     public int MaxBatchInsertSize { get; set; } = 500;
 
     /// <summary>
+    /// When true, MySQL error 1062 (ER_DUP_ENTRY) in <c>InsertAsync</c> and <c>InsertManyAsync</c>
+    /// returns the distinct error code <c>mysql.duplicate_key</c> and logs at Warning instead of Error.
+    /// When false (the default), error code is <c>mysql.insert_failed</c> / <c>mysql.bulk_insert_failed</c>
+    /// and logs at Error.
+    /// </summary>
+    [ConfigField(Label = "Distinguish Duplicate Key Errors",
+        Description = "When true, MySQL duplicate key errors (1062) return error code mysql.duplicate_key and log at Warning. Default: false.",
+        Group = "Advanced", Order = 53, Collapsed = true)]
+    public bool DistinguishDuplicateKeyError { get; set; } = false;
+
+    /// <summary>
     /// Advisory ceiling on the number of values in a generated <c>IN (...)</c> clause. Nothing is
     /// chunked or rejected — a collection <c>Contains</c> still emits one parameter per value —
     /// but a translation that exceeds this logs one warning naming the entity and the count.

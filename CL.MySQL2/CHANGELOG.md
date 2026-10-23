@@ -4,6 +4,28 @@ All notable changes to **CodeLogic.MySQL2** are documented here. Versions follow
 [Semantic Versioning](https://semver.org/). The version listed here matches the
 NuGet package version of `CodeLogic.MySQL2`.
 
+## [4.9.0] - 2026-10-23
+
+### Added
+
+- **`Repository<T>.InsertIgnoreAsync` and `InsertManyIgnoreAsync`**:
+  - `Task<Result<InsertOutcome>> InsertIgnoreAsync(T entity, CancellationToken ct = default)` inserts a single entity while treating duplicate-key conflicts (UNIQUE index or PRIMARY KEY) as a normal outcome. Returns `InsertOutcome.Inserted` (with auto-generated PK populated on the entity) or `InsertOutcome.Duplicate`, without raising an exception and without logging at Error level (Debug at most).
+  - `Task<Result<int>> InsertManyIgnoreAsync(IEnumerable<T> entities, CancellationToken ct = default)` bulk-inserts entities in batches, returning the count of rows actually inserted (duplicates contribute 0).
+  - Built with `INSERT IGNORE` and connection-level warning validation: under MySqlConnector's default found-rows semantics (`UseAffectedRows=false`), `INSERT IGNORE` accurately distinguishes inserts (1) from duplicates (0), while connection warnings are intercepted so that non-duplicate errors (such as data truncation or NOT NULL constraint violations) are not silently swallowed.
+- **Opt-in `mysql.duplicate_key` error code for `InsertAsync` and `InsertManyAsync`**:
+  - Configurable via `MySqlDatabaseConfig.DistinguishDuplicateKeyError` in connection configuration, `Repository<T>.DistinguishDuplicateKeyError` property, or constructor overload.
+  - When enabled, MySQL error 1062 (`ER_DUP_ENTRY`) returns the distinct error code `mysql.duplicate_key` and logs at Warning instead of Error.
+  - Defaults to `false`: keeping unchanged existing behavior (`mysql.insert_failed` / `mysql.bulk_insert_failed` with Error logging).
+- **CompositeIndex column drift detection**:
+  - `SchemaAnalyzer` loads ordered column lists (`SEQ_IN_INDEX`) for existing indexes from `information_schema.STATISTICS`.
+  - When an index declared via `[CompositeIndex]` exists in the database but its columns or column ordering differ from the model, a Warning is logged naming the table, index name, existing columns, and model columns.
+  - Safe level (`SchemaSyncLevel.Safe`) never drops or rebuilds drifted indexes, maintaining backwards compatibility.
+- **Nullable result support for QueryBuilder aggregates (`MaxAsync`, `MinAsync`, `SumAsync`)**:
+  - Aggregates now support nullable types (e.g. `MaxAsync(p => (DateTime?)p.CreatedAt)` or `SumAsync(p => (int?)p.Amount)`).
+  - Unwraps `Nullable.GetUnderlyingType(typeof(TResult))` prior to type conversion so that SQL NULL on an empty set or null column returns `null` instead of throwing `InvalidCastException`.
+  - `MySqlExpressionVisitor.TranslateSelector` unwraps unary `Convert` expressions to support cast-to-nullable lambda selectors.
+  - Non-nullable aggregate behavior remains completely unchanged (empty set returns `default(TResult)` such as `DateTime.MinValue` or `0`).
+
 ## 2026-09-13
 
 ### Behaviour changes (read before upgrading)

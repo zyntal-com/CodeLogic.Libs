@@ -8,6 +8,7 @@
     <LangVersion>13</LangVersion>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <NoWarn>CS1591</NoWarn>
+    <Version>4.9.0</Version>
     <PackageId>CodeLogic.MySQL2</PackageId>
     <PackageTags>mysql;database;orm;linq;query-builder;aggregation;cache</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
