@@ -223,7 +223,12 @@ Result<long>    open  = await mssql.Query<Order>().Where(o => o.Status == "open"
 Result<decimal> top   = await mssql.Query<Order>().MaxAsync(o => o.Total);
 Result<decimal> total = await mssql.Query<Order>().Where(o => o.Day == today).SumAsync(o => o.Total);
 Result<double>  avg   = await mssql.Query<Order>().AverageAsync(o => o.Total);
+
+// Nullable selectors return null for SQL NULL (e.g. no matching rows) instead of default(T)
+Result<DateTime?> last  = await mssql.Query<Order>().Where(o => o.UserId == id).MaxAsync(o => (DateTime?)o.CreatedUtc);
 ```
+
+With a non-nullable selector, `MaxAsync` / `MinAsync` / `SumAsync` return `default(TResult)` (for example `DateTime.MinValue` or `0`) when the result is SQL NULL.
 
 ## Bulk update & delete
 

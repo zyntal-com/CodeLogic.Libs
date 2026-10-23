@@ -74,6 +74,12 @@ var repo = mssql.GetRepository<User>();
 Result<User> created = await repo.InsertAsync(new User { Email = "ada@example.com", DisplayName = "Ada" });
 Result<int>  many    = await repo.InsertManyAsync(batch);   // chunked at 500 rows, capped by the 2,100-parameter limit
 
+// Idempotent insert: a duplicate unique/primary key (2627/2601) is a normal outcome, not an error.
+// Any other error rolls back everything the call wrote (own transaction, or a savepoint inside
+// an explicit TransactionScope), so a failure Result means nothing was written.
+Result<InsertOutcome> outcome = await repo.InsertIgnoreAsync(evt);      // Inserted | Duplicate
+Result<int>           added   = await repo.InsertManyIgnoreAsync(batch); // rows actually inserted
+
 // Read
 Result<User?>       byId   = await repo.GetByIdAsync(1L);
 Result<List<User>>  byCol  = await repo.GetByColumnAsync(nameof(User.DisplayName), "Ada");
@@ -156,6 +162,7 @@ Two files are written on first run.
 | `CaptureExplainOnSlowQuery` | `true` | Attach best-effort estimated `SHOWPLAN_XML`. |
 | `QueryTimeoutMs` | `30000` | Command timeout for the query commands the library issues (repositories, query builder, projections, joins, grouped queries). Overrides the connection string's `Command Timeout` for those; `0` leaves it in place. |
 | `MaxBatchInsertSize` | `500` | Rows per multi-row `INSERT`/upsert statement, capped further by the 2,100-parameter limit. |
+| `DistinguishDuplicateKeyError` | `false` | When true, a duplicate key (2627/2601) in `InsertAsync` / `InsertManyAsync` returns error code `mssql.duplicate_key` and logs a Warning instead of `mssql.insert_failed` / `mssql.bulk_insert_failed` at Error. Also settable per repository via `Repository<T>.DistinguishDuplicateKeyError`. |
 | `MaxInClauseValues` | `1000` | Advisory cap on a generated `IN (...)` list. Exceeding it logs one warning per query build naming the entity and the count — nothing is chunked, truncated or rejected. |
 | `PreparedStatementCacheSize` | `256` | **Obsolete, not applied.** `Microsoft.Data.SqlClient` has no client-side statement cache to size; plan caching is the server's. Configure pooling on the connection string. |
 | `TransientRetryCount` | `3` | Deadlock/lock-wait retries (0 disables). |

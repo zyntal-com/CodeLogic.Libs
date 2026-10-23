@@ -1148,7 +1148,13 @@ public sealed class QueryBuilder<T> where T : class, new()
                 await using var cmd = BuildCommand(conn, sql, parms);
                 var raw = await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
                 if (raw is null || raw is DBNull) return default!;
-                return (TResult)Convert.ChangeType(raw, typeof(TResult))!;
+                var underlyingType = Nullable.GetUnderlyingType(typeof(TResult)) ?? typeof(TResult);
+                if (underlyingType.IsEnum)
+                {
+                    var enumVal = Enum.ToObject(underlyingType, Convert.ChangeType(raw, Enum.GetUnderlyingType(underlyingType)));
+                    return (TResult)enumVal;
+                }
+                return (TResult)Convert.ChangeType(raw, underlyingType)!;
             }, ct).ConfigureAwait(false);
 
             return Result<TResult>.Success(value);

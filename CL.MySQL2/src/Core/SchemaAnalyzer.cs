@@ -322,11 +322,20 @@ internal sealed class SchemaAnalyzer
         foreach (var ci in compositeIndexes)
         {
             modelIndexNames.Add(ci.IndexName);
-            if (!existingIndexes.ContainsKey(ci.IndexName))
+            if (!existingIndexes.TryGetValue(ci.IndexName, out var existing))
             {
                 var cols = string.Join(", ", ci.ColumnNames.Select(c => $"{MySqlDialect.Quote(c)}"));
                 var keyword = ci.Unique ? "UNIQUE KEY" : "INDEX";
                 alterStatements.Add($"ALTER TABLE {MySqlDialect.Quote(tableName)} ADD {keyword} {MySqlDialect.Quote(ci.IndexName)} ({cols});");
+            }
+            else
+            {
+                if (!existing.Columns.SequenceEqual(ci.ColumnNames, StringComparer.OrdinalIgnoreCase))
+                {
+                    _logger?.Warning(
+                        $"[MySQL2] Composite index `{ci.IndexName}` on table `{tableName}` has drifted columns. " +
+                        $"Existing: [{string.Join(", ", existing.Columns)}], Model: [{string.Join(", ", ci.ColumnNames)}].");
+                }
             }
         }
 
@@ -482,10 +491,10 @@ internal sealed class SchemaAnalyzer
 
         await using var cmd = connection.CreateCommand();
         cmd.CommandText = @"
-            SELECT INDEX_NAME, NON_UNIQUE
+            SELECT INDEX_NAME, NON_UNIQUE, COLUMN_NAME
             FROM information_schema.STATISTICS
             WHERE TABLE_SCHEMA = @db AND TABLE_NAME = @tbl
-            GROUP BY INDEX_NAME, NON_UNIQUE";
+            ORDER BY INDEX_NAME, SEQ_IN_INDEX ASC";
         cmd.Parameters.AddWithValue("@db", dbName);
         cmd.Parameters.AddWithValue("@tbl", tableName);
 
@@ -493,7 +502,14 @@ internal sealed class SchemaAnalyzer
         while (await reader.ReadAsync(ct).ConfigureAwait(false))
         {
             var name = reader.GetString(0);
-            result[name] = new IndexInfo(name, reader.GetInt32(1) == 0);
+            var isUnique = reader.GetInt32(1) == 0;
+            var colName = reader.GetString(2);
+            if (!result.TryGetValue(name, out var info))
+            {
+                info = new IndexInfo(name, isUnique, new List<string>());
+                result[name] = info;
+            }
+            info.Columns.Add(colName);
         }
 
         return result;
@@ -656,5 +672,5 @@ internal sealed class SchemaAnalyzer
         string? CharacterSet,
         string? Comment);
 
-    private record IndexInfo(string Name, bool IsUnique);
+    private record IndexInfo(string Name, bool IsUnique, List<string> Columns);
 }

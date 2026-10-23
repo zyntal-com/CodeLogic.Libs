@@ -85,7 +85,7 @@ public class DailyOrder { /* … */ }
 
 - `[ForeignKey(referenceTable, referenceColumn)]` with `OnDelete` / `OnUpdate` (`ForeignKeyAction`: `Restrict`, `Cascade`, `SetNull`, `NoAction`, `SetDefault`) and an optional `ConstraintName`.
 - `[Index]` (column-level, `AllowMultiple`) — `Name`, `Unique`, `Include` for covering columns.
-- `[CompositeIndex(name, columns…)]` (class-level, `AllowMultiple`) — `Unique` optional.
+- `[CompositeIndex(name, columns…)]` (class-level, `AllowMultiple`) — `Unique` optional. Indexes are matched by **name**: if an existing index keeps its name but the model's columns differ, sync logs a column-drift warning and does not rebuild it. Give the index a new name to have the new definition created (the old one stays until removed by a destructive sync or by hand).
 - `[Ignore]` — exclude a property from mapping.
 
 ### Column rename — preserve data

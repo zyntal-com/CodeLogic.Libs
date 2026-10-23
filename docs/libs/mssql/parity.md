@@ -5,6 +5,7 @@
 | Capability | CL.MSSQL implementation |
 |---|---|
 | CRUD and identity keys | Repositories with `OUTPUT INSERTED` |
+| Insert ignoring duplicates | `InsertIgnoreAsync` / `InsertManyIgnoreAsync` via savepoints (no `INSERT IGNORE` in T-SQL): batch first, row-by-row fallback for a batch that hits 2627/2601, atomic on any other error |
 | Batch insert and update | Dynamically capped below SQL Server's 2,100-parameter limit |
 | Upsert and incrementing upsert | Serializable `UPDLOCK`/`HOLDLOCK` source-table algorithm; no `MERGE` |
 | LINQ predicates and functions | SQL Server `bit`, `LIKE`, `DATEPART`, `CONVERT`, `DATEADD`/`DATEDIFF_BIG`, `COALESCE`, and `CONCAT` SQL |
