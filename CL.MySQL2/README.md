@@ -105,6 +105,8 @@ Result<Dictionary<string, SyncResult>> schema = await mysql.SyncSchemaAsync(
 mysql.SetSyncMode(SyncMode.Production, connectionId: "Default");
 ```
 
+Indexes are matched by name. If a `[CompositeIndex]` keeps its name but its columns change, sync logs a column-drift warning and leaves the existing index as it is; give the index a new name to have the new definition created.
+
 Every desired schema is hashed into `__schema_state`. An unchanged model takes the CRC fast path and skips `information_schema` inspection and DDL entirely. `SyncResult` reports operations, errors, duration, CRC, whether work was skipped, and whether destructive drift remains pending.
 
 ## Repository API
@@ -114,6 +116,7 @@ Every desired schema is hashed into `__schema_state`. An unchanged model takes t
 | Operation | Purpose |
 |-----------|---------|
 | `InsertAsync` / `InsertManyAsync` | Insert one row with its generated key populated, or insert chunked batches and return the affected count. |
+| `InsertIgnoreAsync` / `InsertManyIgnoreAsync` | Insert one row or batches while ignoring duplicate-key conflicts; returns `InsertOutcome` (`Inserted` with generated Id populated, or `Duplicate`) or the inserted count. Duplicates are a normal outcome, not an error. Any other warning (truncation, missing NOT NULL value) fails the call and rolls back everything it wrote. |
 | `UpsertAsync` / `UpsertManyAsync` | Insert or update on duplicate key. |
 | `UpsertWithIncrementsAsync` | Insert a seed or atomically accumulate selected numeric columns. |
 | `GetByIdAsync` / `GetByColumnAsync` / `GetAllAsync` / `FindAsync` | Typed entity retrieval. |
@@ -123,6 +126,8 @@ Every desired schema is hashed into `__schema_state`. An unchanged model takes t
 | `IncrementAsync` / `DecrementAsync` / `AdjustAsync` | Atomic server-side counter changes. |
 | `DeleteAsync` | Soft delete when `[SoftDelete]` is present; otherwise physically delete. |
 | `HardDeleteAsync` | Always physically delete. |
+
+Idempotent writes (for example re-sent event batches keyed by a unique client id) should use `InsertIgnoreAsync` / `InsertManyIgnoreAsync`. Callers that keep `InsertAsync` can set `DistinguishDuplicateKeyError` (database config or `Repository<T>` property) to get the error code `mysql.duplicate_key`, logged as a Warning, instead of the generic `mysql.insert_failed` Error for MySQL error 1062. It is off by default, so existing behavior is unchanged.
 
 ## Query builder
 
@@ -216,7 +221,7 @@ Result<List<DailyTotal>> totals = await mysql.Query<Order>()
     .ToListAsync();
 ```
 
-Single-value terminals include `CountAsync`, `MinAsync`, `MaxAsync`, `SumAsync`, and `AverageAsync`. `Select(...)` also supports anonymous or DTO projections without first materializing the entity.
+Single-value terminals include `CountAsync`, `MinAsync`, `MaxAsync`, `SumAsync`, and `AverageAsync`. Aggregates (`MaxAsync`, `MinAsync`, `SumAsync`) accept nullable selectors such as `r => (DateTime?)r.CreatedUtc` or `r => (int?)r.Score`, returning `null` on an empty set while non-nullable selectors preserve their standard defaults (`DateTime.MinValue`, `0`). `Select(...)` also supports anonymous or DTO projections without first materializing the entity.
 
 ### Set-based updates and deletes
 
@@ -368,7 +373,8 @@ The library generates `config.mysql.json` (`mysql`) and `config.mysql.cache.json
       "SyncMode": "Production",
       "MaxPoolSize": 100,
       "SlowQueryThresholdMs": 1000,
-      "TransientRetryCount": 3
+      "TransientRetryCount": 3,
+      "DistinguishDuplicateKeyError": false
     }
   }
 }

@@ -32,6 +32,9 @@ await CodeLogic.StartAsync();
 var mssql = Libraries.Get<MSSQLLibrary>()!;
 await mssql.SyncTableAsync<User>();
 var inserted = await mssql.GetRepository<User>().InsertAsync(new User { Email = "ada@example.com" });
+
+// Idempotent insert (re-sent batches keyed by a unique id): duplicates are a normal outcome
+var outcome = await mssql.GetRepository<User>().InsertIgnoreAsync(new User { Email = "ada@example.com" });
 var recent = await mssql.Query<User>()
     .Where(user => user.CreatedUtc >= DateTime.UtcNow.AddDays(-7))
     .OrderByDescending(user => user.CreatedUtc)

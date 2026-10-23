@@ -75,7 +75,7 @@ try
     await Exec(mysql, """
         DROP TABLE IF EXISTS t_child, t_parent, t_emp, t_dept, t_person, t_account,
             t_kv, t_widget, t_note, t_evo, t_ren, t_mode, t_dev2, t_migt, t_locktest, t_backup,
-            t_guard, t_add, t_future_marker
+            t_guard, t_add, t_future_marker, t_event
     """);
     foreach (var tbl in new[] { "t_person","t_widget","t_evo","t_ren","t_mode","t_dev2","t_locktest","t_backup","t_parent","t_child","t_guard","t_add" })
         await mysql.SchemaState.RemoveStateAsync(tbl);
@@ -108,6 +108,14 @@ try
         "SELECT COUNT(*) FROM information_schema.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='t_child' AND REFERENCED_TABLE_NAME='t_parent'")).Value;
     Check("foreign key present on t_child", fkCount >= 1, $"got {fkCount}");
     Check("composite index ix_ab present", await HasNamedIndex(mysql, "t_child", "ix_ab"));
+
+    var analyzer = new CL.MySQL2.Core.SchemaAnalyzer();
+    await mysql.ConnectionManager.ExecuteWithConnectionAsync(async conn =>
+    {
+        var stmts = await analyzer.GenerateAlterStatementsAsync(typeof(ChildDrift), conn, SchemaSyncLevel.Safe);
+        Check("Schema sync drift at Safe level has no DROP", !stmts.Any(s => s.Contains("DROP", StringComparison.OrdinalIgnoreCase)));
+        return true;
+    }, "Default");
 
     // ── 4. Column rename (PreviousName) preserves data ────────────────────────
     Section("Column rename");
@@ -190,6 +198,45 @@ try
     await arepo.DecrementAsync(acct.Id, a => a.Credits, 3);
     Check("DecrementAsync (-3 → 12)", (await arepo.GetByIdAsync(acct.Id)).Value?.Credits == 12);
 
+    // ── 7b. InsertIgnore + duplicate key opt-in ──────────────────────────────
+    Section("InsertIgnore + duplicate key opt-in");
+    await Exec(mysql, "DROP TABLE IF EXISTS t_event");
+    Check("create t_event", (await mysql.SyncTableAsync<EventItem>(createBackup: false)).IsSuccess);
+    var eventRepo = mysql.GetRepository<EventItem>();
+
+    var e1 = new EventItem { ClientEventId = "ev-1", Payload = "first" };
+    var res1 = await eventRepo.InsertIgnoreAsync(e1);
+    Check("InsertIgnoreAsync first insert -> Inserted", res1.IsSuccess && res1.Value == InsertOutcome.Inserted);
+    Check("InsertIgnoreAsync sets auto-increment Id", e1.Id > 0);
+
+    var eDup = new EventItem { ClientEventId = "ev-1", Payload = "dup" };
+    var resDup = await eventRepo.InsertIgnoreAsync(eDup);
+    Check("InsertIgnoreAsync same key -> Duplicate", resDup.IsSuccess && resDup.Value == InsertOutcome.Duplicate);
+    Check("InsertIgnoreAsync duplicate leaves DB row unchanged",
+        (await mysql.Query<EventItem>().Where(x => x.ClientEventId == "ev-1").FirstOrDefaultAsync()).Value?.Payload == "first");
+
+    var batch = new[]
+    {
+        new EventItem { ClientEventId = "ev-1", Payload = "dup" },
+        new EventItem { ClientEventId = "ev-2", Payload = "two" },
+        new EventItem { ClientEventId = "ev-3", Payload = "three" }
+    };
+    var resMany = await eventRepo.InsertManyIgnoreAsync(batch);
+    Check("InsertManyIgnoreAsync mix returns inserted count (2)", resMany.IsSuccess && resMany.Value == 2);
+    Check("InsertManyIgnoreAsync all duplicates returns 0", (await eventRepo.InsertManyIgnoreAsync(batch)).Value == 0);
+
+    var resInsertFail = await eventRepo.InsertAsync(new EventItem { ClientEventId = "ev-1" });
+    Check("InsertAsync duplicate key (opt-in off) -> mysql.insert_failed",
+        !resInsertFail.IsSuccess && resInsertFail.Error?.Code == "mysql.insert_failed");
+
+    eventRepo.DistinguishDuplicateKeyError = true;
+    var resInsertDup = await eventRepo.InsertAsync(new EventItem { ClientEventId = "ev-1" });
+    Check("InsertAsync duplicate key (opt-in on) -> mysql.duplicate_key",
+        !resInsertDup.IsSuccess && resInsertDup.Error?.Code == "mysql.duplicate_key");
+    var resManyDup = await eventRepo.InsertManyAsync(new[] { new EventItem { ClientEventId = "ev-1" } });
+    Check("InsertManyAsync duplicate key (opt-in on) -> mysql.duplicate_key",
+        !resManyDup.IsSuccess && resManyDup.Error?.Code == "mysql.duplicate_key");
+
     // ── 8. Query builder — filter / order / page / aggregates ─────────────────
     Section("Query builder");
     var asc = (await mysql.Query<Person>().OrderBy(p => p.Age).ToListAsync()).Value!;
@@ -204,6 +251,19 @@ try
     Check("MaxAsync(Age)", (await mysql.Query<Person>().MaxAsync(p => p.Age)).Value == 41);
     Check("MinAsync(Age)", (await mysql.Query<Person>().MinAsync(p => p.Age)).Value == 25);
     Check("AverageAsync(Age)", Math.Abs((await mysql.Query<Person>().AverageAsync(p => p.Age)).Value - 32.0) < 0.001);
+
+    // Nullable aggregates on rows
+    Check("MaxAsync((DateTime?)CreatedUtc) on rows", (await mysql.Query<Person>().MaxAsync(p => (DateTime?)p.CreatedUtc)).Value != null);
+    Check("MinAsync((DateTime?)CreatedUtc) on rows", (await mysql.Query<Person>().MinAsync(p => (DateTime?)p.CreatedUtc)).Value != null);
+    Check("SumAsync((int?)Age) on rows", (await mysql.Query<Person>().SumAsync(p => (int?)p.Age)).Value == (30 + 25 + 41));
+
+    // Nullable aggregates on empty set
+    var emptyQ = mysql.Query<Person>().Where(p => p.Age < 0);
+    Check("MaxAsync((DateTime?)CreatedUtc) on empty -> null", (await emptyQ.MaxAsync(p => (DateTime?)p.CreatedUtc)).Value == null);
+    Check("MinAsync((DateTime?)CreatedUtc) on empty -> null", (await emptyQ.MinAsync(p => (DateTime?)p.CreatedUtc)).Value == null);
+    Check("SumAsync((int?)Age) on empty -> null", (await emptyQ.SumAsync(p => (int?)p.Age)).Value == null);
+    Check("MaxAsync(CreatedUtc) non-nullable on empty -> default", (await emptyQ.MaxAsync(p => p.CreatedUtc)).Value == default);
+    Check("SumAsync(Age) non-nullable on empty -> 0", (await emptyQ.SumAsync(p => p.Age)).Value == 0);
     var page = (await mysql.Query<Person>().OrderBy(p => p.Age).ToPagedListAsync(1, 2)).Value!;
     Check("ToPagedListAsync", page.Items.Count == 2 && page.TotalItems == 3);
     var proj = (await mysql.Query<Person>().Where(p => p.Active).Select(p => new NameOnly { Name = p.Name }).ToListAsync()).Value!;
@@ -600,6 +660,24 @@ public class Child
     public long ParentId { get; set; }
     [Column(Name = "a", DataType = DataType.Int, NotNull = true)] public int A { get; set; }
     [Column(Name = "b", DataType = DataType.Int, NotNull = true)] public int B { get; set; }
+}
+
+[Table(Name = "t_child")]
+[CompositeIndex("ix_ab", "b", "a")]
+public class ChildDrift
+{
+    [Column(Name = "id", DataType = DataType.BigInt, Primary = true, AutoIncrement = true)] public long Id { get; set; }
+    [Column(Name = "parent_id", DataType = DataType.BigInt, NotNull = true)] public long ParentId { get; set; }
+    [Column(Name = "a", DataType = DataType.Int, NotNull = true)] public int A { get; set; }
+    [Column(Name = "b", DataType = DataType.Int, NotNull = true)] public int B { get; set; }
+}
+
+[Table(Name = "t_event")]
+public class EventItem
+{
+    [Column(Name = "id", DataType = DataType.BigInt, Primary = true, AutoIncrement = true)] public long Id { get; set; }
+    [Column(Name = "client_event_id", DataType = DataType.VarChar, Size = 64, NotNull = true, Unique = true)] public string ClientEventId { get; set; } = "";
+    [Column(Name = "payload", DataType = DataType.VarChar, Size = 100)] public string? Payload { get; set; }
 }
 
 // rename pair

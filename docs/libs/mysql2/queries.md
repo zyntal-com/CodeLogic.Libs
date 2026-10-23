@@ -222,7 +222,12 @@ Result<long>    open  = await mysql.Query<Order>().Where(o => o.Status == "open"
 Result<decimal> top   = await mysql.Query<Order>().MaxAsync(o => o.Total);
 Result<decimal> total = await mysql.Query<Order>().Where(o => o.Day == today).SumAsync(o => o.Total);
 Result<double>  avg   = await mysql.Query<Order>().AverageAsync(o => o.Total);
+
+// Nullable selectors return null for SQL NULL (e.g. no matching rows) instead of default(T)
+Result<DateTime?> last  = await mysql.Query<Order>().Where(o => o.UserId == id).MaxAsync(o => (DateTime?)o.CreatedUtc);
 ```
+
+With a non-nullable selector, `MaxAsync` / `MinAsync` / `SumAsync` return `default(TResult)` (for example `DateTime.MinValue` or `0`) when the result is SQL NULL. Use a nullable cast in the selector when "no rows" must be distinguishable from a real value.
 
 ## Bulk update & delete
 

@@ -409,7 +409,8 @@ public sealed class MySQL2Library : ILibrary
             _context?.Logger,
             connectionId,
             dbConfig?.SlowQueryThresholdMs ?? 1000,
-            dbConfig?.MaxBatchInsertSize ?? 500);
+            dbConfig?.MaxBatchInsertSize ?? 500,
+            dbConfig?.DistinguishDuplicateKeyError ?? false);
     }
 
     /// <summary>
@@ -446,7 +447,8 @@ public sealed class MySQL2Library : ILibrary
             _context?.Logger,
             transactionScope,
             dbConfig?.SlowQueryThresholdMs ?? 1000,
-            dbConfig?.MaxBatchInsertSize ?? 500);
+            dbConfig?.MaxBatchInsertSize ?? 500,
+            dbConfig?.DistinguishDuplicateKeyError ?? false);
     }
 
     /// <summary>

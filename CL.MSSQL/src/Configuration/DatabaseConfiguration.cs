@@ -116,6 +116,17 @@ public sealed class SqlServerDatabaseConfig
     public int MaxBatchInsertSize { get; set; } = 500;
 
     /// <summary>
+    /// When true, a SQL Server duplicate key error (2627 / 2601) in <c>InsertAsync</c> and
+    /// <c>InsertManyAsync</c> returns the distinct error code <c>mssql.duplicate_key</c> and logs
+    /// at Warning instead of Error. When false (the default), the error code is
+    /// <c>mssql.insert_failed</c> / <c>mssql.bulk_insert_failed</c> and logs at Error.
+    /// </summary>
+    [ConfigField(Label = "Distinguish Duplicate Key Errors",
+        Description = "When true, SQL Server duplicate key errors (2627/2601) return error code mssql.duplicate_key and log at Warning. Default: false.",
+        Group = "Advanced", Collapsed = true)]
+    public bool DistinguishDuplicateKeyError { get; set; } = false;
+
+    /// <summary>
     /// Advisory ceiling on the length of a generated <c>IN (...)</c> list. Exceeding it does
     /// not fail or chunk the query — it logs one warning per query build naming the entity and
     /// the value count, so an unbounded <c>Contains</c> shows up before the server rejects it.

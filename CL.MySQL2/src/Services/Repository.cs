@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Linq.Expressions;
 using CL.MySQL2.Core;
+using CL.MySQL2.Models;
 using CodeLogic;
 using CodeLogic.Core.Logging;
 using CodeLogic.Core.Results;
@@ -29,12 +30,8 @@ public sealed class Repository<T> where T : class, new()
         string connectionId = "Default",
         int slowQueryThresholdMs = 1000,
         int maxBatchInsertSize = 500)
+        : this(connectionManager, logger, connectionId, slowQueryThresholdMs, maxBatchInsertSize, distinguishDuplicateKeyError: false)
     {
-        _connectionManager = connectionManager ?? throw new ArgumentNullException(nameof(connectionManager));
-        _logger = logger;
-        _connectionId = connectionId;
-        _slowQueryThresholdMs = slowQueryThresholdMs;
-        _maxBatchInsertSize = maxBatchInsertSize;
     }
 
     public Repository(
@@ -43,6 +40,33 @@ public sealed class Repository<T> where T : class, new()
         TransactionScope transactionScope,
         int slowQueryThresholdMs = 1000,
         int maxBatchInsertSize = 500)
+        : this(connectionManager, logger, transactionScope, slowQueryThresholdMs, maxBatchInsertSize, distinguishDuplicateKeyError: false)
+    {
+    }
+
+    public Repository(
+        ConnectionManager connectionManager,
+        ILogger? logger,
+        string connectionId,
+        int slowQueryThresholdMs,
+        int maxBatchInsertSize,
+        bool distinguishDuplicateKeyError)
+    {
+        _connectionManager = connectionManager ?? throw new ArgumentNullException(nameof(connectionManager));
+        _logger = logger;
+        _connectionId = connectionId;
+        _slowQueryThresholdMs = slowQueryThresholdMs;
+        _maxBatchInsertSize = maxBatchInsertSize;
+        DistinguishDuplicateKeyError = distinguishDuplicateKeyError;
+    }
+
+    public Repository(
+        ConnectionManager connectionManager,
+        ILogger? logger,
+        TransactionScope transactionScope,
+        int slowQueryThresholdMs,
+        int maxBatchInsertSize,
+        bool distinguishDuplicateKeyError)
     {
         _connectionManager = connectionManager ?? throw new ArgumentNullException(nameof(connectionManager));
         _logger = logger;
@@ -50,7 +74,15 @@ public sealed class Repository<T> where T : class, new()
         _connectionId = transactionScope.ConnectionId;
         _slowQueryThresholdMs = slowQueryThresholdMs;
         _maxBatchInsertSize = maxBatchInsertSize;
+        DistinguishDuplicateKeyError = distinguishDuplicateKeyError;
     }
+
+    /// <summary>
+    /// When true, duplicate key errors (MySQL error 1062) in <see cref="InsertAsync"/> and
+    /// <see cref="InsertManyAsync"/> return the distinct error code <c>mysql.duplicate_key</c>
+    /// and log at Warning instead of Error. Default: false.
+    /// </summary>
+    public bool DistinguishDuplicateKeyError { get; set; }
 
     /// <summary>
     /// Effective chunk size for <see cref="InsertManyAsync"/> / <see cref="UpsertManyAsync"/>.
@@ -99,6 +131,12 @@ public sealed class Repository<T> where T : class, new()
         }
         catch (Exception ex)
         {
+            if (DistinguishDuplicateKeyError && IsDuplicateKeyException(ex))
+            {
+                _logger?.Warning($"[MySQL2] InsertAsync duplicate key: {ex.Message}", ex);
+                return Result<T>.Failure(Error.FromException(ex, "mysql.duplicate_key"));
+            }
+
             _logger?.Error($"[MySQL2] InsertAsync failed: {ex.Message}", ex);
             return Result<T>.Failure(Error.FromException(ex, "mysql.insert_failed"));
         }
@@ -133,19 +171,7 @@ public sealed class Repository<T> where T : class, new()
 
                     await using var cmd = NewCommand(conn);
 
-                    var valueTuples = new string[count];
-                    for (var i = 0; i < count; i++)
-                    {
-                        var entity = list[start + i];
-                        var tupleParts = new string[insertCols.Length];
-                        for (var j = 0; j < insertCols.Length; j++)
-                        {
-                            var paramName = $"@p_{i}_{j}";
-                            tupleParts[j] = paramName;
-                            cmd.Parameters.Add(TypeConverter.CreateParameter(paramName, TypeConverter.ToDbValue(insertCols[j].Get(entity!), insertCols[j].EffectiveStorageType), insertCols[j].Attribute, insertCols[j].Property.PropertyType));
-                        }
-                        valueTuples[i] = "(" + string.Join(", ", tupleParts) + ")";
-                    }
+                    var valueTuples = BuildBatchParameters(cmd, list, start, count, insertCols);
 
                     cmd.CommandText = $"INSERT INTO {MySqlDialect.Quote(table)} ({columnList}) VALUES {string.Join(", ", valueTuples)};";
                     LogQuery(cmd.CommandText);
@@ -162,6 +188,12 @@ public sealed class Repository<T> where T : class, new()
         }
         catch (Exception ex)
         {
+            if (DistinguishDuplicateKeyError && IsDuplicateKeyException(ex))
+            {
+                _logger?.Warning($"[MySQL2] InsertManyAsync duplicate key: {ex.Message}", ex);
+                return Result<int>.Failure(Error.FromException(ex, "mysql.duplicate_key"));
+            }
+
             _logger?.Error($"[MySQL2] InsertManyAsync failed: {ex.Message}", ex);
             return Result<int>.Failure(Error.FromException(ex, "mysql.bulk_insert_failed"));
         }
@@ -260,19 +292,7 @@ public sealed class Repository<T> where T : class, new()
 
                     await using var cmd = NewCommand(conn);
 
-                    var valueTuples = new string[count];
-                    for (var i = 0; i < count; i++)
-                    {
-                        var entity = list[start + i];
-                        var tupleParts = new string[insertCols.Length];
-                        for (var j = 0; j < insertCols.Length; j++)
-                        {
-                            var paramName = $"@p_{i}_{j}";
-                            tupleParts[j] = paramName;
-                            cmd.Parameters.Add(TypeConverter.CreateParameter(paramName, TypeConverter.ToDbValue(insertCols[j].Get(entity!), insertCols[j].EffectiveStorageType), insertCols[j].Attribute, insertCols[j].Property.PropertyType));
-                        }
-                        valueTuples[i] = "(" + string.Join(", ", tupleParts) + ")";
-                    }
+                    var valueTuples = BuildBatchParameters(cmd, list, start, count, insertCols);
 
                     cmd.CommandText = $"INSERT INTO {MySqlDialect.Quote(table)} ({columnList}) VALUES {string.Join(", ", valueTuples)} ON DUPLICATE KEY UPDATE {updateList};";
                     LogQuery(cmd.CommandText);
@@ -843,5 +863,247 @@ public sealed class Repository<T> where T : class, new()
     {
         if (CodeLogicEnvironment.IsDevelopment)
             _logger?.Debug($"[MySQL2] SQL: {sql}");
+    }
+
+    /// <summary>
+    /// Inserts a single entity, ignoring duplicate-key conflicts (UNIQUE index or PRIMARY KEY).
+    /// If the row was inserted, auto-generated PK (if any) is set on <paramref name="entity"/>
+    /// and <see cref="InsertOutcome.Inserted"/> is returned. If a duplicate exists,
+    /// <see cref="InsertOutcome.Duplicate"/> is returned without raising an error.
+    /// Non-duplicate errors (data truncation, connection failure, etc.) return a failure Result.
+    /// </summary>
+    /// <remarks>
+    /// Implementation choice: We use <c>INSERT IGNORE</c> while validating connection warnings.
+    /// In MySqlConnector, connections use the default "found rows" semantics (<c>UseAffectedRows=false</c>),
+    /// which causes <c>INSERT ... ON DUPLICATE KEY UPDATE</c> to report matched rows rather than changed
+    /// rows, returning 1 for duplicates as well as new inserts.
+    /// In contrast, <c>INSERT IGNORE</c> accurately returns 1 for inserted rows and 0 for ignored duplicates
+    /// under found-rows semantics.
+    /// To ensure <c>INSERT IGNORE</c> does not silently swallow severe data errors (such as data truncation or
+    /// missing NOT NULL values), we intercept server warnings on the connection: any warning other than 1062
+    /// (duplicate key entry) is converted into a thrown exception and surfaced as an error.
+    /// </remarks>
+    public async Task<Result<InsertOutcome>> InsertIgnoreAsync(T entity, CancellationToken ct = default)
+    {
+        try
+        {
+            var (table, insertCols, columnList, _) = GetInsertMetadata();
+            var paramList = string.Join(", ", insertCols.Select(c => $"@{c.ColumnName}"));
+            var sql = $"INSERT IGNORE INTO {MySqlDialect.Quote(table)} ({columnList}) VALUES ({paramList});";
+
+            LogQuery(sql);
+            var sw = Stopwatch.StartNew();
+
+            var (affected, lastId) = await ExecuteInsertIgnoreAtomicAsync<(int, long)>(
+                async (conn, tx, throwIfWarned) =>
+            {
+                await using var cmd = NewCommand(conn);
+                cmd.Transaction = tx;
+                cmd.CommandText = sql;
+                foreach (var col in insertCols)
+                    cmd.Parameters.Add(TypeConverter.CreateParameter(
+                        $"@{col.ColumnName}",
+                        TypeConverter.ToDbValue(col.Get(entity), col.EffectiveStorageType),
+                        col.Attribute,
+                        col.Property.PropertyType));
+                var rows = await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+                throwIfWarned();
+                return (rows, cmd.LastInsertedId);
+            }, ct).ConfigureAwait(false);
+
+            sw.Stop();
+            LogSlowQuery(sql, sw.ElapsedMilliseconds);
+
+            if (affected > 0)
+            {
+                var pk = EntityMetadata<T>.PrimaryKey;
+                if (pk is not null && pk.IsAutoIncrement && lastId > 0)
+                {
+                    var converted = Convert.ChangeType(lastId, pk.Property.PropertyType);
+                    pk.Set(entity, converted);
+                }
+
+                QueryCache.Invalidate(table);
+                return Result<InsertOutcome>.Success(InsertOutcome.Inserted);
+            }
+
+            _logger?.Debug($"[MySQL2] InsertIgnoreAsync ignored duplicate key for `{table}`");
+            return Result<InsertOutcome>.Success(InsertOutcome.Duplicate);
+        }
+        catch (Exception ex)
+        {
+            _logger?.Error($"[MySQL2] InsertIgnoreAsync failed: {ex.Message}", ex);
+            return Result<InsertOutcome>.Failure(Error.FromException(ex, "mysql.insert_failed"));
+        }
+    }
+
+    /// <summary>
+    /// Bulk-inserts a collection of entities, ignoring duplicate-key conflicts (UNIQUE index or PRIMARY KEY).
+    /// Batches of up to <c>maxBatchInsertSize</c> are sent per round-trip.
+    /// Returns the number of rows actually inserted (duplicates contribute 0 to the count).
+    /// </summary>
+    public async Task<Result<int>> InsertManyIgnoreAsync(IEnumerable<T> entities, CancellationToken ct = default)
+    {
+        var list = entities as IList<T> ?? entities.ToList();
+        if (list.Count == 0) return Result<int>.Success(0);
+
+        try
+        {
+            var (table, insertCols, columnList, _) = GetInsertMetadata();
+
+            var inserted = 0;
+            var sw = Stopwatch.StartNew();
+
+            inserted = await ExecuteInsertIgnoreAtomicAsync<int>(async (conn, tx, throwIfWarned) =>
+            {
+                var total = 0;
+                for (var start = 0; start < list.Count; start += _maxBatchInsertSize)
+                {
+                    var end = Math.Min(start + _maxBatchInsertSize, list.Count);
+                    var count = end - start;
+
+                    await using var cmd = NewCommand(conn);
+                    cmd.Transaction = tx;
+                    var valueTuples = BuildBatchParameters(cmd, list, start, count, insertCols);
+
+                    cmd.CommandText = $"INSERT IGNORE INTO {MySqlDialect.Quote(table)} ({columnList}) VALUES {string.Join(", ", valueTuples)};";
+                    LogQuery(cmd.CommandText);
+                    var affected = await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+                    throwIfWarned();
+                    total += affected;
+                }
+                return total;
+            }, ct).ConfigureAwait(false);
+
+            sw.Stop();
+            _logger?.Debug($"[MySQL2] Bulk-inserted (ignore duplicates) {inserted} records into `{table}` in {sw.ElapsedMilliseconds}ms");
+            if (inserted > 0)
+                QueryCache.Invalidate(table);
+            return Result<int>.Success(inserted);
+        }
+        catch (Exception ex)
+        {
+            _logger?.Error($"[MySQL2] InsertManyIgnoreAsync failed: {ex.Message}", ex);
+            return Result<int>.Failure(Error.FromException(ex, "mysql.bulk_insert_failed"));
+        }
+    }
+
+    private const string InsertIgnoreSavepoint = "cl_mysql2_insert_ignore";
+
+    /// <summary>
+    /// Runs INSERT IGNORE statement(s) atomically. <c>INSERT IGNORE</c> downgrades not only
+    /// duplicate keys but also errors such as truncation (1265/1406) or a missing NOT NULL
+    /// value (1364) to warnings, and still writes the affected row. Any warning other than
+    /// ER_DUP_ENTRY (1062) therefore fails the call and everything the call wrote is rolled
+    /// back, so a failure Result always means nothing was written. Without an ambient
+    /// <see cref="TransactionScope"/> the call uses its own transaction; inside one it rolls
+    /// back to a savepoint, leaving earlier work in the caller's transaction untouched.
+    /// </summary>
+    private Task<TResult> ExecuteInsertIgnoreAtomicAsync<TResult>(
+        Func<MySqlConnection, MySqlTransaction, Action, Task<TResult>> body,
+        CancellationToken ct)
+        => ExecuteAsync(async conn =>
+        {
+            Exception? warning = null;
+            void OnInfoMessage(object sender, MySqlInfoMessageEventArgs args)
+            {
+                foreach (var err in args.Errors)
+                {
+                    if (err.ErrorCode == MySqlErrorCode.DuplicateKeyEntry) continue;
+                    warning ??= new InvalidOperationException(
+                        $"INSERT IGNORE produced MySQL warning {(int)err.ErrorCode}: {err.Message}");
+                    break;
+                }
+            }
+            void ThrowIfWarned()
+            {
+                if (warning is not null) throw warning;
+            }
+
+            var ownTransaction = _transactionScope is null
+                ? await conn.BeginTransactionAsync(ct).ConfigureAwait(false)
+                : null;
+            var transaction = ownTransaction ?? _transactionScope!.Transaction;
+            try
+            {
+                if (ownTransaction is null)
+                    await transaction.SaveAsync(InsertIgnoreSavepoint, ct).ConfigureAwait(false);
+
+                conn.InfoMessage += OnInfoMessage;
+                TResult result;
+                try
+                {
+                    result = await body(conn, transaction, ThrowIfWarned).ConfigureAwait(false);
+                }
+                finally
+                {
+                    conn.InfoMessage -= OnInfoMessage;
+                }
+
+                if (ownTransaction is not null)
+                    await ownTransaction.CommitAsync(ct).ConfigureAwait(false);
+                else
+                    await transaction.ReleaseAsync(InsertIgnoreSavepoint, ct).ConfigureAwait(false);
+                return result;
+            }
+            catch
+            {
+                try
+                {
+                    if (ownTransaction is not null)
+                        await ownTransaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+                    else
+                        await transaction.RollbackAsync(InsertIgnoreSavepoint, CancellationToken.None).ConfigureAwait(false);
+                }
+                catch (Exception rollbackEx)
+                {
+                    _logger?.Warning($"[MySQL2] INSERT IGNORE rollback failed: {rollbackEx.Message}");
+                }
+                throw;
+            }
+            finally
+            {
+                if (ownTransaction is not null)
+                    await ownTransaction.DisposeAsync().ConfigureAwait(false);
+            }
+        }, ct);
+
+    private static (string Table, ColumnMetadata[] InsertCols, string ColumnList, string ConflictCol) GetInsertMetadata()
+    {
+        var table = EntityMetadata<T>.TableName;
+        var insertCols = EntityMetadata<T>.Columns.Where(c => !c.IsAutoIncrement).ToArray();
+        var columnList = string.Join(", ", insertCols.Select(c => $"{MySqlDialect.Quote(c.ColumnName)}"));
+        var conflictCol = EntityMetadata<T>.PrimaryKey?.ColumnName
+            ?? (insertCols.Length > 0 ? insertCols[0].ColumnName : EntityMetadata<T>.Columns[0].ColumnName);
+        return (table, insertCols, columnList, conflictCol);
+    }
+
+    private static string[] BuildBatchParameters(MySqlCommand cmd, IList<T> list, int start, int count, ColumnMetadata[] insertCols)
+    {
+        var valueTuples = new string[count];
+        for (var i = 0; i < count; i++)
+        {
+            var entity = list[start + i];
+            var tupleParts = new string[insertCols.Length];
+            for (var j = 0; j < insertCols.Length; j++)
+            {
+                var paramName = $"@p_{i}_{j}";
+                tupleParts[j] = paramName;
+                cmd.Parameters.Add(TypeConverter.CreateParameter(
+                    paramName,
+                    TypeConverter.ToDbValue(insertCols[j].Get(entity!), insertCols[j].EffectiveStorageType),
+                    insertCols[j].Attribute,
+                    insertCols[j].Property.PropertyType));
+            }
+            valueTuples[i] = "(" + string.Join(", ", tupleParts) + ")";
+        }
+        return valueTuples;
+    }
+
+    private static bool IsDuplicateKeyException(Exception ex)
+    {
+        if (ex is MySqlException { Number: 1062 }) return true;
+        if (ex.InnerException is MySqlException { Number: 1062 }) return true;
+        return false;
     }
 }

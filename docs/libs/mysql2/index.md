@@ -73,6 +73,10 @@ var repo = mysql.GetRepository<User>();
 Result<User> created = await repo.InsertAsync(new User { Email = "ada@example.com", DisplayName = "Ada" });
 Result<int>  many    = await repo.InsertManyAsync(batch);   // chunked at 500 rows per INSERT
 
+// Idempotent insert: a duplicate unique/primary key is a normal outcome, not an error
+Result<InsertOutcome> outcome = await repo.InsertIgnoreAsync(evt);      // Inserted | Duplicate
+Result<int>           added   = await repo.InsertManyIgnoreAsync(batch); // rows actually inserted
+
 // Read
 Result<User?>       byId   = await repo.GetByIdAsync(1L);
 Result<List<User>>  byCol  = await repo.GetByColumnAsync(nameof(User.DisplayName), "Ada");
@@ -83,6 +87,11 @@ Result<List<User>>  found  = await repo.FindAsync(u => u.LoginCount > 10);
 // Paged
 Result<PagedResult<User>> page =
     await repo.GetPagedAsync(page: 1, pageSize: 25, orderByColumn: nameof(User.CreatedUtc), descending: true);
+
+// InsertIgnoreAsync / InsertManyIgnoreAsync use INSERT IGNORE. Any warning other than a
+// duplicate key (truncation, missing NOT NULL value) fails the call and rolls back what it
+// wrote, so a failure Result means nothing was written. Inside an explicit transaction the
+// call rolls back to a savepoint and leaves the rest of the transaction intact.
 
 // Update / upsert
 Result<User> updated = await repo.UpdateAsync(created.Value!);
@@ -153,7 +162,8 @@ Two files are written on first run.
 | `SlowQueryThresholdMs` | `1000` | Threshold for `SlowQueryEvent`. |
 | `CaptureExplainOnSlowQuery` | `false` | When true, a slow query also runs `EXPLAIN FORMAT=JSON` on a separate connection and attaches the plan to `SlowQueryEvent.ExplainJson`. Best-effort; see [Performance](performance.md). |
 | `QueryTimeoutMs` | `30000` | Command timeout for the commands the library creates, rounded up to whole seconds. 0 = inherit the connection string's `CommandTimeout`. The default equals that 30s default. |
-| `MaxBatchInsertSize` | `500` | Rows per batched `INSERT` in `InsertManyAsync` / `UpsertManyAsync`. |
+| `MaxBatchInsertSize` | `500` | Rows per batched `INSERT` in `InsertManyAsync` / `UpsertManyAsync` / `InsertManyIgnoreAsync`. |
+| `DistinguishDuplicateKeyError` | `false` | When true, MySQL error 1062 in `InsertAsync` / `InsertManyAsync` returns error code `mysql.duplicate_key` and logs a Warning instead of `mysql.insert_failed` / `mysql.bulk_insert_failed` at Error. Also settable per repository via `Repository<T>.DistinguishDuplicateKeyError`. |
 | `MaxInClauseValues` | `1000` | Advisory. A generated `IN (...)` list above this logs one warning per query build naming the entity and the count; nothing is chunked or rejected. |
 | `PreparedStatementCacheSize` | `256` | **Obsolete and ignored.** Statement caching is configured on the MySqlConnector connection string (`IgnorePrepare=false`). |
 | `TransientRetryCount` | `3` | Deadlock/lock-wait retries (0 disables). |
