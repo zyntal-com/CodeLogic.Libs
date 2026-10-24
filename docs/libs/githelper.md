@@ -329,6 +329,18 @@ The library writes `config.githelper.json` (section `githelper`) with defaults o
 
 `RepositoryConfiguration.IsValid()` returns `true` when both `RepositoryUrl` and `LocalPath` are non-empty.
 
+### Changing config while running
+
+With CodeLogic 4.9+, `config.githelper.json` applies live when changed through `Libraries.UpdateConfigAsync`, `Libraries.ReloadConfigAsync`, or the config file watcher. Only the repositories that changed are touched:
+
+- **Changed or removed repository**: dropped from the cache. Its old `GitRepository` is disposed once the git operation running on it finishes, and the next `GetRepositoryAsync` opens it with the new settings. Call `GetRepositoryAsync` again rather than keeping an old instance.
+- **Added repository**: available at once.
+- **Untouched repositories**: keep their open instances.
+- **Library-wide settings** (cache, timeouts, concurrency) apply at once. A changed `baseDirectory` re-resolves every relative `localPath`.
+- Added or changed repositories with `autoFetch` are fetched in the background.
+- Repositories added with `RegisterRepository` are kept across changes and never written to the file.
+- **`enabled`** can be switched either way.
+
 ## Health check
 
 `HealthCheckAsync()` reports whether the library is operational. When `Enabled` is `false` it reports *disabled* rather than failing. For per-repository status, use the manager's `HealthCheckAsync()`, which returns an id → healthy map.

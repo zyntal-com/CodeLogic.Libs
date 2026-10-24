@@ -1,6 +1,8 @@
 using CL.GitHelper.Models;
+using CodeLogic.Core.Configuration;
 using CodeLogic.Core.Logging;
 using System.Collections.Concurrent;
+using System.Text.Json;
 
 namespace CL.GitHelper.Services;
 
@@ -10,12 +12,16 @@ namespace CL.GitHelper.Services;
 /// </summary>
 public sealed class GitManager : IDisposable
 {
-    private readonly GitHelperConfig _config;
-    private readonly string _baseDirectory;
+    // The manager's own copy of the config: runtime registrations change it, and a config
+    // change swaps it as a whole, so readers always see one consistent snapshot.
+    private volatile GitHelperConfig _config;
+    private volatile string _baseDirectory;
     private readonly ILogger? _logger;
     private readonly ConcurrentDictionary<string, CachedEntry> _cache = new();
     private readonly SemaphoreSlim _cacheLock = new(1, 1);
-    private readonly Timer? _cleanupTimer;
+    // Repositories added with RegisterRepository rather than the config file; kept across config changes.
+    private readonly ConcurrentDictionary<string, byte> _runtimeIds = new(StringComparer.OrdinalIgnoreCase);
+    private Timer? _cleanupTimer;
     private bool _disposed;
 
     /// <summary>
@@ -28,18 +34,11 @@ public sealed class GitManager : IDisposable
     /// <param name="logger">Optional scoped logger.</param>
     internal GitManager(GitHelperConfig config, string baseDirectory, ILogger? logger = null)
     {
-        _config = config ?? throw new ArgumentNullException(nameof(config));
+        ArgumentNullException.ThrowIfNull(config);
+        _config = Clone(config);
         _baseDirectory = baseDirectory;
         _logger = logger;
-
-        if (config.EnableRepositoryCaching && config.CacheTimeoutMinutes > 0)
-        {
-            _cleanupTimer = new Timer(
-                _ => CleanupExpiredEntries(),
-                null,
-                TimeSpan.FromMinutes(1),
-                TimeSpan.FromMinutes(1));
-        }
+        UpdateCleanupTimer();
     }
 
     // ── Repository access ─────────────────────────────────────────────────────
@@ -116,6 +115,7 @@ public sealed class GitManager : IDisposable
             throw new ArgumentException($"Repository '{configuration.Id}' is already registered.", nameof(configuration));
 
         _config.Repositories.Add(configuration);
+        _runtimeIds[configuration.Id] = 0;
         _logger?.Info($"Registered repository: {configuration.Id}");
     }
 
@@ -132,8 +132,88 @@ public sealed class GitManager : IDisposable
         if (cfg is null) return false;
 
         _config.Repositories.Remove(cfg);
+        _runtimeIds.TryRemove(repositoryId, out _);
         _logger?.Info($"Unregistered repository: {repositoryId}");
         return true;
+    }
+
+    // ── Live config changes ──────────────────────────────────────────────────
+
+    /// <summary>
+    /// Switches to a changed configuration. Repositories that were removed or whose settings
+    /// changed are evicted from the cache and disposed once their running git operation finishes;
+    /// untouched repositories keep their instances. A changed base directory re-resolves every
+    /// relative path, so all cached instances are replaced. Repositories added with
+    /// <see cref="RegisterRepository"/> are kept unless the file now defines the same ID.
+    /// </summary>
+    internal async Task<KeyedDiff<RepositoryConfiguration>> ApplyConfigurationAsync(GitHelperConfig config, string baseDirectory)
+    {
+        var next = Clone(config);
+        foreach (var id in next.Repositories.Select(r => r.Id))
+            _runtimeIds.TryRemove(id, out _);
+        next.Repositories.AddRange(_config.Repositories.Where(r => _runtimeIds.ContainsKey(r.Id)));
+
+        var diff = ConfigDiff.Keyed(ToMap(_config), ToMap(next), StringComparer.OrdinalIgnoreCase);
+        var retired = new List<GitRepository>();
+
+        await _cacheLock.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            var evictAll = !string.Equals(baseDirectory, _baseDirectory, StringComparison.Ordinal)
+                           || !next.EnableRepositoryCaching;
+            var evict = evictAll
+                ? _cache.Keys.ToList()
+                : diff.Removed.Keys.Concat(diff.Changed.Keys).ToList();
+            foreach (var id in evict)
+                if (_cache.TryRemove(id, out var entry))
+                    retired.Add(entry.Repository);
+
+            _config = next;
+            _baseDirectory = baseDirectory;
+            UpdateCleanupTimer();
+        }
+        finally
+        {
+            _cacheLock.Release();
+        }
+
+        // Not awaited: a long clone or fetch on a retired instance must not block the config change.
+        foreach (var repository in retired)
+            _ = repository.DisposeWhenIdleAsync();
+
+        return diff;
+    }
+
+    /// <summary>Disposes every cached repository once idle and stops the cleanup timer (library disabled live).</summary>
+    internal void Retire()
+    {
+        _cleanupTimer?.Dispose();
+        _cleanupTimer = null;
+        foreach (var id in _cache.Keys.ToList())
+            if (_cache.TryRemove(id, out var entry))
+                _ = entry.Repository.DisposeWhenIdleAsync();
+    }
+
+    private static Dictionary<string, RepositoryConfiguration> ToMap(GitHelperConfig config)
+    {
+        var map = new Dictionary<string, RepositoryConfiguration>(StringComparer.OrdinalIgnoreCase);
+        foreach (var repository in config.Repositories) map.TryAdd(repository.Id, repository);
+        return map;
+    }
+
+    private static GitHelperConfig Clone(GitHelperConfig config) =>
+        JsonSerializer.Deserialize<GitHelperConfig>(JsonSerializer.Serialize(config))!;
+
+    private void UpdateCleanupTimer()
+    {
+        var needed = _config.EnableRepositoryCaching && _config.CacheTimeoutMinutes > 0;
+        if (needed && _cleanupTimer is null)
+            _cleanupTimer = new Timer(_ => CleanupExpiredEntries(), null, TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(1));
+        else if (!needed && _cleanupTimer is not null)
+        {
+            _cleanupTimer.Dispose();
+            _cleanupTimer = null;
+        }
     }
 
     // ── Cache management ──────────────────────────────────────────────────────
