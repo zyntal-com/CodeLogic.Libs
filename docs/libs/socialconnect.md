@@ -380,6 +380,16 @@ The library writes `config.socialconnect.json` (section `socialconnect`) with de
 
 **Validation** — `Steam.Enabled` requires a non-empty `ApiKey`; `Steam.AuthEnabled` requires a non-empty `AppId`; `CacheTtlSeconds` must be greater than 0. Steam (and Steam auth) are disabled by default.
 
+### Changing config while running
+
+With CodeLogic 4.1+, `config.socialconnect.json` applies live when changed through `Libraries.UpdateConfigAsync`, `Libraries.ReloadConfigAsync`, or the config file watcher. Only the service whose settings changed is rebuilt:
+
+- **Discord settings**: `social.Discord` is replaced.
+- **Steam settings**: `social.Steam` and `social.Auth` are replaced; the profile cache starts empty.
+- **Enabled flags**: each service, and the whole library, can be switched on or off.
+
+A replaced service is disposed only after its request timeout, so requests already running on it finish. Read `social.Discord` / `social.Steam` / `social.Auth` when you use them rather than keeping an old instance.
+
 ## Events
 
 All events implement `IEvent` and are published to the CodeLogic event bus.
