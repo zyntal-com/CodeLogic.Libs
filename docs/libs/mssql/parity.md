@@ -14,7 +14,7 @@
 | Transactions and raw SQL | `SqlConnection`, `SqlCommand`, and `SqlTransaction`; repositories and the query builder enlist in a `TransactionScope`, raw SQL does not |
 | Soft delete and retention | Automatic read filters (reads, `CountAsync` and paging alike) and repeated `DELETE TOP (@batch)` from a worker with a live entity list |
 | Cache and invalidation | In-process/custom stores, smart pools, table versions, and events |
-| Schema synchronization | `sys.*` catalogs; schemas, identities, defaults, checks, keys, indexes with `INCLUDE`, FKs, collations, and comments |
+| Schema synchronization | `sys.*` catalogs; schemas, identities, defaults, checks, keys, indexes with `INCLUDE`, FKs, collations, and comments; a drifted index is warned about at every level and rebuilt only where drops are allowed (`DriftPending` under Production) |
 | Schema modes and CRC | Production, Developer, and Migration reconciliation with schema state in `[dbo].[__schema_state]` |
 | Migrations and rollback | Ordered/checksummed migrations in `[dbo].[__migrations]` using `SYSUTCDATETIME()` |
 | Cross-node lock | Dedicated session using `sys.sp_getapplock` |

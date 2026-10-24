@@ -30,6 +30,25 @@ public sealed class AggNullableRow
     public int Amount { get; set; }
 }
 
+[Table(Name = "it_index_drift", Schema = "dbo")]
+[CompositeIndex("IX_it_index_drift_ab", "a", "b")]
+public sealed class IndexDriftRow
+{
+    [Column(Name = "id", DataType = DataType.BigInt, Primary = true, AutoIncrement = true)] public long Id { get; set; }
+    [Column(Name = "a", DataType = DataType.Int, NotNull = true)] public int A { get; set; }
+    [Column(Name = "b", DataType = DataType.Int, NotNull = true)] public int B { get; set; }
+}
+
+// Same table, same index name, columns declared in the opposite order.
+[Table(Name = "it_index_drift", Schema = "dbo")]
+[CompositeIndex("IX_it_index_drift_ab", "b", "a")]
+public sealed class IndexDriftRowReordered
+{
+    [Column(Name = "id", DataType = DataType.BigInt, Primary = true, AutoIncrement = true)] public long Id { get; set; }
+    [Column(Name = "a", DataType = DataType.Int, NotNull = true)] public int A { get; set; }
+    [Column(Name = "b", DataType = DataType.Int, NotNull = true)] public int B { get; set; }
+}
+
 // Mirrors MySQL2.Tests.InsertIgnoreAndAggregateNullablesTests so both providers keep the
 // same observable behaviour for InsertIgnore, the duplicate-key opt-in and nullable aggregates.
 // The non-duplicate failure case uses a NOT NULL violation (error 515) rather than an over-long
@@ -192,5 +211,43 @@ public sealed class InsertIgnoreAndAggregateNullablesTests
         Assert.Equal(t1, (await Mssql.Query<AggNullableRow>().MinAsync(r => (DateTime?)r.CreatedUtc)).Value);
         Assert.Equal(12, (await Mssql.Query<AggNullableRow>().SumAsync(r => (int?)r.Amount)).Value);
         Assert.Equal(12, (await Mssql.Query<AggNullableRow>().SumAsync(r => r.Amount)).Value);
+    }
+
+    [DbFact]
+    public async Task Index_Drift_Is_Reported_Not_Dropped_At_Safe_And_Deferred_As_DriftPending()
+    {
+        await _fx.Exec("DROP TABLE IF EXISTS [dbo].[it_index_drift]");
+        await Mssql.SchemaState.RemoveStateAsync("it_index_drift");
+        Assert.True((await Mssql.SyncTableAsync<IndexDriftRow>(createBackup: false)).IsSuccess);
+
+        var analyzer = new CL.MSSQL.Core.SchemaAnalyzer();
+        var (safe, full) = await Mssql.ConnectionManager.ExecuteWithConnectionAsync(async conn =>
+            (await analyzer.GenerateAlterStatementsAsync(typeof(IndexDriftRowReordered), conn, SchemaSyncLevel.Safe),
+             await analyzer.GenerateAlterStatementsAsync(typeof(IndexDriftRowReordered), conn, SchemaSyncLevel.Full)),
+            "Default");
+
+        // Safe never drops or rebuilds a drifted index (parity with MySQL2 / PostgreSQL).
+        Assert.DoesNotContain(safe, s => s.Contains("DROP", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(safe, s => s.Contains("IX_it_index_drift_ab", StringComparison.OrdinalIgnoreCase));
+        // A level allowed to drop still rebuilds it to the model's column order.
+        Assert.Contains(full, s => s.Contains("DROP INDEX [IX_it_index_drift_ab]", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(full, s => s.Contains("CREATE INDEX [IX_it_index_drift_ab]", StringComparison.OrdinalIgnoreCase) && s.Contains("([b], [a])"));
+
+        Mssql.SetSyncMode(SyncMode.Production);
+        try
+        {
+            var prod = (await Mssql.SyncTableAsync<IndexDriftRowReordered>(createBackup: false)).Value!;
+            Assert.DoesNotContain(prod.Operations, s => s.Contains("DROP", StringComparison.OrdinalIgnoreCase));
+            Assert.True(prod.DriftPending);
+
+            Mssql.SetSyncMode(SyncMode.Migration);
+            var migrated = (await Mssql.SyncTableAsync<IndexDriftRowReordered>(createBackup: false)).Value!;
+            Assert.Contains(migrated.Operations, s => s.Contains("DROP INDEX [IX_it_index_drift_ab]", StringComparison.OrdinalIgnoreCase));
+            Assert.False(migrated.DriftPending);
+        }
+        finally
+        {
+            Mssql.SetSyncMode(SyncMode.Developer);
+        }
     }
 }

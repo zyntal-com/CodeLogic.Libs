@@ -231,8 +231,16 @@ internal sealed class SchemaAnalyzer
                 && !NormalizeSql(catalogStatement).Equals(NormalizeSql(statement), StringComparison.OrdinalIgnoreCase);
             if (definitionChanged && !droppedIndexes.Contains(indexName))
             {
-                result.Add($"DROP INDEX {SqlServerDialect.Quote(indexName)} ON {qualified};");
-                droppedIndexes.Add(indexName);
+                _logger?.Warning(
+                    $"[MSSQL] Index [{indexName}] on table [{table}] has drifted. " +
+                    $"Existing: {catalogStatement} Model: {statement}");
+                // Rebuilding means a DROP, so it waits for a level allowed to drop; Safe leaves the
+                // index alone and the Full-level check flags the table DriftPending instead.
+                if (level >= SchemaSyncLevel.Additive)
+                {
+                    result.Add($"DROP INDEX {SqlServerDialect.Quote(indexName)} ON {qualified};");
+                    droppedIndexes.Add(indexName);
+                }
             }
             if (!indexes.Contains(indexName) || droppedIndexes.Contains(indexName)) result.Add(statement);
         }

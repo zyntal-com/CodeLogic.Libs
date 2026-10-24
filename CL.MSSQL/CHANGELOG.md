@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026-10-24
+
+### Added
+
+- **Index drift warning** (parity with CL.MySQL2 and CL.PostgreSQL): when an index declared on
+  the model (`[CompositeIndex]`, `[Index]` or `Column.Index`) exists under the same name but with a
+  different definition (key columns or their order, `UNIQUE`, `INCLUDE`), schema sync logs a
+  Warning naming the table and both definitions.
+
+### Changed — behaviour
+
+- **`Production` (Safe) no longer rebuilds a drifted index.** It used to emit `DROP INDEX` +
+  `CREATE INDEX` at every level, which contradicted "Production never drops". At
+  `SchemaSyncLevel.Safe` the index is now left as it is and the table is flagged `DriftPending`;
+  `Developer`, `Migration` (and explicit `Additive` / `Full` levels) still drop and recreate it.
+  Indexes dropped so a column can be altered are unchanged.
+
 ## 2026-10-23
 
 ### Added
