@@ -142,7 +142,7 @@ public static class CLU_Imaging
 
                 using var cropped = new SKBitmap(targetWidth, targetHeight);
                 using var canvas  = new SKCanvas(cropped);
-                canvas.DrawBitmap(resized, -cropX, -cropY);
+                canvas.DrawBitmap(resized, -cropX, -cropY, SKSamplingOptions.Default);
                 resized.Dispose();
                 resized = cropped.Copy();
             }

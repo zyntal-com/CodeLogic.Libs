@@ -19,8 +19,8 @@
   </PropertyGroup>  <!-- Always restore these so the project compiles on all platforms.
        The Windows provider uses them at runtime; the Linux provider doesn't. -->
   <ItemGroup>
-    <PackageReference Include="System.Diagnostics.PerformanceCounter" Version="9.*" />
-    <PackageReference Include="System.Management" Version="9.*" />
+    <PackageReference Include="System.Diagnostics.PerformanceCounter" Version="10.*" />
+    <PackageReference Include="System.Management" Version="10.*" />
   </ItemGroup>
   <ItemGroup>
     <None Include="README.md" Pack="true" PackagePath="/" />

@@ -15,12 +15,12 @@
     <NoWarn>CS1591</NoWarn>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Microsoft.Data.Sqlite" Version="9.*" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.*" />
     <!-- Microsoft.Data.Sqlite 9.0.x pins SQLitePCLRaw 2.1.10, whose native e_sqlite3 binary
          carries the high-severity advisory GHSA-2m69-gcr7-jv3q (affects lib.e_sqlite3 <= 2.1.11).
          The fixed native binary ships as lib.e_sqlite3 3.50.3, brought in by the 3.0.3 managed
          bundle. Pin it directly so it overrides the transitive 2.1.10 family. -->
-    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.3" />
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.5" />
   </ItemGroup>  <ItemGroup>
     <None Include="README.md" Pack="true" PackagePath="/" />
   </ItemGroup>
