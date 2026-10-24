@@ -91,6 +91,13 @@ await pg.SyncTableAsync<User>();
 var repo = pg.GetRepository<User>();
 var created = await repo.InsertAsync(new User { Email = "ada@example.com" });
 
+// Idempotent insert: a duplicate unique/primary key is a normal outcome, not an error
+// (INSERT ... ON CONFLICT DO NOTHING). Any other error rolls back everything the call wrote
+// (own transaction, or a savepoint inside an explicit transaction scope), so a failure Result
+// means nothing was written and the caller's transaction stays usable.
+Result<InsertOutcome> outcome = await repo.InsertIgnoreAsync(evt);      // Inserted | Duplicate
+Result<int>           added   = await repo.InsertManyIgnoreAsync(batch); // rows actually inserted
+
 var recent = await pg.Query<User>()
     .Where(u => u.CreatedUtc >= DateTime.UtcNow.AddDays(-7))
     .OrderByDescending(u => u.CreatedUtc)
@@ -161,6 +168,7 @@ pg.ConnectionManager.RegisterConfiguration(new PostgreSqlDatabaseConfig
 | `syncMode` | `production` | See [Schema & Migrations](schema-migrations.md). |
 | `queryTimeoutMs` | `30000` | Command timeout applied to every command the library creates, rounded up to whole seconds. `0` = no timeout. Matches Npgsql's own 30-second default. |
 | `maxBatchInsertSize` | `500` | Rows per batched insert / upsert, capped further by PostgreSQL's 65535-parameter limit. |
+| `distinguishDuplicateKeyError` | `false` | When true, a unique violation (SQLSTATE `23505`) in `InsertAsync` / `InsertManyAsync` returns error code `postgresql.duplicate_key` and logs a Warning instead of `postgresql.insert_failed` / `postgresql.bulk_insert_failed` at Error. Also settable per repository via `Repository<T>.DistinguishDuplicateKeyError`. |
 | `maxInClauseValues` | `1000` | Warn (at most once per query build, naming the entity and the count) when a generated `IN` list is wider than this. The list is still emitted whole — nothing is chunked and nothing throws. |
 | `slowQueryThresholdMs` | `1000` | Queries at or above this duration raise a `SlowQueryEvent`. |
 | `captureExplainOnSlowQuery` | `false` | Run `EXPLAIN (FORMAT JSON)` for a slow query and attach the plan to `SlowQueryEvent.ExplainJson`. Best-effort: fetched off the query path, never inside the caller's transaction, and a failure leaves the payload null. |

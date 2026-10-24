@@ -132,6 +132,13 @@ Scalar terminals on the query builder: `CountAsync`, `SumAsync`, `MinAsync`, `Ma
 `AverageAsync`. (`Count` / `Any` are available *inside* a grouped projection as `g.Count()`
 and `g.Any()`; there is no `AnyAsync` terminal.)
 
+```csharp
+// Nullable selectors return null for SQL NULL (e.g. no matching rows) instead of default(T)
+Result<DateTime?> last = await pg.Query<Order>().Where(o => o.UserId == id).MaxAsync(o => (DateTime?)o.CreatedUtc);
+```
+
+With a non-nullable selector, `MaxAsync` / `MinAsync` / `SumAsync` return `default(TResult)` (for example `DateTime.MinValue` or `0`) when the result is SQL NULL.
+
 `SqlFn` exposes server-side functions for use inside a **grouped** query's key or projection.
 They are not translated in an ungrouped `Select`, which supports plain column access only —
 that throws `NotSupportedException` when the query is built.

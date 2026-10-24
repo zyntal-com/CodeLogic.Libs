@@ -49,6 +49,9 @@ await pg.SyncTableAsync<User>();
 var repo = pg.GetRepository<User>();
 var created = await repo.InsertAsync(new User { Email = "ada@example.com" });
 
+// Idempotent insert (re-sent batches keyed by a unique id): duplicates are a normal outcome
+var outcome = await repo.InsertIgnoreAsync(new User { Email = "ada@example.com" });
+
 // Fluent query builder
 var recent = await pg.Query<User>()
     .Where(u => u.CreatedUtc >= DateTime.UtcNow.AddDays(-7))

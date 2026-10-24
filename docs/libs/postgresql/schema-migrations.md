@@ -64,7 +64,10 @@ With no explicit `DataType` the CLR type decides, and it picks a native PostgreS
 ### Other attributes
 
 - `[CompositeIndex("name", "col", "col2", Unique = true)]` on the class. A unique composite
-  becomes a table constraint, so `ON CONFLICT` can arbitrate on it.
+  becomes a table constraint, so `ON CONFLICT` can arbitrate on it. Indexes are matched by
+  **name**: if an existing index keeps its name but the model's columns differ, sync logs a
+  column-drift warning and does not rebuild it. Give the index a new name to have the new
+  definition created (the old one stays until removed by a destructive sync or by hand).
 - `[Index(Name, Unique, Include)]` on a property. `Include` becomes a real `INCLUDE` covering
   clause (PostgreSQL 11+).
 - `[ForeignKey("table", "column", OnDelete, OnUpdate)]`. The referenced table is qualified

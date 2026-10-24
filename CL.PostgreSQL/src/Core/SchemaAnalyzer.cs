@@ -416,12 +416,19 @@ internal sealed class SchemaAnalyzer
         foreach (var ci in compositeIndexes)
         {
             modelIndexNames.Add(ci.IndexName);
-            if (!existingIndexes.ContainsKey(ci.IndexName))
+            if (!existingIndexes.TryGetValue(ci.IndexName, out var existing))
             {
                 var cols = string.Join(", ", ci.ColumnNames.Select(c => $"{PostgreSqlDialect.Quote(c)}"));
                 alterStatements.Add(ci.Unique
                     ? $"ALTER TABLE {qualifiedTable} ADD CONSTRAINT {PostgreSqlDialect.Quote(ci.IndexName)} UNIQUE ({cols});"
                     : $"CREATE INDEX IF NOT EXISTS {PostgreSqlDialect.Quote(ci.IndexName)} ON {qualifiedTable} ({cols});");
+            }
+            else if (!existing.Columns.SequenceEqual(ci.ColumnNames, StringComparer.OrdinalIgnoreCase))
+            {
+                // Never dropped or rebuilt automatically, at any level: report it and leave it.
+                _logger?.Warning(
+                    $"[PostgreSQL] Composite index `{ci.IndexName}` on table `{tableName}` has drifted columns. " +
+                    $"Existing: [{string.Join(", ", existing.Columns)}], Model: [{string.Join(", ", ci.ColumnNames)}].");
             }
         }
 
@@ -606,7 +613,12 @@ internal sealed class SchemaAnalyzer
             SELECT ic.relname,
                    i.indisunique,
                    EXISTS (SELECT 1 FROM pg_catalog.pg_constraint con
-                           WHERE con.conindid = i.indexrelid) AS is_constraint
+                           WHERE con.conindid = i.indexrelid) AS is_constraint,
+                   ARRAY(SELECT a.attname::text
+                         FROM unnest(i.indkey) WITH ORDINALITY AS k(attnum, ord)
+                         JOIN pg_catalog.pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k.attnum
+                         WHERE k.ord <= i.indnkeyatts
+                         ORDER BY k.ord) AS key_columns
             FROM pg_catalog.pg_index i
             JOIN pg_catalog.pg_class ic    ON ic.oid = i.indexrelid
             JOIN pg_catalog.pg_class c     ON c.oid = i.indrelid
@@ -620,7 +632,7 @@ internal sealed class SchemaAnalyzer
         while (await reader.ReadAsync(ct).ConfigureAwait(false))
         {
             var name = reader.GetString(0);
-            result[name] = new IndexInfo(name, reader.GetBoolean(1), reader.GetBoolean(2));
+            result[name] = new IndexInfo(name, reader.GetBoolean(1), reader.GetBoolean(2), reader.GetFieldValue<string[]>(3));
         }
 
         return result;
@@ -963,5 +975,5 @@ internal sealed class SchemaAnalyzer
         string? CharacterSet,
         string? Comment);
 
-    private record IndexInfo(string Name, bool IsUnique, bool IsConstraint);
+    private record IndexInfo(string Name, bool IsUnique, bool IsConstraint, IReadOnlyList<string> Columns);
 }

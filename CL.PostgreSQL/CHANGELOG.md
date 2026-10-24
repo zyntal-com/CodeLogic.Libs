@@ -3,6 +3,32 @@
 All notable changes to **CodeLogic.PostgreSQL** are documented here. Versions follow
 [Semantic Versioning](https://semver.org/).
 
+## 2026-10-24
+
+### Added
+
+- **`Repository<T>.InsertIgnoreAsync` and `InsertManyIgnoreAsync`** (API parity with CL.MySQL2
+  and CL.MSSQL). A duplicate key (any UNIQUE constraint, unique index or PRIMARY KEY) is a normal
+  outcome: `InsertIgnoreAsync` returns `InsertOutcome.Inserted` (auto PK populated from
+  `RETURNING`) or `InsertOutcome.Duplicate`; `InsertManyIgnoreAsync` returns the number of rows
+  actually inserted, and duplicates within the batch itself count as 0 too. No exception, no Error log.
+  - Built on `INSERT ... ON CONFLICT DO NOTHING` with no conflict target, so every unique
+    arbiter is covered.
+  - **Atomic on failure**: the call runs in its own transaction, or a savepoint inside an explicit
+    `TransactionScope`; any non-duplicate error (NOT NULL, CHECK, FK, ...) rolls back everything
+    the call wrote, so a failure `Result` means nothing was written. Inside a scope the savepoint
+    also keeps the caller's transaction usable, which PostgreSQL otherwise aborts on any error.
+- **Opt-in `DistinguishDuplicateKeyError`** (`PostgreSqlDatabaseConfig` or `Repository<T>`
+  property): a unique violation (SQLSTATE `23505`) in `InsertAsync` / `InsertManyAsync` returns
+  error code `postgresql.duplicate_key` and logs at Warning. Default `false` keeps
+  `postgresql.insert_failed` / `postgresql.bulk_insert_failed` at Error.
+- **Nullable aggregate results**: `MaxAsync` / `MinAsync` / `SumAsync` accept nullable selectors
+  such as `r => (DateTime?)r.CreatedUtc` and return `null` for SQL NULL (for example no matching
+  rows). Non-nullable selectors still return `default(TResult)`.
+- **`[CompositeIndex]` column drift warning**: when an index declared on the model exists under
+  the same name but with different columns or column order, schema sync logs a Warning naming
+  the table, the index and both column lists. The index is never dropped or rebuilt automatically.
+
 ## 2026-09-13
 
 ### Changed

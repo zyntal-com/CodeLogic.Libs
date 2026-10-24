@@ -398,7 +398,8 @@ public sealed class PostgreSQLLibrary : ILibrary
             _context?.Logger,
             connectionId,
             dbConfig?.SlowQueryThresholdMs ?? 1000,
-            dbConfig?.MaxBatchInsertSize ?? 500);
+            dbConfig?.MaxBatchInsertSize ?? 500,
+            dbConfig?.DistinguishDuplicateKeyError ?? false);
     }
 
     /// <summary>
@@ -435,7 +436,8 @@ public sealed class PostgreSQLLibrary : ILibrary
             _context?.Logger,
             transactionScope,
             dbConfig?.SlowQueryThresholdMs ?? 1000,
-            dbConfig?.MaxBatchInsertSize ?? 500);
+            dbConfig?.MaxBatchInsertSize ?? 500,
+            dbConfig?.DistinguishDuplicateKeyError ?? false);
     }
 
     /// <summary>

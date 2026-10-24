@@ -174,3 +174,15 @@ public enum SyncMode
     /// </summary>
     Migration = 2
 }
+
+/// <summary>
+/// Result outcome of an <see cref="Services.Repository{T}.InsertIgnoreAsync"/> operation.
+/// </summary>
+public enum InsertOutcome
+{
+    /// <summary>Row was successfully inserted.</summary>
+    Inserted,
+
+    /// <summary>A row with matching unique/primary key already existed; insert was ignored.</summary>
+    Duplicate
+}

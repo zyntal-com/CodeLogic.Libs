@@ -83,7 +83,13 @@ internal sealed class PostgreSqlExpressionVisitor : ExpressionVisitor
     /// </summary>
     public static string TranslateSelector<T, TKey>(Expression<Func<T, TKey>> selector)
     {
-        return selector.Body switch
+        var expr = selector.Body;
+        while (expr is UnaryExpression unary && (unary.NodeType == ExpressionType.Convert || unary.NodeType == ExpressionType.ConvertChecked))
+        {
+            expr = unary.Operand;
+        }
+
+        return expr switch
         {
             MemberExpression member => GetColumnName(member.Member),
             UnaryExpression { Operand: MemberExpression inner } => GetColumnName(inner.Member),
