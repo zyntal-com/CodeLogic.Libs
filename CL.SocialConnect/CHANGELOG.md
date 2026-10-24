@@ -7,7 +7,7 @@ All notable changes to **CodeLogic.SocialConnect** are documented here. Versions
 
 ### Added
 
-- **Live config changes** (requires CodeLogic 4.1+). `SocialConnectLibrary` implements
+- **Live config changes** (requires CodeLogic 4.9+). `SocialConnectLibrary` implements
   `IConfigReloadable`: a change to `config.socialconnect.json` made through `Libraries.UpdateConfigAsync`,
   `Libraries.ReloadConfigAsync` or the config file watcher is applied without a restart, rebuilding only
   the service whose settings changed (`Discord`, or `Steam` + `Auth`). Services and the library can be

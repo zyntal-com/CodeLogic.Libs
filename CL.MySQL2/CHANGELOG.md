@@ -8,7 +8,7 @@ NuGet package version of `CodeLogic.MySQL2`.
 
 ### Added
 
-- **Live config changes per database** (requires CodeLogic 4.1+). `MySQL2Library` implements
+- **Live config changes per database** (requires CodeLogic 4.9+). `MySQL2Library` implements
   `IConfigReloadable`: a change to `config.mysql.json` made through `Libraries.UpdateConfigAsync`,
   `Libraries.ReloadConfigAsync` or the config file watcher is applied without a restart and touches
   only the databases that changed. Changed connection settings clear that database's idle pool,

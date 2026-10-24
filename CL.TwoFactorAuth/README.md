@@ -72,7 +72,7 @@ Full guide: **[CL.TwoFactorAuth documentation](https://zyntal-com.github.io/Code
 
 ## Requirements
 
-- [CodeLogic 4](https://github.com/zyntal-com/CodeLogic) · .NET 10
+- [CodeLogic 4.9+](https://github.com/zyntal-com/CodeLogic) · .NET 10
 - Otp.NET 1.x · QRCoder 1.x
 
 ## License

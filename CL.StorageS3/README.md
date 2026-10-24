@@ -116,7 +116,7 @@ Full guide: **[CL.StorageS3 documentation](https://zyntal-com.github.io/CodeLogi
 
 ## Requirements
 
-- [CodeLogic 4](https://github.com/zyntal-com/CodeLogic) · .NET 10
+- [CodeLogic 4.9+](https://github.com/zyntal-com/CodeLogic) · .NET 10
 - AWSSDK.S3 4.x
 
 ## License

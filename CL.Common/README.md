@@ -70,7 +70,7 @@ Full guide: **[CL.Common documentation](https://zyntal-com.github.io/CodeLogic.L
 ## Requirements
 
 - No configuration required — `CL.Common` is a stateless utility library and writes no config file.
-- [CodeLogic 4](https://github.com/zyntal-com/CodeLogic) · .NET 10
+- [CodeLogic 4.9+](https://github.com/zyntal-com/CodeLogic) · .NET 10
 - SkiaSharp 3.x (imaging) · K4os.Compression.LZ4 1.x (LZ4) · Newtonsoft.Json 13.x
 
 ## License

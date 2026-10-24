@@ -286,7 +286,7 @@ Do not dispose reusable clients returned by `GetNativeClient`; dispose session l
 ### Editing the config while running
 
 The same rules apply when a `config.storage*.json` section is changed outside the library (CodeLogic
-4.1+) — through `Libraries.UpdateConfigAsync`, `Libraries.ReloadConfigAsync`, or the config file
+4.9+) — through `Libraries.UpdateConfigAsync`, `Libraries.ReloadConfigAsync`, or the config file
 watcher:
 
 - **Changed or added connection**: built and health-checked, then swapped in; the connection it

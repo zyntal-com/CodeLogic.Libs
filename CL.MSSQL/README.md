@@ -64,7 +64,7 @@ Configuration lives in `config.mssql.json`. Structured SQL-login and integrated-
 }
 ```
 
-Config changes apply live (CodeLogic 4.1+): updating `config.mssql.json` through `Libraries.UpdateConfigAsync`, `Libraries.ReloadConfigAsync` or the config file watcher reconnects only the databases whose connection settings changed, updates other settings in place, and leaves untouched databases connected. See [Changing config while running](../docs/libs/mssql/index.md#changing-config-while-running).
+Config changes apply live (CodeLogic 4.9+): updating `config.mssql.json` through `Libraries.UpdateConfigAsync`, `Libraries.ReloadConfigAsync` or the config file watcher reconnects only the databases whose connection settings changed, updates other settings in place, and leaves untouched databases connected. See [Changing config while running](../docs/libs/mssql/index.md#changing-config-while-running).
 
 Highlights include `OUTPUT INSERTED` identity handling, dynamically parameter-capped batches, non-`MERGE` serializable upserts, `TOP`/`OFFSET … FETCH`, SQL Server-native type inference and JSON checks, `sys.*` catalog schema management, `sp_getapplock`, catalog DDL snapshots, transient Azure retry, rolling-window N+1 detection, and cached estimated ShowPlan XML capture.
 

@@ -105,7 +105,7 @@ Full guide: **[CL.NetUtils documentation](https://zyntal-com.github.io/CodeLogic
 
 ## Requirements
 
-- [CodeLogic 4](https://github.com/zyntal-com/CodeLogic) · .NET 10
+- [CodeLogic 4.9+](https://github.com/zyntal-com/CodeLogic) · .NET 10
 - MaxMind.GeoIP2 5.x · SharpCompress 0.x
 - A MaxMind GeoLite2/GeoIP2 `.mmdb` for GeoIP (on disk, or auto-downloaded with credentials)
 

@@ -191,7 +191,7 @@ should use `VerifyFull`, which checks both the chain and the hostname:
 
 ### Changing config while running
 
-With CodeLogic 4.1+, both sections apply live when changed through `Libraries.UpdateConfigAsync`, `Libraries.ReloadConfigAsync`, or the config file watcher — and only the databases that changed are touched:
+With CodeLogic 4.9+, both sections apply live when changed through `Libraries.UpdateConfigAsync`, `Libraries.ReloadConfigAsync`, or the config file watcher — and only the databases that changed are touched:
 
 - **Connection settings changed** (endpoint, credentials, TLS, pooling, timeouts): the idle pool is cleared, the connection tested, and the schema-state tables ensured. In-flight queries finish on their old connections.
 - **Other settings changed** (default schema, query timeout, cache override, N+1 threshold, …): updated in place, no reconnect.

@@ -8,7 +8,7 @@ All notable changes to **CodeLogic.PostgreSQL** are documented here. Versions fo
 ### Added
 
 - **Live config changes per database** (parity with CL.MySQL2 and CL.MSSQL; requires CodeLogic
-  4.1+). `PostgreSQLLibrary` implements `IConfigReloadable`: a change to `config.postgresql.json`
+  4.9+). `PostgreSQLLibrary` implements `IConfigReloadable`: a change to `config.postgresql.json`
   made through `Libraries.UpdateConfigAsync`, `Libraries.ReloadConfigAsync` or the config file
   watcher is applied without a restart and touches only the databases that changed. A changed
   connection string clears that database's idle pool (`NpgsqlConnection.ClearPool`), re-tests it and

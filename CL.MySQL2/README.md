@@ -386,7 +386,7 @@ The cache configuration's global switch, entry limit, `DateTime` quantization wi
 
 ### Changing config while running
 
-Both sections apply live — no restart — when changed through `Libraries.UpdateConfigAsync`, `Libraries.ReloadConfigAsync`, or the CodeLogic config file watcher (CodeLogic 4.1+). Only the databases that changed are touched:
+Both sections apply live — no restart — when changed through `Libraries.UpdateConfigAsync`, `Libraries.ReloadConfigAsync`, or the CodeLogic config file watcher (CodeLogic 4.9+). Only the databases that changed are touched:
 
 | Change to a database | What happens |
 |----------------------|--------------|
@@ -424,7 +424,7 @@ If a changed database cannot be reached, the change stays saved, the other datab
 ## Requirements
 
 - .NET 10
-- CodeLogic 4.1+
+- CodeLogic 4.9+
 - MySqlConnector 2.x
 - MySQL 5.7+, MariaDB 10.3+, or a compatible Percona release
 

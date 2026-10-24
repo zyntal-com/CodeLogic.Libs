@@ -95,7 +95,7 @@ Auto-generated on first run as `config.mail.json`. The `Imap` section is optiona
 
 ### Changing config while running
 
-With CodeLogic 4.1+, `config.mail.json` applies live when changed through `Libraries.UpdateConfigAsync`, `Libraries.ReloadConfigAsync`, or the config file watcher. Only what changed is rebuilt:
+With CodeLogic 4.9+, `config.mail.json` applies live when changed through `Libraries.UpdateConfigAsync`, `Libraries.ReloadConfigAsync`, or the config file watcher. Only what changed is rebuilt:
 
 - **SMTP settings**: `mail.Smtp` is replaced. Every send opens its own connection, so sends already running finish on the old settings.
 - **Template directory**: `mail.TemplateProvider` and `mail.TemplateEngine` are replaced.
@@ -110,7 +110,7 @@ Full guide: **[CL.Mail documentation](https://zyntal-com.github.io/CodeLogic.Lib
 
 ## Requirements
 
-- [CodeLogic 4.1+](https://github.com/zyntal-com/CodeLogic) · .NET 10
+- [CodeLogic 4.9+](https://github.com/zyntal-com/CodeLogic) · .NET 10
 - MailKit 4.x · MimeKit 4.x
 
 ## License

@@ -251,7 +251,7 @@ available through `GetNativeClient` and `OpenNativeConnectionAsync`.
 
 ### Editing the config while running
 
-With CodeLogic 4.1+, the `storage*` sections also apply live when they are changed outside the library,
+With CodeLogic 4.9+, the `storage*` sections also apply live when they are changed outside the library,
 through `Libraries.UpdateConfigAsync`, `Libraries.ReloadConfigAsync`, or the config file watcher. Only
 the connections that changed are touched: a changed or added connection is built and health-checked,
 then swapped in while the one it replaces drains its in-flight operations; removed or disabled
@@ -276,7 +276,7 @@ Upgrading from 4.8.93 or from the legacy S3-only package? See [MIGRATION.md](MIG
 
 ## Requirements
 
-- CodeLogic 4.1+
+- CodeLogic 4.9+
 - .NET 10
 
 MIT license.

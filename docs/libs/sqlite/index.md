@@ -302,7 +302,7 @@ A database with `enabled: false` is skipped at startup; if no database is enable
 
 ### Changing config while running
 
-With CodeLogic 4.1+, `config.sqlite.json` applies live when changed through `Libraries.UpdateConfigAsync`, `Libraries.ReloadConfigAsync`, or the config file watcher, and only the databases that changed are touched:
+With CodeLogic 4.9+, `config.sqlite.json` applies live when changed through `Libraries.UpdateConfigAsync`, `Libraries.ReloadConfigAsync`, or the config file watcher, and only the databases that changed are touched:
 
 - **Connection-shaping settings changed** (`databasePath`, `cacheMode`, `useWAL`, `enableForeignKeys`, `connectionTimeoutSeconds`, `maxPoolSize`): the database gets a fresh pool and is opened once to check it. Idle connections from the old pool are closed; connections in use finish their work and are closed when released, never reused.
 - **Other settings changed** (`slowQueryThresholdMs`, `skipTableSync`, ...): updated in place; pooled connections are kept.

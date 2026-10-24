@@ -94,7 +94,7 @@ Auto-generated on first run as `config.socialconnect.json`:
 
 ### Changing config while running
 
-With CodeLogic 4.1+, `config.socialconnect.json` applies live when changed through `Libraries.UpdateConfigAsync`, `Libraries.ReloadConfigAsync`, or the config file watcher. Only the service whose settings changed is rebuilt:
+With CodeLogic 4.9+, `config.socialconnect.json` applies live when changed through `Libraries.UpdateConfigAsync`, `Libraries.ReloadConfigAsync`, or the config file watcher. Only the service whose settings changed is rebuilt:
 
 - **Discord settings**: `social.Discord` is replaced.
 - **Steam settings**: `social.Steam` and `social.Auth` are replaced; the profile cache starts empty.
@@ -108,7 +108,7 @@ Full guide: **[CL.SocialConnect documentation](https://zyntal-com.github.io/Code
 
 ## Requirements
 
-- [CodeLogic 4.1+](https://github.com/zyntal-com/CodeLogic) · .NET 10
+- [CodeLogic 4.9+](https://github.com/zyntal-com/CodeLogic) · .NET 10
 - No external NuGet dependencies
 
 ## License

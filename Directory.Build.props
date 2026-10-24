@@ -62,8 +62,9 @@
   -->
   <PropertyGroup>
     <CodeLogicFromNuGet Condition="'$(CodeLogicFromNuGet)' == ''">true</CodeLogicFromNuGet>
-    <!-- Restore/build floor: 4.x carries the API surface these libs use. The release
+    <!-- Restore/build floor: 4.9 carries the API surface these libs use (IConfigReloadable and
+         ConfigDiff for live config changes). The release
          pipeline rewrites each published nuspec's CodeLogic dependency to the supported range. -->
-    <CodeLogicPackageVersion Condition="'$(CodeLogicPackageVersion)' == ''">4.*</CodeLogicPackageVersion>
+    <CodeLogicPackageVersion Condition="'$(CodeLogicPackageVersion)' == ''">4.9.*</CodeLogicPackageVersion>
   </PropertyGroup>
 </Project>

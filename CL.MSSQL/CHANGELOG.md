@@ -4,7 +4,7 @@
 
 ### Added
 
-- **Live config changes per database** (parity with CL.MySQL2; requires CodeLogic 4.1+).
+- **Live config changes per database** (parity with CL.MySQL2; requires CodeLogic 4.9+).
   `MSSQLLibrary` implements `IConfigReloadable`: a change to `config.mssql.json` made through
   `Libraries.UpdateConfigAsync`, `Libraries.ReloadConfigAsync` or the config file watcher is applied
   without a restart and touches only the databases that changed. A changed connection string clears

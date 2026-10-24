@@ -217,7 +217,7 @@ are listed under *Added*, even where they changed while this release was being b
 
 ### Added
 
-- **Live config changes** (requires CodeLogic 4.1+). `StorageLibrary` implements `IConfigReloadable`:
+- **Live config changes** (requires CodeLogic 4.9+). `StorageLibrary` implements `IConfigReloadable`:
   a `storage*` section changed through `Libraries.UpdateConfigAsync`, `Libraries.ReloadConfigAsync` or
   the config file watcher is applied without a restart and touches only the connections that changed.
   Changed and added connections are built and health-checked before they replace the current backend,

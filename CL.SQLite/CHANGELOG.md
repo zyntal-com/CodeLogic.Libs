@@ -7,7 +7,7 @@ All notable changes to **CodeLogic.SQLite** are documented here. Versions follow
 
 ### Added
 
-- **Live config changes per database** (requires CodeLogic 4.1+). `SQLiteLibrary` implements
+- **Live config changes per database** (requires CodeLogic 4.9+). `SQLiteLibrary` implements
   `IConfigReloadable`: a change to `config.sqlite.json` made through `Libraries.UpdateConfigAsync`,
   `Libraries.ReloadConfigAsync` or the config file watcher is applied without a restart and touches
   only the databases that changed. A changed path, cache mode, WAL, foreign-key, connection-timeout

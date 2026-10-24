@@ -186,7 +186,7 @@ Full caching behaviour is on the [Performance & Caching](performance.md) page.
 
 ### Changing config while running
 
-With CodeLogic 4.1+, both sections apply live when changed through `Libraries.UpdateConfigAsync`, `Libraries.ReloadConfigAsync`, or the config file watcher — and only the databases that changed are touched:
+With CodeLogic 4.9+, both sections apply live when changed through `Libraries.UpdateConfigAsync`, `Libraries.ReloadConfigAsync`, or the config file watcher — and only the databases that changed are touched:
 
 - **Connection settings changed** (the effective connection string — `connectionString`, or endpoint, credentials, encryption, pooling, timeouts): the idle pool is cleared, the connection tested, and the schema-state tables ensured. In-flight queries finish on their old connections.
 - **Other settings changed**: updated in place, no reconnect.
