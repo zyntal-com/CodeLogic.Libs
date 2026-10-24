@@ -3,6 +3,31 @@
 All notable changes to **CodeLogic.SQLite** are documented here. Versions follow
 [Semantic Versioning](https://semver.org/).
 
+## 2026-10-24
+
+### Added
+
+- **Live config changes per database** (requires CodeLogic 4.1+). `SQLiteLibrary` implements
+  `IConfigReloadable`: a change to `config.sqlite.json` made through `Libraries.UpdateConfigAsync`,
+  `Libraries.ReloadConfigAsync` or the config file watcher is applied without a restart and touches
+  only the databases that changed. A changed path, cache mode, WAL, foreign-key, connection-timeout
+  or pool-size setting gives that database a fresh pool and opens it once; other settings update in
+  place and keep the pooled connections; added/removed databases are registered/released;
+  untouched databases keep their connections. A database that cannot be opened leaves the change
+  saved, still applies the rest, and is reported as not applied.
+- `ConnectionManager.ReplaceConfigurationAsync` and `ConnectionManager.UnregisterConfigurationAsync`
+  (same names as CL.MySQL2, CL.MSSQL and CL.PostgreSQL).
+
+### Fixed
+
+- **Re-registering a connection ID while one of its connections was in use corrupted the new
+  pool.** `RegisterConfiguration` disposed the old pool outright, and the in-use connection was
+  later released into the new one: its active count went negative, its slot semaphore was released
+  without a matching acquire (`SemaphoreFullException` at a pool size of 1), and a connection
+  opened with the old settings joined the new pool. Every connection now returns to the pool that
+  issued it; a replaced pool is retired (idle connections closed, Microsoft.Data.Sqlite's own
+  handles for that file cleared) and closes in-use connections when they come back.
+
 ## 2026-09-13
 
 ### Fixed
