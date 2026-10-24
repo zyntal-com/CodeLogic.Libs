@@ -1,5 +1,6 @@
 using CL.Mail.Models;
 using CL.Mail.Services;
+using CodeLogic.Core.Configuration;
 using CodeLogic.Framework.Libraries;
 
 namespace CL.Mail;
@@ -16,9 +17,11 @@ namespace CL.Mail;
 ///   <item><description><b>Start</b> — no-op (connections are opened on demand).</description></item>
 ///   <item><description><b>Stop</b> — disconnects IMAP if connected and disposes services.</description></item>
 /// </list>
+/// Config changes made while running (admin UI, reload, file watcher) are applied live —
+/// see <see cref="OnConfigChangedAsync"/>.
 /// </para>
 /// </summary>
-public sealed class MailLibrary : ILibrary
+public sealed class MailLibrary : ILibrary, IConfigReloadable
 {
     /// <inheritdoc/>
     public LibraryManifest Manifest { get; } = new()
@@ -72,30 +75,116 @@ public sealed class MailLibrary : ILibrary
             throw new InvalidOperationException($"{Manifest.Name} configuration is invalid: {errors}");
         }
 
+        BuildServices(context, config);
+
+        context.Logger.Info($"{Manifest.Name} initialized");
+        return Task.CompletedTask;
+    }
+
+    private void BuildServices(LibraryContext context, MailConfig config)
+    {
         // SMTP (always required when enabled)
-        _smtp = new SmtpService(config.Smtp, context.Logger);
-        context.Logger.Info($"SMTP: {config.Smtp.Host}:{config.Smtp.Port} ({config.Smtp.SecurityMode})");
+        BuildSmtp(context, config);
 
         // Template system
+        BuildTemplates(context, config);
+
+        // IMAP (optional)
+        _imap = BuildImap(context, config);
+    }
+
+    private void BuildSmtp(LibraryContext context, MailConfig config)
+    {
+        _smtp = new SmtpService(config.Smtp, context.Logger);
+        context.Logger.Info($"SMTP: {config.Smtp.Host}:{config.Smtp.Port} ({config.Smtp.SecurityMode})");
+    }
+
+    private void BuildTemplates(LibraryContext context, MailConfig config)
+    {
         var templateDir = string.IsNullOrWhiteSpace(config.TemplateDirectory)
             ? Path.Combine(context.DataDirectory, "templates")
             : Path.IsPathRooted(config.TemplateDirectory)
                 ? config.TemplateDirectory
                 : Path.Combine(context.DataDirectory, config.TemplateDirectory);
 
-        _templateProvider = new FileMailTemplateProvider(templateDir, context.Logger);
-        _templateEngine = new SimpleTemplateEngine(_templateProvider, context.Logger);
+        var provider = new FileMailTemplateProvider(templateDir, context.Logger);
+        _templateEngine = new SimpleTemplateEngine(provider, context.Logger);
+        _templateProvider = provider;
         context.Logger.Info($"Template directory: {templateDir}");
+    }
 
-        // IMAP (optional)
-        if (config.Imap is not null)
+    private static ImapService? BuildImap(LibraryContext context, MailConfig config)
+    {
+        if (config.Imap is null) return null;
+        context.Logger.Info($"IMAP: {config.Imap.Host}:{config.Imap.Port} ({config.Imap.SecurityMode})");
+        return new ImapService(config.Imap, context.Logger);
+    }
+
+    // ── Live config changes ──────────────────────────────────────────────────
+
+    /// <summary>
+    /// Applies a config change without a restart, rebuilding only what changed: SMTP settings swap
+    /// the <see cref="Smtp"/> service (every send opens its own connection, so sends in flight finish
+    /// on the old settings); a changed template directory swaps the template provider and engine;
+    /// changed IMAP settings replace <see cref="Imap"/> and disconnect the old service — re-read
+    /// <see cref="Imap"/> and call <see cref="ImapService.StartIdleAsync"/> again if you were idling.
+    /// <see cref="MailConfig.Enabled"/> can be switched either way.
+    /// </summary>
+    public async Task OnConfigChangedAsync(LibraryContext context, ConfigChangedEventArgs change, CancellationToken cancellationToken)
+    {
+        if (change.NewValue is not MailConfig current) return;
+        var previous = change.GetOld<MailConfig>();
+
+        if (!current.Enabled)
         {
-            _imap = new ImapService(config.Imap, context.Logger);
-            context.Logger.Info($"IMAP: {config.Imap.Host}:{config.Imap.Port} ({config.Imap.SecurityMode})");
+            if (_smtp is null) return;
+            await TearDownAsync().ConfigureAwait(false);
+            context.Logger.Info($"{Manifest.Name} disabled by a config change");
+            return;
         }
 
-        context.Logger.Info($"{Manifest.Name} initialized");
-        return Task.CompletedTask;
+        if (_smtp is null)
+        {
+            BuildServices(context, current);
+            context.Logger.Info($"{Manifest.Name} enabled by a config change");
+            return;
+        }
+
+        // Old SMTP services are not disposed: a send already running on one finishes normally.
+        if (!ConfigDiff.ValueEquals(previous?.Smtp, current.Smtp))
+            BuildSmtp(context, current);
+
+        if (!string.Equals(previous?.TemplateDirectory, current.TemplateDirectory, StringComparison.Ordinal))
+            BuildTemplates(context, current);
+
+        if (!ConfigDiff.ValueEquals(previous?.Imap, current.Imap))
+        {
+            var old = _imap;
+            _imap = BuildImap(context, current);
+            if (old is not null)
+            {
+                await old.DisconnectAsync(cancellationToken).ConfigureAwait(false);
+                old.Dispose();
+                context.Logger.Warning(
+                    "IMAP settings changed: the previous IMAP connection was closed. " +
+                    "Re-read MailLibrary.Imap and restart IDLE if it was running.");
+            }
+        }
+    }
+
+    private async Task TearDownAsync()
+    {
+        if (_imap is not null)
+        {
+            await _imap.DisconnectAsync().ConfigureAwait(false);
+            _imap.Dispose();
+            _imap = null;
+        }
+
+        _smtp?.Dispose();
+        _smtp = null;
+        _templateProvider = null;
+        _templateEngine = null;
     }
 
     // ── Phase 3: Start ────────────────────────────────────────────────────────
@@ -115,17 +204,7 @@ public sealed class MailLibrary : ILibrary
     {
         _context?.Logger.Info($"Stopping {Manifest.Name}");
 
-        if (_imap is not null)
-        {
-            await _imap.DisconnectAsync().ConfigureAwait(false);
-            _imap.Dispose();
-            _imap = null;
-        }
-
-        _smtp?.Dispose();
-        _smtp = null;
-        _templateProvider = null;
-        _templateEngine = null;
+        await TearDownAsync().ConfigureAwait(false);
 
         _context?.Logger.Info($"{Manifest.Name} stopped");
     }
