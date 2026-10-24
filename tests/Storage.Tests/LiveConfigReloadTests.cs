@@ -123,6 +123,27 @@ public sealed class LiveConfigReloadTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Failed_replacement_is_retried_by_a_reload_of_the_unchanged_file()
+    {
+        var otherBackend = BackendOf("Other");
+        var target = Path.Combine(_dir.Path, "comes-later");
+        await File.WriteAllTextAsync(target, "x");
+
+        var config = LocalConfig();
+        config["connections"]!["Other"]!["rootPath"] = target;
+        Assert.False((await UpdateLocalAsync(config)).Applied);
+
+        // The cause goes away without the file changing (the path becomes a directory).
+        File.Delete(target);
+        Directory.CreateDirectory(target);
+        var reload = await _manager.ReloadConfigAsync("CL.Storage", "storage.local");
+
+        Assert.True(reload.Applied, reload.ToString());
+        Assert.NotSame(otherBackend, BackendOf("Other"));
+        Assert.False((await _manager.GetHealthAsync())["CL.Storage"].IsDegraded);
+    }
+
+    [Fact]
     public async Task Removing_the_default_connection_is_refused()
     {
         var defaultBackend = BackendOf("Default");

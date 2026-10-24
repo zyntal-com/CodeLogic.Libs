@@ -295,7 +295,8 @@ watcher:
 - **Untouched connections**: keep running, sessions and all.
 - **Failed health check**: the current backend stays in service, the change stays saved, and the
   result reports `ConfigApplyResult.Applied = false` (the library shows Degraded until a later change
-  applies).
+  applies). The failed connection is retried by the next apply, so once the cause is fixed (an endpoint
+  back up, a folder created) `Libraries.ReloadConfigAsync` applies it even though the file is unchanged.
 - **`storage` section**: `defaultConnection` and `healthCheckTimeoutSeconds` apply at once, the
   library-wide speed limits are re-attached to every connection, and `maxBufferedDownloadBytes` applies
   to connections created or changed afterwards. Turning `enabled` on or off requires a restart.

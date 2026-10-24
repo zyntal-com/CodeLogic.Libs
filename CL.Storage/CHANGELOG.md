@@ -223,7 +223,8 @@ are listed under *Added*, even where they changed while this release was being b
   Changed and added connections are built and health-checked before they replace the current backend,
   which drains its in-flight operations first; removed or disabled connections are retired; untouched
   connections keep running. A failed health check keeps the current backend and is reported as not
-  applied. Library-wide speed limits are re-attached live. The default connection cannot be removed or
+  applied; the next apply (e.g. `ReloadConfigAsync` once the cause is fixed) retries it even if the
+  file did not change. Library-wide speed limits are re-attached live. The default connection cannot be removed or
   disabled this way, and toggling `storage.enabled` requires a restart. The library's own persisted
   changes (`AddOrUpdateConnectionAsync`, `RemoveConnectionAsync`) are not applied a second time.
 - **Transfer reports** (`StorageTransferReport`, `StorageTransferOutcome`, `StorageSkipReason`,

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using CL.Storage.Configuration;
 using CL.Storage.Models;
 using CL.Storage.Registry;
@@ -13,6 +14,10 @@ public sealed partial class StorageLibrary : IConfigReloadable
     // Those calls hold the mutation gate and update the registry themselves, so the config-change
     // notification their save triggers must be skipped — applying it would wait on that same gate.
     private readonly AsyncLocal<bool> _savingOwnConfig = new();
+
+    // Connections whose last config change failed its health check: they still run on the previous
+    // backend, so the next apply retries them even when their settings did not change again.
+    private readonly ConcurrentDictionary<string, byte> _unappliedConnections = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// Applies a config change made outside the library (admin UI, reload, file watcher) without a
@@ -127,7 +132,7 @@ public sealed partial class StorageLibrary : IConfigReloadable
         var before = ToConnectionMap(previous);
         var after = ToConnectionMap(current);
         var diff = ConfigDiff.Keyed(before, after, StringComparer.OrdinalIgnoreCase);
-        if (!diff.HasChanges)
+        if (!HasWork(diff))
             return Task.CompletedTask;
 
         var connectionType = after.Values.Concat(before.Values).First().GetType();
@@ -161,7 +166,7 @@ public sealed partial class StorageLibrary : IConfigReloadable
         RuntimeSnapshot runtime,
         CancellationToken ct)
     {
-        if (!diff.HasChanges) return;
+        if (!HasWork(diff)) return;
 
         // A disabled library has no backends; the change is picked up when it is enabled (restart).
         if (!runtime.Enabled)
@@ -173,8 +178,12 @@ public sealed partial class StorageLibrary : IConfigReloadable
         }
 
         var defaultId = runtime.DefaultConnection;
+        // A connection whose last change failed is still on its old backend although the settings
+        // already match: retry it, so a reload after the cause went away applies it.
+        var retry = diff.Unchanged.Where(pair => _unappliedConnections.ContainsKey(pair.Key)).ToList();
         var targets = diff.Changed.Select(pair => (Id: pair.Key, Config: pair.Value.New))
             .Concat(diff.Added.Select(pair => (Id: pair.Key, Config: pair.Value)))
+            .Concat(retry.Select(pair => (Id: pair.Key, Config: pair.Value)))
             .ToList();
         if (diff.Removed.Keys.Any(id => IsDefault(id)) || targets.Any(t => IsDefault(t.Id) && !isEnabled(t.Config)))
             throw new InvalidOperationException(
@@ -197,7 +206,10 @@ public sealed partial class StorageLibrary : IConfigReloadable
                 if (built.IsSuccess)
                     prepared.Add((id, connection, built.Value!));
                 else
+                {
                     failures.Add($"'{id}' ({built.Error?.Message})");
+                    _unappliedConnections[id] = 0;
+                }
             }
         }
         catch
@@ -216,6 +228,7 @@ public sealed partial class StorageLibrary : IConfigReloadable
             {
                 foreach (var id in diff.Removed.Keys)
                 {
+                    _unappliedConnections.TryRemove(id, out _);
                     if (_registry.Remove(id, out var removed))
                         retired.Add(removed);
                     _connectionInfos.Remove(id);
@@ -224,6 +237,7 @@ public sealed partial class StorageLibrary : IConfigReloadable
 
                 foreach (var (id, connection, entry) in prepared)
                 {
+                    _unappliedConnections.TryRemove(id, out _);
                     if (_registry.Remove(id, out var previous))
                         retired.Add(previous);
                     if (entry is not null)
@@ -245,7 +259,7 @@ public sealed partial class StorageLibrary : IConfigReloadable
 
         runtime.Logger.Info(
             $"Storage section '{section}' applied: {diff.Added.Count} added, {diff.Changed.Count} changed, " +
-            $"{diff.Removed.Count} removed, {diff.Unchanged.Count} untouched");
+            $"{diff.Removed.Count} removed, {retry.Count} retried, {diff.Unchanged.Count - retry.Count} untouched");
 
         if (failures.Count > 0)
             throw new InvalidOperationException(
@@ -253,6 +267,9 @@ public sealed partial class StorageLibrary : IConfigReloadable
 
         bool IsDefault(string id) => string.Equals(id, defaultId, StringComparison.OrdinalIgnoreCase);
     }
+
+    private bool HasWork<TConnection>(KeyedDiff<TConnection> diff) =>
+        diff.HasChanges || diff.Unchanged.Keys.Any(_unappliedConnections.ContainsKey);
 
     private static async Task DisposeUnpublishedAsync<TConnection>(List<(string Id, TConnection Config, BackendEntry? Entry)> prepared)
     {

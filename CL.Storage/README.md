@@ -256,7 +256,8 @@ through `Libraries.UpdateConfigAsync`, `Libraries.ReloadConfigAsync`, or the con
 the connections that changed are touched: a changed or added connection is built and health-checked,
 then swapped in while the one it replaces drains its in-flight operations; removed or disabled
 connections are retired the same way; every other connection keeps running. A replacement that fails
-its health check leaves the current backend in service and the change is reported as not applied. The
+its health check leaves the current backend in service and the change is reported as not applied;
+`Libraries.ReloadConfigAsync` retries it once the cause is fixed, even if the file did not change. The
 default connection cannot be removed or disabled this way, and turning the library on or off still
 needs a restart. Library-wide speed limits apply to every connection at once; `MaxBufferedDownloadBytes`
 applies to connections created or changed afterwards.
