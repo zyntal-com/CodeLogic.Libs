@@ -4,6 +4,17 @@
 
 ### Added
 
+- **Live config changes per database** (parity with CL.MySQL2; requires CodeLogic 4.1+).
+  `MSSQLLibrary` implements `IConfigReloadable`: a change to `config.mssql.json` made through
+  `Libraries.UpdateConfigAsync`, `Libraries.ReloadConfigAsync` or the config file watcher is applied
+  without a restart and touches only the databases that changed. A changed connection string clears
+  that database's idle pool, re-tests it and ensures its schema-state tables; other settings update
+  in place; added/removed databases connect/disconnect; untouched databases keep their connections.
+  `mssql.cache` changes apply immediately. An unreachable database leaves the change saved, still
+  applies the rest, and is reported as not applied. A runtime `SetSyncMode` survives unrelated changes.
+- `ConnectionManager.ReplaceConfigurationAsync` and `ConnectionManager.UnregisterConfigurationAsync`
+  (same surface as CL.MySQL2).
+
 - **Index drift warning** (parity with CL.MySQL2 and CL.PostgreSQL): when an index declared on
   the model (`[CompositeIndex]`, `[Index]` or `Column.Index`) exists under the same name but with a
   different definition (key columns or their order, `UNIQUE`, `INCLUDE`), schema sync logs a
