@@ -3,6 +3,13 @@
 All notable changes to **CodeLogic.Common** are documented here. Versions follow
 [Semantic Versioning](https://semver.org/).
 
+## 2026-10-24
+
+### Changed
+
+- Requires **CodeLogic 4.9+**. The official libraries move to the 4.9 line together with the framework,
+  whose live config changes the stateful libraries now use. No API changes in this library.
+
 ## 2026-09-12
 
 ### Changed
