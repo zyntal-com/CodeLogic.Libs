@@ -67,6 +67,46 @@ public sealed class ConnectionManager
         _logger?.Debug($"[PostgreSQL] Configuration registered for '{connectionId}' → {config.Host}:{config.Port}/{config.Database}");
     }
 
+    /// <summary>
+    /// Replaces the configuration registered under <paramref name="connectionId"/> (including its
+    /// runtime knobs). When the connection string changed, idle pooled connections opened with the
+    /// old settings are cleared so new work reconnects; connections already handed out finish
+    /// normally. Other connection IDs are not touched.
+    /// </summary>
+    /// <returns><see langword="true"/> when the connection string changed (a reconnect is needed).</returns>
+    public Task<bool> ReplaceConfigurationAsync(PostgreSqlDatabaseConfig config, string connectionId = "Default")
+    {
+        ArgumentNullException.ThrowIfNull(config);
+        _configs.TryGetValue(connectionId, out var previous);
+        RegisterConfiguration(config, connectionId);
+
+        var reconnect = previous is null || previous.BuildConnectionString() != config.BuildConnectionString();
+        if (reconnect && previous is not null)
+            ClearPool(previous);
+        return Task.FromResult(reconnect);
+    }
+
+    /// <summary>
+    /// Removes the configuration registered under <paramref name="connectionId"/>, its runtime
+    /// knobs, and its idle pooled connections. Connections already handed out finish normally.
+    /// </summary>
+    /// <returns><see langword="false"/> when nothing was registered under that ID.</returns>
+    public Task<bool> UnregisterConfigurationAsync(string connectionId)
+    {
+        if (!_configs.TryRemove(connectionId, out var previous)) return Task.FromResult(false);
+        Core.PostgreSqlRuntimeOptions.Unregister(connectionId);
+        ClearPool(previous);
+        _logger?.Debug($"[PostgreSQL] Configuration removed for '{connectionId}'");
+        return Task.FromResult(true);
+    }
+
+    private static void ClearPool(PostgreSqlDatabaseConfig config)
+    {
+        if (!config.EnablePooling) return;
+        using var connection = new NpgsqlConnection(config.BuildConnectionString());
+        NpgsqlConnection.ClearPool(connection);
+    }
+
     /// <summary>Returns the configuration for the given connection ID, or null if not found.</summary>
     public PostgreSqlDatabaseConfig? GetConfiguration(string connectionId = "Default")
         => _configs.TryGetValue(connectionId, out var cfg) ? cfg : null;

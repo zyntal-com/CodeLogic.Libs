@@ -99,6 +99,15 @@ internal static class PostgreSqlRuntimeOptions
     }
 
     /// <summary>Drops every registered entry. Called when the library stops.</summary>
+    /// <summary>Drops one connection's settings (live config change removed or disabled it).</summary>
+    public static void Unregister(string connectionId)
+    {
+        if (!_byConnection.TryRemove(connectionId, out _)) return;
+        _anyN1Enabled = _byConnection.Values.Any(e => e.N1DetectorThreshold > 0);
+        _anyExplainEnabled = _byConnection.Values.Any(e => e.CaptureExplainOnSlowQuery);
+        EntityMetadataSchemaCache.Invalidate();
+    }
+
     public static void Reset()
     {
         _byConnection.Clear();

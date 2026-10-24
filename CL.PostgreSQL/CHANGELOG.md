@@ -7,6 +7,19 @@ All notable changes to **CodeLogic.PostgreSQL** are documented here. Versions fo
 
 ### Added
 
+- **Live config changes per database** (parity with CL.MySQL2 and CL.MSSQL; requires CodeLogic
+  4.1+). `PostgreSQLLibrary` implements `IConfigReloadable`: a change to `config.postgresql.json`
+  made through `Libraries.UpdateConfigAsync`, `Libraries.ReloadConfigAsync` or the config file
+  watcher is applied without a restart and touches only the databases that changed. A changed
+  connection string clears that database's idle pool (`NpgsqlConnection.ClearPool`), re-tests it and
+  ensures its schema-state tables; other settings — including the per-connection runtime knobs
+  (default schema, query timeout, cache override, N+1 threshold) — update in place; added/removed
+  databases connect/disconnect; untouched databases keep their connections. `postgresql.cache`
+  changes apply immediately. An unreachable database leaves the change saved, still applies the
+  rest, and is reported as not applied. A runtime `SetSyncMode` survives unrelated changes.
+- `ConnectionManager.ReplaceConfigurationAsync` and `ConnectionManager.UnregisterConfigurationAsync`
+  (same surface as CL.MySQL2 and CL.MSSQL).
+
 - **`Repository<T>.InsertIgnoreAsync` and `InsertManyIgnoreAsync`** (API parity with CL.MySQL2
   and CL.MSSQL). A duplicate key (any UNIQUE constraint, unique index or PRIMARY KEY) is a normal
   outcome: `InsertIgnoreAsync` returns `InsertOutcome.Inserted` (auto PK populated from
