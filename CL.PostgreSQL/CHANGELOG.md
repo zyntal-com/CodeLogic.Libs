@@ -25,9 +25,19 @@ All notable changes to **CodeLogic.PostgreSQL** are documented here. Versions fo
 - **Nullable aggregate results**: `MaxAsync` / `MinAsync` / `SumAsync` accept nullable selectors
   such as `r => (DateTime?)r.CreatedUtc` and return `null` for SQL NULL (for example no matching
   rows). Non-nullable selectors still return `default(TResult)`.
-- **`[CompositeIndex]` column drift warning**: when an index declared on the model exists under
-  the same name but with different columns or column order, schema sync logs a Warning naming
-  the table, the index and both column lists. The index is never dropped or rebuilt automatically.
+- **Index drift detection** for every model index (`[CompositeIndex]`, `[Index]`,
+  `Column.Index`, `Column.Unique`), aligned with CL.MySQL2 and CL.MSSQL: when an index exists
+  under the model's name with different key columns, column order, uniqueness or `INCLUDE`
+  columns, schema sync logs a Warning naming the table, the index and both definitions, at every
+  level. `Production` (Safe) leaves it alone and flags the table `DriftPending`; `Developer` and
+  `Migration` drop and recreate it (through `DROP CONSTRAINT` when a UNIQUE constraint owns it).
+  An index on a column renamed with `PreviousName` in the same sync is not drift.
+
+### Fixed
+
+- **`DriftPending` was never raised for a deferred foreign key or UNIQUE constraint drop.** The
+  destructive-change check looked for MySQL's `DROP FOREIGN KEY`; PostgreSQL drops both with
+  `ALTER TABLE … DROP CONSTRAINT`, which is now recognised.
 
 ## 2026-09-13
 

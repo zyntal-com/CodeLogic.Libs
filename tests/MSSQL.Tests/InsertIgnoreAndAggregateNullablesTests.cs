@@ -1,3 +1,5 @@
+using CL.MSSQL.Core;
+using CodeLogic.Core.Logging;
 using CL.MSSQL;
 using CL.MSSQL.Models;
 using Xunit;
@@ -31,22 +33,60 @@ public sealed class AggNullableRow
 }
 
 [Table(Name = "it_index_drift", Schema = "dbo")]
-[CompositeIndex("IX_it_index_drift_ab", "a", "b")]
-public sealed class IndexDriftRow
+[CompositeIndex("ix_drift_ab", "a", "b")]
+[CompositeIndex("uq_drift_ab", "a", "b", Unique = true)]
+public sealed class IndexDriftV1
 {
     [Column(Name = "id", DataType = DataType.BigInt, Primary = true, AutoIncrement = true)] public long Id { get; set; }
     [Column(Name = "a", DataType = DataType.Int, NotNull = true)] public int A { get; set; }
     [Column(Name = "b", DataType = DataType.Int, NotNull = true)] public int B { get; set; }
+    [Column(Name = "c", DataType = DataType.Int, NotNull = true)]
+    [Index(Name = "ix_drift_c")]
+    public int C { get; set; }
 }
 
-// Same table, same index name, columns declared in the opposite order.
+// Same index names, new definitions: both composites reordered, ix_drift_c made unique.
 [Table(Name = "it_index_drift", Schema = "dbo")]
-[CompositeIndex("IX_it_index_drift_ab", "b", "a")]
-public sealed class IndexDriftRowReordered
+[CompositeIndex("ix_drift_ab", "b", "a")]
+[CompositeIndex("uq_drift_ab", "b", "a", Unique = true)]
+public sealed class IndexDriftV2
 {
     [Column(Name = "id", DataType = DataType.BigInt, Primary = true, AutoIncrement = true)] public long Id { get; set; }
     [Column(Name = "a", DataType = DataType.Int, NotNull = true)] public int A { get; set; }
     [Column(Name = "b", DataType = DataType.Int, NotNull = true)] public int B { get; set; }
+    [Column(Name = "c", DataType = DataType.Int, NotNull = true)]
+    [Index(Name = "ix_drift_c", Unique = true)]
+    public int C { get; set; }
+}
+
+// V1 with column c renamed to c2: its index follows the rename and must not read as drift.
+[Table(Name = "it_index_drift", Schema = "dbo")]
+[CompositeIndex("ix_drift_ab", "a", "b")]
+[CompositeIndex("uq_drift_ab", "a", "b", Unique = true)]
+public sealed class IndexDriftRenamed
+{
+    [Column(Name = "id", DataType = DataType.BigInt, Primary = true, AutoIncrement = true)] public long Id { get; set; }
+    [Column(Name = "a", DataType = DataType.Int, NotNull = true)] public int A { get; set; }
+    [Column(Name = "b", DataType = DataType.Int, NotNull = true)] public int B { get; set; }
+    [Column(Name = "c2", PreviousName = "c", DataType = DataType.Int, NotNull = true)]
+    [Index(Name = "ix_drift_c")]
+    public int C2 { get; set; }
+}
+
+internal sealed class DriftCapturingLogger : ILogger
+{
+    public readonly List<string> Warnings = [];
+
+    public void Trace(string message) { }
+    public void Debug(string message) { }
+    public void Debug(string message, params object?[] args) { }
+    public void Info(string message) { }
+    public void Info(string message, params object?[] args) { }
+    public void Warning(string message) { lock (Warnings) Warnings.Add(message); }
+    public void Warning(string message, params object?[] args) { lock (Warnings) Warnings.Add(string.Format(message, args)); }
+    public void Error(string message, Exception? ex = null) { }
+    public void Error(string message, params object?[] args) { }
+    public void Critical(string message, Exception? ex = null) { }
 }
 
 // Mirrors MySQL2.Tests.InsertIgnoreAndAggregateNullablesTests so both providers keep the
@@ -211,43 +251,77 @@ public sealed class InsertIgnoreAndAggregateNullablesTests
         Assert.Equal(t1, (await Mssql.Query<AggNullableRow>().MinAsync(r => (DateTime?)r.CreatedUtc)).Value);
         Assert.Equal(12, (await Mssql.Query<AggNullableRow>().SumAsync(r => (int?)r.Amount)).Value);
         Assert.Equal(12, (await Mssql.Query<AggNullableRow>().SumAsync(r => r.Amount)).Value);
+        // Nested casts unwrap to the column too.
+        Assert.Equal(12L, (await Mssql.Query<AggNullableRow>().SumAsync(r => (long?)(long)r.Amount)).Value);
     }
 
     [DbFact]
-    public async Task Index_Drift_Is_Reported_Not_Dropped_At_Safe_And_Deferred_As_DriftPending()
+    public async Task Index_Drift_Is_Warned_Everywhere_And_Rebuilt_Only_Where_Drops_Are_Allowed()
     {
         await _fx.Exec("DROP TABLE IF EXISTS [dbo].[it_index_drift]");
         await Mssql.SchemaState.RemoveStateAsync("it_index_drift");
-        Assert.True((await Mssql.SyncTableAsync<IndexDriftRow>(createBackup: false)).IsSuccess);
+        Assert.True((await Mssql.SyncTableAsync<IndexDriftV1>(createBackup: false)).IsSuccess);
 
-        var analyzer = new CL.MSSQL.Core.SchemaAnalyzer();
+        var logger = new DriftCapturingLogger();
+        var analyzer = new SchemaAnalyzer(logger);
         var (safe, full) = await Mssql.ConnectionManager.ExecuteWithConnectionAsync(async conn =>
-            (await analyzer.GenerateAlterStatementsAsync(typeof(IndexDriftRowReordered), conn, SchemaSyncLevel.Safe),
-             await analyzer.GenerateAlterStatementsAsync(typeof(IndexDriftRowReordered), conn, SchemaSyncLevel.Full)),
+            (await analyzer.GenerateAlterStatementsAsync(typeof(IndexDriftV2), conn, SchemaSyncLevel.Safe),
+             await analyzer.GenerateAlterStatementsAsync(typeof(IndexDriftV2), conn, SchemaSyncLevel.Full)),
             "Default");
 
-        // Safe never drops or rebuilds a drifted index (parity with MySQL2 / PostgreSQL).
+        // Every drifted index is reported, at every level.
+        foreach (var name in new[] { "ix_drift_ab", "uq_drift_ab", "ix_drift_c" })
+            Assert.Contains(logger.Warnings, w => w.Contains(name) && w.Contains("it_index_drift"));
+
+        // Safe never drops or rebuilds a drifted index.
         Assert.DoesNotContain(safe, s => s.Contains("DROP", StringComparison.OrdinalIgnoreCase));
-        Assert.DoesNotContain(safe, s => s.Contains("IX_it_index_drift_ab", StringComparison.OrdinalIgnoreCase));
-        // A level allowed to drop still rebuilds it to the model's column order.
-        Assert.Contains(full, s => s.Contains("DROP INDEX [IX_it_index_drift_ab]", StringComparison.OrdinalIgnoreCase));
-        Assert.Contains(full, s => s.Contains("CREATE INDEX [IX_it_index_drift_ab]", StringComparison.OrdinalIgnoreCase) && s.Contains("([b], [a])"));
+        Assert.DoesNotContain(safe, s => s.Contains("drift_", StringComparison.OrdinalIgnoreCase));
+
+        // A level allowed to drop rebuilds each one to the model's definition.
+        Assert.Contains(full, s => s.Contains("DROP INDEX [ix_drift_ab]", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(full, s => s.Contains("CREATE INDEX [ix_drift_ab]", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(full, s => s.Contains("DROP INDEX [uq_drift_ab]", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(full, s => s.Contains("CREATE UNIQUE INDEX [uq_drift_ab]", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(full, s => s.Contains("DROP INDEX [ix_drift_c]", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(full, s => s.Contains("CREATE UNIQUE INDEX [ix_drift_c]", StringComparison.OrdinalIgnoreCase));
 
         Mssql.SetSyncMode(SyncMode.Production);
         try
         {
-            var prod = (await Mssql.SyncTableAsync<IndexDriftRowReordered>(createBackup: false)).Value!;
+            var prod = (await Mssql.SyncTableAsync<IndexDriftV2>(createBackup: false)).Value!;
             Assert.DoesNotContain(prod.Operations, s => s.Contains("DROP", StringComparison.OrdinalIgnoreCase));
-            Assert.True(prod.DriftPending);
+            Assert.True(prod.DriftPending, "a deferred index rebuild must flag the table DriftPending");
 
             Mssql.SetSyncMode(SyncMode.Migration);
-            var migrated = (await Mssql.SyncTableAsync<IndexDriftRowReordered>(createBackup: false)).Value!;
-            Assert.Contains(migrated.Operations, s => s.Contains("DROP INDEX [IX_it_index_drift_ab]", StringComparison.OrdinalIgnoreCase));
-            Assert.False(migrated.DriftPending);
+            var migrated = await Mssql.SyncTableAsync<IndexDriftV2>(createBackup: false);
+            Assert.True(migrated.IsSuccess, migrated.Error?.ToString());
+            Assert.Contains(migrated.Value!.Operations, s => s.Contains("DROP INDEX [uq_drift_ab]", StringComparison.OrdinalIgnoreCase));
+            Assert.False(migrated.Value!.DriftPending);
+
+            // After the rebuild the catalog matches the model: nothing left to drop.
+            var again = await Mssql.ConnectionManager.ExecuteWithConnectionAsync(async conn =>
+                await analyzer.GenerateAlterStatementsAsync(typeof(IndexDriftV2), conn, SchemaSyncLevel.Full), "Default");
+            Assert.DoesNotContain(again, s => s.Contains("DROP", StringComparison.OrdinalIgnoreCase));
         }
         finally
         {
             Mssql.SetSyncMode(SyncMode.Developer);
         }
+    }
+
+    [DbFact]
+    public async Task Index_On_A_Renamed_Column_Is_Not_Drift()
+    {
+        await _fx.Exec("DROP TABLE IF EXISTS [dbo].[it_index_drift]");
+        await Mssql.SchemaState.RemoveStateAsync("it_index_drift");
+        Assert.True((await Mssql.SyncTableAsync<IndexDriftV1>(createBackup: false)).IsSuccess);
+
+        var logger = new DriftCapturingLogger();
+        var analyzer = new SchemaAnalyzer(logger);
+        var full = await Mssql.ConnectionManager.ExecuteWithConnectionAsync(async conn =>
+            await analyzer.GenerateAlterStatementsAsync(typeof(IndexDriftRenamed), conn, SchemaSyncLevel.Full), "Default");
+
+        Assert.DoesNotContain(full, s => s.Contains("DROP", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(logger.Warnings, w => w.Contains("drifted"));
     }
 }

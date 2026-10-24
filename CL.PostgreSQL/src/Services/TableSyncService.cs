@@ -62,7 +62,8 @@ public sealed class TableSyncService
     private static bool IsDestructive(string stmt) =>
         stmt.Contains("DROP COLUMN", StringComparison.OrdinalIgnoreCase)
         || stmt.Contains("DROP INDEX", StringComparison.OrdinalIgnoreCase)
-        || stmt.Contains("DROP FOREIGN KEY", StringComparison.OrdinalIgnoreCase);
+        // PostgreSQL drops foreign keys and UNIQUE constraints with ALTER TABLE ... DROP CONSTRAINT.
+        || stmt.Contains("DROP CONSTRAINT", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Synchronizes the table schema for entity type <typeparamref name="T"/>.

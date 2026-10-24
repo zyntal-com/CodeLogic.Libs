@@ -7,7 +7,10 @@
 - **Index drift warning** (parity with CL.MySQL2 and CL.PostgreSQL): when an index declared on
   the model (`[CompositeIndex]`, `[Index]` or `Column.Index`) exists under the same name but with a
   different definition (key columns or their order, `UNIQUE`, `INCLUDE`), schema sync logs a
-  Warning naming the table and both definitions.
+  Warning naming the table and both definitions. An index on a column renamed with
+  `PreviousName` in the same sync is not reported as drift or rebuilt.
+- **Nested casts in aggregate selectors**: `SumAsync(r => (long?)(long)r.Amount)` and similar
+  unwrap to the column, like CL.MySQL2 and CL.PostgreSQL.
 
 ### Changed — behaviour
 

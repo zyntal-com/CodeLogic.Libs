@@ -105,7 +105,7 @@ Result<Dictionary<string, SyncResult>> schema = await mysql.SyncSchemaAsync(
 mysql.SetSyncMode(SyncMode.Production, connectionId: "Default");
 ```
 
-Indexes are matched by name. If a `[CompositeIndex]` keeps its name but its columns change, sync logs a column-drift warning and leaves the existing index as it is; give the index a new name to have the new definition created.
+Indexes are matched by name. If an index keeps its name but its definition changes (columns, their order, or uniqueness), sync logs a drift warning. `Production` leaves the existing index as it is and reports `DriftPending`; `Developer` and `Migration` rebuild it.
 
 Every desired schema is hashed into `__schema_state`. An unchanged model takes the CRC fast path and skips `information_schema` inspection and DDL entirely. `SyncResult` reports operations, errors, duration, CRC, whether work was skipped, and whether destructive drift remains pending.
 

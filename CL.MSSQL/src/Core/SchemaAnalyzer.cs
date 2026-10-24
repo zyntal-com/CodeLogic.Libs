@@ -85,6 +85,8 @@ internal sealed class SchemaAnalyzer
 
         var modelColumns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var modelForeignKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        // previous → new column name; sp_rename carries indexes along, so they are not drift.
+        var renamedColumns = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var property in MappedProperties(entityType))
         {
             var name = ColumnName(property);
@@ -96,6 +98,7 @@ internal sealed class SchemaAnalyzer
                 {
                     result.Add($"EXEC sys.sp_rename N'{Escape(schema)}.{Escape(table)}.{Escape(attr.PreviousName)}', N'{Escape(name)}', 'COLUMN';");
                     modelColumns.Add(attr.PreviousName);
+                    renamedColumns[attr.PreviousName] = name;
                     existing = existing with { Name = name };
                     columns[name] = existing;
                 }
@@ -227,7 +230,11 @@ internal sealed class SchemaAnalyzer
         foreach (var (indexName, statement) in expectedIndexStatements)
         {
             modelIndexes.Add(indexName);
-            var definitionChanged = indexDefinitions.TryGetValue(indexName, out var catalogStatement)
+            if (indexDefinitions.TryGetValue(indexName, out var catalogStatement))
+                foreach (var (previous, current) in renamedColumns)
+                    catalogStatement = catalogStatement.Replace(
+                        SqlServerDialect.Quote(previous), SqlServerDialect.Quote(current), StringComparison.OrdinalIgnoreCase);
+            var definitionChanged = catalogStatement is not null
                 && !NormalizeSql(catalogStatement).Equals(NormalizeSql(statement), StringComparison.OrdinalIgnoreCase);
             if (definitionChanged && !droppedIndexes.Contains(indexName))
             {

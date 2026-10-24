@@ -4,6 +4,19 @@ All notable changes to **CodeLogic.MySQL2** are documented here. Versions follow
 [Semantic Versioning](https://semver.org/). The version listed here matches the
 NuGet package version of `CodeLogic.MySQL2`.
 
+## 2026-10-24
+
+### Changed — behaviour
+
+- **Index drift is checked for every model index and rebuilt where drops are allowed** (aligned
+  with CL.MSSQL and CL.PostgreSQL). The drift check now covers `[Index]`, `Column.Index` and
+  `Column.Unique` as well as `[CompositeIndex]`, and compares uniqueness as well as the columns
+  and their order. The Warning is logged at every level. `Production` (Safe) still never touches
+  the index, but the table is now flagged `DriftPending`; `Developer` and `Migration` rebuild it
+  with one atomic `ALTER TABLE … DROP INDEX x, ADD … x (…)`. Previously a drifted index was never
+  rebuilt at any level.
+- An index on a column renamed with `PreviousName` in the same sync is no longer reported as drift.
+
 ## 2026-10-23
 
 ### Added
