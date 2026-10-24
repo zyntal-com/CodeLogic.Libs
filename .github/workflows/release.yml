@@ -60,7 +60,7 @@ jobs:
           $allProjects = @(
             'CL.Common', 'CL.GameNetQuery', 'CL.GitHelper', 'CL.Mail',
             'CL.MySQL2', 'CL.MSSQL', 'CL.NetUtils', 'CL.PostgreSQL', 'CL.SQLite',
-            'CL.SocialConnect', 'CL.Storage', 'CL.StorageS3', 'CL.SystemStats', 'CL.TwoFactorAuth'
+            'CL.SocialConnect', 'CL.Storage', 'CL.SystemStats', 'CL.TwoFactorAuth'
           )
 
           $buildAll = '${{ github.event.inputs.build_all }}' -eq 'true'
