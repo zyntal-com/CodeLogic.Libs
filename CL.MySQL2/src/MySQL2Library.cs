@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using CL.MySQL2.Configuration;
 using CL.MySQL2.Core;
@@ -5,6 +6,7 @@ using CL.MySQL2.Events;
 using CL.MySQL2.Localization;
 using CL.MySQL2.Models;
 using CL.MySQL2.Services;
+using CodeLogic.Core.Configuration;
 using CodeLogic.Core.Results;
 using CodeLogic.Framework.Libraries;
 using MySqlConnector;
@@ -23,9 +25,11 @@ namespace CL.MySQL2;
 ///   <item><description><b>Start</b> — Runs a health check and logs server version.</description></item>
 ///   <item><description><b>Stop</b> — Closes connections and disposes resources.</description></item>
 /// </list>
+/// Config changes made while running (admin UI, reload, file watcher) are applied live per
+/// database — see <see cref="OnConfigChangedAsync"/>.
 /// </para>
 /// </summary>
-public sealed class MySQL2Library : ILibrary
+public sealed class MySQL2Library : ILibrary, IConfigReloadable
 {
     /// <inheritdoc/>
     public LibraryManifest Manifest { get; } = new()
@@ -51,6 +55,7 @@ public sealed class MySQL2Library : ILibrary
     private bool? _lastHealthy;
     private RetentionWorker? _retentionWorker;
     private readonly HashSet<(Type Type, string ConnectionId)> _registeredEntities = new();
+    private readonly ConcurrentDictionary<string, SyncMode> _syncModeOverrides = new(StringComparer.OrdinalIgnoreCase);
 
     // ── Phase 1: Configure ────────────────────────────────────────────────────
 
@@ -109,12 +114,13 @@ public sealed class MySQL2Library : ILibrary
             _connectionManager.RegisterConfiguration(kvp.Value, kvp.Key);
         }
 
+        // Look the config up through _config (not the local) so live config changes are seen.
         _tableSyncService = new TableSyncService(
             _connectionManager,
             context.DataDirectory,
             context.Logger,
             context.Events,
-            connectionId => config.Databases.TryGetValue(connectionId, out var cfg) ? cfg : null);
+            connectionId => _config?.Databases.TryGetValue(connectionId, out var cfg) == true ? cfg : null);
 
         foreach (var kvp in enabledDbs)
         {
@@ -149,29 +155,13 @@ public sealed class MySQL2Library : ILibrary
         }
 
         // Apply cache configuration so queries see the right knobs from the first call.
-        var cacheConfig = context.Configuration.Get<CacheConfiguration>();
-        QueryCache.Configure(
-            enabled: cacheConfig.Enabled,
-            maxEntries: cacheConfig.MaxEntries,
-            timeQuantizeSeconds: cacheConfig.TimeQuantizeSeconds,
-            defaultTtlSeconds: cacheConfig.DefaultTtlSeconds,
-            publishEvents: cacheConfig.PublishEvents);
+        ApplyCacheConfiguration(context.Configuration.Get<CacheConfiguration>());
 
         // Per-database overrides of the global cache switch, and the N+1 detector threshold.
         foreach (var kvp in enabledDbs)
-        {
-            QueryCache.SetConnectionOverride(kvp.Key, kvp.Value.CacheEnabledOverride);
-            QueryObservability.ConfigureN1Detection(kvp.Key, kvp.Value.N1DetectorThreshold);
-        }
+            ApplyConnectionSettings(kvp.Key, kvp.Value);
 
-        // DDL/SQL generation is static and not connection-scoped, so it takes its knobs from
-        // the Default database when there is one, else the first enabled database.
-        var generationSource = enabledDbs.FirstOrDefault(kvp => kvp.Key == "Default").Value
-                               ?? enabledDbs[0].Value;
-        SqlGenerationOptions.Configure(
-            generationSource.DefaultStringSize,
-            generationSource.MaxInClauseValues,
-            context.Logger);
+        ApplySqlGenerationOptions(context, config);
 
         // Wire the smart-cache pool registry so its background timers log to the
         // app's logger and so it can be cleanly disposed on stop.
@@ -647,13 +637,161 @@ public sealed class MySQL2Library : ILibrary
     /// the config file or restarting. Useful to flip <see cref="SyncMode.Migration"/> back to
     /// <see cref="SyncMode.Production"/> once a one-shot migration pass has completed.
     /// </summary>
+    /// <remarks>
+    /// The runtime value survives live config changes to the connection, unless the change
+    /// itself sets a different <see cref="MySqlDatabaseConfig.SyncMode"/> — then the config wins.
+    /// </remarks>
     public void SetSyncMode(SyncMode mode, string connectionId = "Default")
     {
         if (_config?.Databases.TryGetValue(connectionId, out var cfg) == true)
         {
             cfg.SyncMode = mode;
+            _syncModeOverrides[connectionId] = mode;
             _context?.Logger.Info($"[MySQL2] [{connectionId}] Sync mode set to {mode} at runtime.");
         }
+    }
+
+    // ── Live config changes ──────────────────────────────────────────────────
+
+    /// <summary>
+    /// Applies a config change without a restart, touching only the databases that changed:
+    /// a database whose connection settings changed is reconnected (its idle pool cleared,
+    /// connection tested, schema-state tables ensured); one whose other settings changed is
+    /// updated in place; added databases connect, removed or disabled ones disconnect, and
+    /// untouched databases keep their connections. Throws when a database cannot be reached —
+    /// the change stays saved and the remaining databases are still applied.
+    /// </summary>
+    public async Task OnConfigChangedAsync(LibraryContext context, ConfigChangedEventArgs change, CancellationToken cancellationToken)
+    {
+        switch (change.NewValue)
+        {
+            case DatabaseConfiguration databases:
+                await ApplyDatabaseChangesAsync(context, change.GetOld<DatabaseConfiguration>(), databases, cancellationToken)
+                    .ConfigureAwait(false);
+                break;
+
+            case CacheConfiguration cache:
+                ApplyCacheConfiguration(cache);
+                context.Logger.Info("[MySQL2] Cache configuration applied");
+                break;
+        }
+    }
+
+    private async Task ApplyDatabaseChangesAsync(
+        LibraryContext context,
+        DatabaseConfiguration? previous,
+        DatabaseConfiguration current,
+        CancellationToken ct)
+    {
+        var diff = ConfigDiff.Keyed(EnabledDatabases(previous), EnabledDatabases(current), StringComparer.OrdinalIgnoreCase);
+
+        ReapplySyncModeOverrides(previous, current);
+        _config = current;
+
+        if (!diff.HasChanges) return;
+
+        var connections = _connectionManager;
+        if (connections is null || _tableSyncService is null)
+        {
+            if (diff.Added.Count > 0)
+                throw new InvalidOperationException(
+                    $"{Manifest.Name} started with no enabled databases; restart to enable " +
+                    $"'{string.Join("', '", diff.Added.Keys)}'.");
+            return;
+        }
+
+        var unreachable = new List<string>();
+
+        foreach (var id in diff.Removed.Keys)
+        {
+            await connections.UnregisterConfigurationAsync(id).ConfigureAwait(false);
+            QueryCache.SetConnectionOverride(id, null);
+            QueryObservability.ConfigureN1Detection(id, 0);
+            context.Logger.Info($"[MySQL2] [{id}] Removed — connection closed");
+        }
+
+        foreach (var (id, databaseChange) in diff.Changed)
+        {
+            var reconnect = await connections.ReplaceConfigurationAsync(databaseChange.New, id).ConfigureAwait(false);
+            ApplyConnectionSettings(id, databaseChange.New);
+            if (!reconnect)
+                context.Logger.Info($"[MySQL2] [{id}] Settings updated in place");
+            else if (!await ConnectAsync(context, id, databaseChange.New, ct).ConfigureAwait(false))
+                unreachable.Add(id);
+        }
+
+        foreach (var (id, database) in diff.Added)
+        {
+            connections.RegisterConfiguration(database, id);
+            ApplyConnectionSettings(id, database);
+            if (!await ConnectAsync(context, id, database, ct).ConfigureAwait(false))
+                unreachable.Add(id);
+        }
+
+        ApplySqlGenerationOptions(context, current);
+
+        if (unreachable.Count > 0)
+            throw new InvalidOperationException(
+                $"Could not connect to database(s) '{string.Join("', '", unreachable)}' with the new settings.");
+    }
+
+    /// <summary>Tests a (re)connected database and ensures its schema-state and migration tables.</summary>
+    private async Task<bool> ConnectAsync(LibraryContext context, string id, MySqlDatabaseConfig database, CancellationToken ct)
+    {
+        context.Logger.Info($"[MySQL2] Connecting '{id}' to {database.Host}:{database.Port}/{database.Database}");
+        if (!await _connectionManager!.TestConnectionAsync(id, ct).ConfigureAwait(false))
+        {
+            context.Logger.Warning(string.Format(_strings?.ConnectionTestFailed ?? "Connection '{0}' test failed", id));
+            return false;
+        }
+
+        await _tableSyncService!.GetSchemaStateStore().EnsureStateTableAsync(id, ct).ConfigureAwait(false);
+        await _tableSyncService.GetMigrationTracker().EnsureMigrationsTableAsync(id, ct).ConfigureAwait(false);
+        context.Logger.Info(string.Format(_strings?.ConnectionTestSuccess ?? "Connection '{0}' test successful", id));
+        return true;
+    }
+
+    private void ReapplySyncModeOverrides(DatabaseConfiguration? previous, DatabaseConfiguration current)
+    {
+        foreach (var (id, mode) in _syncModeOverrides)
+        {
+            var configuredBefore = previous?.Databases.TryGetValue(id, out var before) == true ? before.SyncMode : (SyncMode?)null;
+            if (current.Databases.TryGetValue(id, out var now) && now.SyncMode == configuredBefore)
+                now.SyncMode = mode;
+            else
+                _syncModeOverrides.TryRemove(id, out _);
+        }
+    }
+
+    private static Dictionary<string, MySqlDatabaseConfig> EnabledDatabases(DatabaseConfiguration? config) =>
+        config?.Databases.Where(d => d.Value.Enabled).ToDictionary(d => d.Key, d => d.Value)
+        ?? new Dictionary<string, MySqlDatabaseConfig>();
+
+    private static void ApplyCacheConfiguration(CacheConfiguration cache) =>
+        QueryCache.Configure(
+            enabled: cache.Enabled,
+            maxEntries: cache.MaxEntries,
+            timeQuantizeSeconds: cache.TimeQuantizeSeconds,
+            defaultTtlSeconds: cache.DefaultTtlSeconds,
+            publishEvents: cache.PublishEvents);
+
+    private static void ApplyConnectionSettings(string id, MySqlDatabaseConfig database)
+    {
+        QueryCache.SetConnectionOverride(id, database.CacheEnabledOverride);
+        QueryObservability.ConfigureN1Detection(id, database.N1DetectorThreshold);
+    }
+
+    /// <summary>
+    /// DDL/SQL generation is static and not connection-scoped, so it takes its knobs from
+    /// the Default database when there is one, else the first enabled database.
+    /// </summary>
+    private static void ApplySqlGenerationOptions(LibraryContext context, DatabaseConfiguration config)
+    {
+        var enabled = config.Databases.Where(d => d.Value.Enabled).ToList();
+        if (enabled.Count == 0) return;
+
+        var source = enabled.FirstOrDefault(d => d.Key == "Default").Value ?? enabled[0].Value;
+        SqlGenerationOptions.Configure(source.DefaultStringSize, source.MaxInClauseValues, context.Logger);
     }
 
     // ── Imperative migrations ────────────────────────────────────────────────
