@@ -1,8 +1,8 @@
 <Project>
   <!-- Shared NuGet metadata for all CL.* libraries -->
   <PropertyGroup>
-    <Authors>Media2A</Authors>
-    <Copyright>Copyright © 2026 Media2A</Copyright>
+    <Authors>Zyntal.com</Authors>
+    <Copyright>Copyright © 2026 Zyntal.com</Copyright>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageProjectUrl>https://github.com/zyntal-com/CodeLogic.Libs</PackageProjectUrl>
     <RepositoryUrl>https://github.com/zyntal-com/CodeLogic.Libs</RepositoryUrl>

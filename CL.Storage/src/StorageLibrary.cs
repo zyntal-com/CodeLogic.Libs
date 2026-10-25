@@ -96,7 +96,7 @@ public sealed partial class StorageLibrary : ILibrary, IAsyncDisposable
         Name = "Storage Library",
         Version = CL.Internal.InternalLibraryVersion.Current,
         Description = "Provider-neutral mounted storage connections",
-        Author = "Media2A",
+        Author = "Zyntal.com",
         Tags = ["storage", "filesystem", "cloud"]
     };
 

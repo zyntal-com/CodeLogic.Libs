@@ -11,7 +11,7 @@
     <PackageId>CodeLogic.MySQL2</PackageId>
     <PackageTags>mysql;database;orm;linq;query-builder;aggregation;cache</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
-    <Authors>Media2A</Authors>
+    <Authors>Zyntal.com</Authors>
     <Description>MySQL with typed LINQ, SQL aggregation, projection pushdown, compiled materializers, covering indexes, retention, and a working cache.</Description>
   </PropertyGroup>
   <ItemGroup>

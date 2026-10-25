@@ -11,7 +11,7 @@
     <PackageId>CodeLogic.MSSQL</PackageId>
     <PackageTags>sqlserver;azure-sql;database;orm;linq;query-builder;aggregation;cache</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
-    <Authors>Media2A</Authors>
+    <Authors>Zyntal.com</Authors>
     <Description>SQL Server and Azure SQL with typed LINQ, aggregation, projection pushdown, compiled materializers, schema management, and caching.</Description>
   </PropertyGroup>
   <ItemGroup>

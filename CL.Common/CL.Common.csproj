@@ -10,7 +10,7 @@
     <PackageId>CodeLogic.Common</PackageId>
     <PackageTags>utilities;imaging;caching;hashing;compression</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
-    <Authors>Media2A</Authors>
+    <Authors>Zyntal.com</Authors>
     <Description>General-purpose utility toolkit for CodeLogic 4 applications</Description>
   </PropertyGroup>
   <ItemGroup>

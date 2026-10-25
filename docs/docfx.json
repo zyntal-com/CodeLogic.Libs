@@ -46,7 +46,7 @@
       "_appLogoPath": "images/logo.svg",
       "_appFaviconPath": "images/logo.svg",
       "_enableSearch": true,
-      "_appFooter": "Copyright &copy; 2026 Media2A &middot; MIT-licensed &middot; Built with <a href='https://dotnet.github.io/docfx'>DocFX</a>.",
+      "_appFooter": "Copyright &copy; 2026 Zyntal.com &middot; MIT-licensed &middot; Built with <a href='https://dotnet.github.io/docfx'>DocFX</a>.",
       "_appName": "CodeLogic Libraries",
       "_disableContribution": false
     },

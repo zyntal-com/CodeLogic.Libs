@@ -21,7 +21,7 @@ public sealed class SQLiteLibrary : ILibrary, IConfigReloadable
         Name = "SQLite Library",
         Version = CL.Internal.InternalLibraryVersion.Current,
         Description = "SQLite database library with connection pooling, LINQ queries, and table sync",
-        Author = "Media2A",
+        Author = "Zyntal.com",
         Tags = ["sqlite", "database", "orm", "repository"]
     };
 

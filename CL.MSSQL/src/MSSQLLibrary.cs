@@ -38,7 +38,7 @@ public sealed class MSSQLLibrary : ILibrary, IConfigReloadable
         Name = "SQL Server Library",
         Version = CL.Internal.InternalLibraryVersion.Current,
         Description = "SQL Server with typed LINQ, SQL aggregation, projection pushdown, compiled materializers, covering indexes, retention, and a working cache.",
-        Author = "Media2A",
+        Author = "Zyntal.com",
         Tags = ["mssql", "database", "orm", "repository"]
     };
 

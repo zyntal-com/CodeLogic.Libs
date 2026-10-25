@@ -30,7 +30,7 @@ public sealed class MailLibrary : ILibrary, IConfigReloadable
         Name = "Mail Library",
         Version = CL.Internal.InternalLibraryVersion.Current,
         Description = "SMTP/IMAP e-mail with variable-substitution template engine",
-        Author = "Media2A",
+        Author = "Zyntal.com",
         Tags = ["email", "smtp", "imap", "templates"]
     };
 

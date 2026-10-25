@@ -38,7 +38,7 @@ public sealed class SocialConnectLibrary : ILibrary, IConfigReloadable
         Name = "Social Connect Library",
         Version = CL.Internal.InternalLibraryVersion.Current,
         Description = "Discord webhook messaging and Steam profile/authentication services",
-        Author = "Media2A",
+        Author = "Zyntal.com",
         Tags = ["discord", "steam", "webhook", "social", "gaming"]
     };
 

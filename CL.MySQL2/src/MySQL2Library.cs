@@ -38,7 +38,7 @@ public sealed class MySQL2Library : ILibrary, IConfigReloadable
         Name = "MySQL2 Library",
         Version = CL.Internal.InternalLibraryVersion.Current,
         Description = "MySQL with typed LINQ, SQL aggregation, projection pushdown, compiled materializers, covering indexes, retention, and a working cache.",
-        Author = "Media2A",
+        Author = "Zyntal.com",
         Tags = ["mysql", "database", "orm", "repository"]
     };
 

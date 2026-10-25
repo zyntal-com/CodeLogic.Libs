@@ -12,7 +12,7 @@ _layout: landing
     <code>ILibrary</code> that manages its own configuration, lifecycle, and health checks.
   </p>
   <div class="cl-badges">
-    <a href="https://www.nuget.org/profiles/Media2A"><img src="https://img.shields.io/badge/NuGet-CodeLogic.*-2f86ad" alt="NuGet" /></a>
+    <a href="https://www.nuget.org/profiles/zyntal.com"><img src="https://img.shields.io/badge/NuGet-CodeLogic.*-2f86ad" alt="NuGet" /></a>
     <img src="https://img.shields.io/badge/.NET-10-512bd4" alt=".NET 10" />
     <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT" />
   </div>

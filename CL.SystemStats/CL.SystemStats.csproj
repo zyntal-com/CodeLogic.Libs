@@ -9,8 +9,8 @@
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <NoWarn>CS1591</NoWarn>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <Authors>Media2A</Authors>
-    <Company>Media2A</Company>
+    <Authors>Zyntal.com</Authors>
+    <Company>Zyntal.com</Company>
     <Product>CL.SystemStats</Product>
     <Description>Cross-platform system statistics (CPU, memory, processes, uptime) for CodeLogic 4 — Windows and Linux via /proc</Description>
     <PackageId>CodeLogic.SystemStats</PackageId>

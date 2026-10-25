@@ -15,7 +15,7 @@ public sealed class GameNetQueryLibrary : ILibrary
         Name        = "CL.GameNetQuery",
         Version     = CL.Internal.InternalLibraryVersion.Current,
         Description = "Game server query toolkit — Valve Source Engine and Minecraft UDP/RCON queries",
-        Author      = "Media2A",
+        Author      = "Zyntal.com",
         Dependencies = []
     };
 

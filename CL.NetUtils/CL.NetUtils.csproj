@@ -10,7 +10,7 @@
     <PackageId>CodeLogic.NetUtils</PackageId>
     <PackageTags>dns;dnsbl;geoip;geolocation</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
-    <Authors>Media2A</Authors>
+    <Authors>Zyntal.com</Authors>
     <Description>DNSBL blacklist checking and IP geolocation services for CodeLogic 4 applications</Description>
     <NoWarn>CS1591</NoWarn>
   </PropertyGroup>

@@ -10,7 +10,7 @@
     <PackageId>CodeLogic.SQLite</PackageId>
     <PackageTags>sqlite;database;orm;linq</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
-    <Authors>Media2A</Authors>
+    <Authors>Zyntal.com</Authors>
     <Description>SQLite database library with connection pooling, LINQ queries, and table sync for CodeLogic 4</Description>
     <NoWarn>CS1591</NoWarn>
   </PropertyGroup>

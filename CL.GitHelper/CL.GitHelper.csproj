@@ -10,7 +10,7 @@
     <PackageId>CodeLogic.GitHelper</PackageId>
     <PackageTags>git;repository;libgit2</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
-    <Authors>Media2A</Authors>
+    <Authors>Zyntal.com</Authors>
     <Description>Git repository management library for CodeLogic 4 applications</Description>
   </PropertyGroup>
   <ItemGroup>

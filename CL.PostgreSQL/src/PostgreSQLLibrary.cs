@@ -38,7 +38,7 @@ public sealed class PostgreSQLLibrary : ILibrary, IConfigReloadable
         Name = "PostgreSQL Library",
         Version = CL.Internal.InternalLibraryVersion.Current,
         Description = "PostgreSQL with typed LINQ, SQL aggregation, projection pushdown, compiled materializers, covering indexes, retention, and a working cache.",
-        Author = "Media2A",
+        Author = "Zyntal.com",
         Tags = ["postgresql", "postgres", "database", "orm", "repository"]
     };
 

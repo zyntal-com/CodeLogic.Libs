@@ -29,7 +29,7 @@ public sealed class GitHelperLibrary : ILibrary, IConfigReloadable
         Name = "Git Helper Library",
         Version = CL.Internal.InternalLibraryVersion.Current,
         Description = "Git repository management with LibGit2Sharp integration",
-        Author = "Media2A",
+        Author = "Zyntal.com",
         Tags = ["git", "vcs", "source-control"]
     };
 
