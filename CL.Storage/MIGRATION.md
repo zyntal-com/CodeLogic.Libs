@@ -145,11 +145,10 @@ positional members are unchanged. Use `TestConnectionAsync` to check settings be
 
 ## Upgrading from CodeLogic.Storage 4.8.93
 
-This release breaks source and binary compatibility with 4.8.93 although it ships in the same 4.8 line
-(the same `AssemblyVersion` 4.8.0.0). Rebuild everything that references CodeLogic.Storage: .NET loads it
-for an assembly compiled against 4.8.93, which then fails with `MissingMethodException` the first time it
-calls a changed member. Pin the version you have tested rather than floating on `4.8.*`. `CHANGELOG.md`
-lists every change; this section says what to do about each.
+This release (4.9.98, the 4.9 line, requires CodeLogic 4.9) breaks source and binary compatibility with
+4.8.93. Rebuild everything that references CodeLogic.Storage: .NET loads it for an assembly compiled
+against 4.8.93, which then fails with `MissingMethodException` the first time it calls a changed member.
+`CHANGELOG.md` lists every change; this section says what to do about each.
 
 ### Copy and move return a report
 
