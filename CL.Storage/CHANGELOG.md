@@ -1,20 +1,20 @@
 # Changelog
 
-## Unreleased (since 4.8.93)
+## 2026-10-25 (4.9.98)
 
 Everything below is relative to the published **4.8.93**. Types and members that 4.8.93 never shipped
 are listed under *Added*, even where they changed while this release was being built.
 
-> **A breaking release within the 4.8 line.** This release breaks source and binary compatibility with
-> 4.8.93 (see *Changed (breaking)*), and ships as `4.8.<run>` like every library in this repository, with
-> the same `AssemblyVersion` 4.8.0.0. So:
+> **A breaking release.** This release breaks source and binary compatibility with 4.8.93 (see
+> *Changed (breaking)*). It ships in the 4.9 line (`4.9.<run>`, `AssemblyVersion` 4.9.0.0) with every
+> library in this repository and requires CodeLogic 4.9, so a project floating on `4.8.*` does not pick it
+> up. When you move to it:
 >
 > - **rebuild** everything that references CodeLogic.Storage and follow `MIGRATION.md`: an assembly compiled
 >   against 4.8.93 (another package, or a plugin) still loads, and fails at runtime with
 >   `MissingMethodException` or `MissingFieldException` the first time it calls a changed member, for
 >   example `StorageLibrary.CopyAsync`, which now returns `StorageTransferReport` instead of `Result`;
-> - **pin the version** you have tested rather than floating on `4.8.*`, and review CodeLogic.Storage updates
->   instead of letting a patch updater take them.
+> - **review** CodeLogic.Storage updates instead of letting an updater take them across lines.
 
 ### Changed (breaking)
 
