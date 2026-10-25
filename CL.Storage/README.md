@@ -249,6 +249,19 @@ server presented, ready to pin; `GetConnectionDiagnosticsAsync` describes a live
 TLS or SSH algorithms, server software and features, session pool counters). Native SDK clients remain
 available through `GetNativeClient` and `OpenNativeConnectionAsync`.
 
+### Editing the config while running
+
+With CodeLogic 4.9+, the `storage*` sections also apply live when they are changed outside the library,
+through `Libraries.UpdateConfigAsync`, `Libraries.ReloadConfigAsync`, or the config file watcher. Only
+the connections that changed are touched: a changed or added connection is built and health-checked,
+then swapped in while the one it replaces drains its in-flight operations; removed or disabled
+connections are retired the same way; every other connection keeps running. A replacement that fails
+its health check leaves the current backend in service and the change is reported as not applied;
+`Libraries.ReloadConfigAsync` retries it once the cause is fixed, even if the file did not change. The
+default connection cannot be removed or disabled this way, and turning the library on or off still
+needs a restart. Library-wide speed limits apply to every connection at once; `MaxBufferedDownloadBytes`
+applies to connections created or changed afterwards.
+
 ## Errors and events
 
 Expected failures come back as a failed `Result` with a stable `storage.*` code, such as
@@ -264,7 +277,7 @@ Upgrading from 4.8.93 or from the legacy S3-only package? See [MIGRATION.md](MIG
 
 ## Requirements
 
-- CodeLogic 4
+- CodeLogic 4.9+
 - .NET 10
 
 MIT license.

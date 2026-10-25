@@ -1,5 +1,6 @@
 using CL.GitHelper.Models;
 using CL.GitHelper.Services;
+using CodeLogic.Core.Configuration;
 using CodeLogic.Framework.Libraries;
 
 namespace CL.GitHelper;
@@ -15,9 +16,11 @@ namespace CL.GitHelper;
 ///   <item><description><b>Start</b> — optionally triggers auto-fetch on repositories with <see cref="RepositoryConfiguration.AutoFetch"/> enabled.</description></item>
 ///   <item><description><b>Stop</b> — disposes the <see cref="GitManager"/> and all cached connections.</description></item>
 /// </list>
+/// Config changes made while running (admin UI, reload, file watcher) are applied live,
+/// per repository — see <see cref="OnConfigChangedAsync"/>.
 /// </para>
 /// </summary>
-public sealed class GitHelperLibrary : ILibrary
+public sealed class GitHelperLibrary : ILibrary, IConfigReloadable
 {
     /// <inheritdoc/>
     public LibraryManifest Manifest { get; } = new()
@@ -26,7 +29,7 @@ public sealed class GitHelperLibrary : ILibrary
         Name = "Git Helper Library",
         Version = CL.Internal.InternalLibraryVersion.Current,
         Description = "Git repository management with LibGit2Sharp integration",
-        Author = "Media2A",
+        Author = "Zyntal.com",
         Tags = ["git", "vcs", "source-control"]
     };
 
@@ -64,12 +67,7 @@ public sealed class GitHelperLibrary : ILibrary
         }
 
         // Resolve the base directory for relative repository paths.
-        var baseDir = string.IsNullOrWhiteSpace(config.BaseDirectory)
-            ? Path.Combine(context.DataDirectory, "repositories")
-            : config.BaseDirectory;
-
-        Directory.CreateDirectory(baseDir);
-        context.Logger.Info($"Repository base directory: {baseDir}");
+        var baseDir = ResolveBaseDirectory(context, config);
 
         _manager = new GitManager(config, baseDir, context.Logger);
         context.Logger.Info($"GitManager ready — {config.Repositories.Count} repository configuration(s)");
@@ -78,6 +76,90 @@ public sealed class GitHelperLibrary : ILibrary
         await ProbeRepositoriesAsync();
 
         context.Logger.Info($"{Manifest.Name} initialized");
+    }
+
+    private static string ResolveBaseDirectory(LibraryContext context, GitHelperConfig config)
+    {
+        var baseDir = string.IsNullOrWhiteSpace(config.BaseDirectory)
+            ? Path.Combine(context.DataDirectory, "repositories")
+            : config.BaseDirectory;
+
+        Directory.CreateDirectory(baseDir);
+        context.Logger.Info($"Repository base directory: {baseDir}");
+        return baseDir;
+    }
+
+    // ── Live config changes ──────────────────────────────────────────────────
+
+    /// <summary>
+    /// Applies a config change without a restart, touching only the repositories that changed.
+    /// A removed or changed repository is dropped from the cache; its old <see cref="GitRepository"/>
+    /// is disposed once the git operation running on it finishes, and the next
+    /// <see cref="GetRepositoryAsync"/> opens it with the new settings. Untouched repositories keep
+    /// their instances. Library-wide settings (cache, timeouts, concurrency, base directory) apply at
+    /// once. Repositories added with <see cref="RegisterRepository"/> are kept. Added or changed
+    /// repositories with <see cref="RepositoryConfiguration.AutoFetch"/> are fetched in the background.
+    /// <see cref="GitHelperConfig.Enabled"/> can be switched either way.
+    /// </summary>
+    public async Task OnConfigChangedAsync(LibraryContext context, ConfigChangedEventArgs change, CancellationToken cancellationToken)
+    {
+        if (change.NewValue is not GitHelperConfig current) return;
+
+        if (!current.Enabled)
+        {
+            var old = _manager;
+            if (old is null) return;
+            _manager = null;
+            old.Retire();
+            context.Logger.Info($"{Manifest.Name} disabled by a config change");
+            return;
+        }
+
+        var baseDir = ResolveBaseDirectory(context, current);
+
+        if (_manager is null)
+        {
+            _manager = new GitManager(current, baseDir, context.Logger);
+            context.Logger.Info($"{Manifest.Name} enabled by a config change — {current.Repositories.Count} repository configuration(s)");
+            await ProbeRepositoriesAsync();
+            AutoFetchInBackground(context, current.Repositories.Where(r => r.AutoFetch).Select(r => r.Id));
+            return;
+        }
+
+        var diff = await _manager.ApplyConfigurationAsync(current, baseDir).ConfigureAwait(false);
+
+        foreach (var id in diff.Removed.Keys) context.Logger.Info($"Repository '{id}' removed");
+        foreach (var id in diff.Changed.Keys) context.Logger.Info($"Repository '{id}' updated");
+        foreach (var id in diff.Added.Keys) context.Logger.Info($"Repository '{id}' added");
+
+        var refetch = diff.Added.Values.Concat(diff.Changed.Values.Select(c => c.New))
+            .Where(r => r.AutoFetch)
+            .Select(r => r.Id);
+        AutoFetchInBackground(context, refetch);
+    }
+
+    private void AutoFetchInBackground(LibraryContext context, IEnumerable<string> repositoryIds)
+    {
+        var manager = _manager;
+        var ids = repositoryIds.ToList();
+        if (manager is null || ids.Count == 0) return;
+
+        _ = Task.Run(async () =>
+        {
+            foreach (var id in ids)
+            {
+                try
+                {
+                    var result = await (await manager.GetRepositoryAsync(id)).FetchAsync();
+                    if (result.IsSuccess) context.Logger.Info($"  Auto-fetch OK: {id}");
+                    else context.Logger.Warning($"  Auto-fetch failed for '{id}': {result.ErrorMessage}");
+                }
+                catch (Exception ex)
+                {
+                    context.Logger.Error($"  Auto-fetch error for '{id}': {ex.Message}", ex);
+                }
+            }
+        });
     }
 
     // ── Phase 3: Start ────────────────────────────────────────────────────────

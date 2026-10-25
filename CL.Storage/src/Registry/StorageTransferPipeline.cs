@@ -34,6 +34,14 @@ internal static class StorageTransferPipeline
             library?.TotalDownload));
     }
 
+    /// <summary>Swaps the library-wide budgets attached to a backend, keeping its own limits.</summary>
+    public static void SetLibraryLimits(object backend, TransferLimits library) =>
+        Limits.AddOrUpdate(backend, LimitsFor(backend) with
+        {
+            TotalUpload = library.TotalUpload,
+            TotalDownload = library.TotalDownload
+        });
+
     /// <summary>Creates the library-wide budgets that every connection shares.</summary>
     public static TransferLimits LibraryLimits(long? totalUploadBytesPerSecond, long? totalDownloadBytesPerSecond) =>
         new(null, null, Bucket(totalUploadBytesPerSecond), Bucket(totalDownloadBytesPerSecond));

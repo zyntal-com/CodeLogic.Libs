@@ -4,6 +4,33 @@ All notable changes to **CodeLogic.MySQL2** are documented here. Versions follow
 [Semantic Versioning](https://semver.org/). The version listed here matches the
 NuGet package version of `CodeLogic.MySQL2`.
 
+## 2026-10-24
+
+### Added
+
+- **Live config changes per database** (requires CodeLogic 4.9+). `MySQL2Library` implements
+  `IConfigReloadable`: a change to `config.mysql.json` made through `Libraries.UpdateConfigAsync`,
+  `Libraries.ReloadConfigAsync` or the config file watcher is applied without a restart and touches
+  only the databases that changed. Changed connection settings clear that database's idle pool,
+  re-test it and ensure its schema-state tables; other settings update in place; added/removed
+  databases connect/disconnect; untouched databases keep their connections. `mysql.cache` changes
+  apply immediately. An unreachable database leaves the change saved, still applies the rest, and
+  is reported as not applied. A runtime `SetSyncMode` survives unrelated changes.
+- `ConnectionManager.ReplaceConfigurationAsync` and `ConnectionManager.UnregisterConfigurationAsync`
+  swap or remove one connection's configuration, clearing its idle pool when the connection string
+  changes.
+
+### Changed — behaviour
+
+- **Index drift is checked for every model index and rebuilt where drops are allowed** (aligned
+  with CL.MSSQL and CL.PostgreSQL). The drift check now covers `[Index]`, `Column.Index` and
+  `Column.Unique` as well as `[CompositeIndex]`, and compares uniqueness as well as the columns
+  and their order. The Warning is logged at every level. `Production` (Safe) still never touches
+  the index, but the table is now flagged `DriftPending`; `Developer` and `Migration` rebuild it
+  with one atomic `ALTER TABLE … DROP INDEX x, ADD … x (…)`. Previously a drifted index was never
+  rebuilt at any level.
+- An index on a column renamed with `PreviousName` in the same sync is no longer reported as drift.
+
 ## 2026-10-23
 
 ### Added

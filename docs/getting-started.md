@@ -6,7 +6,7 @@ Every library follows the same shape, so the steps are identical regardless of w
 ## Prerequisites
 
 - .NET 10 SDK
-- A [CodeLogic 4](https://github.com/zyntal-com/CodeLogic) application (`CodeLogic` 4.0+)
+- A [CodeLogic 4](https://github.com/zyntal-com/CodeLogic) application (`CodeLogic` 4.9+)
 
 ## 1. Install
 

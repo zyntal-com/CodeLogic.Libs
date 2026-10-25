@@ -297,6 +297,41 @@ internal sealed class SchemaAnalyzer
         var modelColumnNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var modelIndexNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "PRIMARY" };
         var modelFkNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        // previous → new column name, so an index on a column renamed in this pass is not drift.
+        var renamedColumns = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        // Creates a model index that is missing. One that exists under the same name with a
+        // different definition is reported at every level, and rebuilt only at Additive+ (a
+        // rebuild is a drop); at Safe the sync's Full-level check flags the table DriftPending.
+        void ReconcileIndex(string idxName, IReadOnlyList<string> keyColumns, bool unique,
+            IReadOnlyList<string> includeColumns, string createStatement)
+        {
+            if (!modelIndexNames.Add(idxName)) return;
+            if (!existingIndexes.TryGetValue(idxName, out var existing))
+            {
+                alterStatements.Add(createStatement);
+                return;
+            }
+
+            var existingKeys = existing.Columns.Select(c => renamedColumns.GetValueOrDefault(c, c)).ToArray();
+            var existingIncludes = existing.IncludeColumns.Select(c => renamedColumns.GetValueOrDefault(c, c)).ToArray();
+            if (existingKeys.SequenceEqual(keyColumns, StringComparer.OrdinalIgnoreCase)
+                && existing.IsUnique == unique
+                && existingIncludes.SequenceEqual(includeColumns, StringComparer.OrdinalIgnoreCase))
+                return;
+
+            _logger?.Warning(
+                $"[PostgreSQL] Index `{idxName}` on table `{tableName}` has drifted. " +
+                $"Existing: {DescribeIndex(existingKeys, existing.IsUnique, existingIncludes)}, " +
+                $"Model: {DescribeIndex(keyColumns, unique, includeColumns)}.");
+            if (level < SchemaSyncLevel.Additive) return;
+
+            // An index that backs a UNIQUE constraint must be dropped via the constraint.
+            alterStatements.Add(existing.IsConstraint
+                ? $"ALTER TABLE {qualifiedTable} DROP CONSTRAINT {PostgreSqlDialect.Quote(idxName)};"
+                : $"DROP INDEX IF EXISTS {PostgreSqlDialect.Qualify(schemaName, idxName)};");
+            alterStatements.Add(createStatement);
+        }
 
         foreach (var prop in properties)
         {
@@ -320,6 +355,7 @@ internal sealed class SchemaAnalyzer
                         $"TO {PostgreSqlDialect.Quote(colName)};");
                     // The old name is consumed by the rename — keep it out of the Full drop set.
                     modelColumnNames.Add(previous);
+                    renamedColumns[previous] = colName;
                     _logger?.Info($"[PostgreSQL] Will rename column `{tableName}`.`{previous}` → `{colName}`");
                 }
                 else
@@ -348,21 +384,17 @@ internal sealed class SchemaAnalyzer
             if (colAttr?.Index == true && colAttr.Primary == false && colAttr.Unique == false)
             {
                 var idxName = $"idx_{tableName}_{colName}";
-                modelIndexNames.Add(idxName);
-                if (!existingIndexes.ContainsKey(idxName))
-                    alterStatements.Add(
-                        $"CREATE INDEX IF NOT EXISTS {PostgreSqlDialect.Quote(idxName)} " +
-                        $"ON {qualifiedTable} ({PostgreSqlDialect.Quote(colName)});");
+                ReconcileIndex(idxName, [colName], unique: false, [],
+                    $"CREATE INDEX IF NOT EXISTS {PostgreSqlDialect.Quote(idxName)} " +
+                    $"ON {qualifiedTable} ({PostgreSqlDialect.Quote(colName)});");
             }
 
             if (colAttr?.Unique == true && colAttr.Primary == false)
             {
                 var idxName = $"uq_{tableName}_{colName}";
-                modelIndexNames.Add(idxName);
-                if (!existingIndexes.ContainsKey(idxName))
-                    alterStatements.Add(
-                        $"ALTER TABLE {qualifiedTable} ADD CONSTRAINT {PostgreSqlDialect.Quote(idxName)} " +
-                        $"UNIQUE ({PostgreSqlDialect.Quote(colName)});");
+                ReconcileIndex(idxName, [colName], unique: true, [],
+                    $"ALTER TABLE {qualifiedTable} ADD CONSTRAINT {PostgreSqlDialect.Quote(idxName)} " +
+                    $"UNIQUE ({PostgreSqlDialect.Quote(colName)});");
             }
 
             // [Index] attributes — same as CREATE TABLE path.
@@ -371,20 +403,16 @@ internal sealed class SchemaAnalyzer
                 var idxName = !string.IsNullOrEmpty(idxAttr.Name)
                     ? idxAttr.Name!
                     : (idxAttr.Unique ? $"uq_{tableName}_{colName}" : $"idx_{tableName}_{colName}");
-                modelIndexNames.Add(idxName);
-                if (!existingIndexes.ContainsKey(idxName))
-                {
-                    var includeCols = (idxAttr.Include ?? Array.Empty<string>())
-                        .Select(propName => ResolveColumnName(entityType, propName))
-                        .ToArray();
-                    var includeClause = includeCols.Length == 0
-                        ? string.Empty
-                        : $" INCLUDE ({string.Join(", ", includeCols.Select(PostgreSqlDialect.Quote))})";
-                    var keyword = idxAttr.Unique ? "CREATE UNIQUE INDEX" : "CREATE INDEX";
-                    alterStatements.Add(
-                        $"{keyword} IF NOT EXISTS {PostgreSqlDialect.Quote(idxName)} " +
-                        $"ON {qualifiedTable} ({PostgreSqlDialect.Quote(colName)}){includeClause};");
-                }
+                var includeCols = (idxAttr.Include ?? Array.Empty<string>())
+                    .Select(propName => ResolveColumnName(entityType, propName))
+                    .ToArray();
+                var includeClause = includeCols.Length == 0
+                    ? string.Empty
+                    : $" INCLUDE ({string.Join(", ", includeCols.Select(PostgreSqlDialect.Quote))})";
+                var keyword = idxAttr.Unique ? "CREATE UNIQUE INDEX" : "CREATE INDEX";
+                ReconcileIndex(idxName, [colName], idxAttr.Unique, includeCols,
+                    $"{keyword} IF NOT EXISTS {PostgreSqlDialect.Quote(idxName)} " +
+                    $"ON {qualifiedTable} ({PostgreSqlDialect.Quote(colName)}){includeClause};");
             }
 
             // ON UPDATE CURRENT_TIMESTAMP equivalent. CREATE OR REPLACE / DROP IF EXISTS
@@ -415,14 +443,10 @@ internal sealed class SchemaAnalyzer
         var compositeIndexes = entityType.GetCustomAttributes<CompositeIndexAttribute>();
         foreach (var ci in compositeIndexes)
         {
-            modelIndexNames.Add(ci.IndexName);
-            if (!existingIndexes.ContainsKey(ci.IndexName))
-            {
-                var cols = string.Join(", ", ci.ColumnNames.Select(c => $"{PostgreSqlDialect.Quote(c)}"));
-                alterStatements.Add(ci.Unique
-                    ? $"ALTER TABLE {qualifiedTable} ADD CONSTRAINT {PostgreSqlDialect.Quote(ci.IndexName)} UNIQUE ({cols});"
-                    : $"CREATE INDEX IF NOT EXISTS {PostgreSqlDialect.Quote(ci.IndexName)} ON {qualifiedTable} ({cols});");
-            }
+            var cols = string.Join(", ", ci.ColumnNames.Select(c => $"{PostgreSqlDialect.Quote(c)}"));
+            ReconcileIndex(ci.IndexName, ci.ColumnNames, ci.Unique, [], ci.Unique
+                ? $"ALTER TABLE {qualifiedTable} ADD CONSTRAINT {PostgreSqlDialect.Quote(ci.IndexName)} UNIQUE ({cols});"
+                : $"CREATE INDEX IF NOT EXISTS {PostgreSqlDialect.Quote(ci.IndexName)} ON {qualifiedTable} ({cols});");
         }
 
         // ── Level: Additive ── drop removed indexes and FKs
@@ -606,7 +630,17 @@ internal sealed class SchemaAnalyzer
             SELECT ic.relname,
                    i.indisunique,
                    EXISTS (SELECT 1 FROM pg_catalog.pg_constraint con
-                           WHERE con.conindid = i.indexrelid) AS is_constraint
+                           WHERE con.conindid = i.indexrelid) AS is_constraint,
+                   ARRAY(SELECT a.attname::text
+                         FROM unnest(i.indkey) WITH ORDINALITY AS k(attnum, ord)
+                         JOIN pg_catalog.pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k.attnum
+                         WHERE k.ord <= i.indnkeyatts
+                         ORDER BY k.ord) AS key_columns,
+                   ARRAY(SELECT a.attname::text
+                         FROM unnest(i.indkey) WITH ORDINALITY AS k(attnum, ord)
+                         JOIN pg_catalog.pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k.attnum
+                         WHERE k.ord > i.indnkeyatts
+                         ORDER BY k.ord) AS include_columns
             FROM pg_catalog.pg_index i
             JOIN pg_catalog.pg_class ic    ON ic.oid = i.indexrelid
             JOIN pg_catalog.pg_class c     ON c.oid = i.indrelid
@@ -620,7 +654,8 @@ internal sealed class SchemaAnalyzer
         while (await reader.ReadAsync(ct).ConfigureAwait(false))
         {
             var name = reader.GetString(0);
-            result[name] = new IndexInfo(name, reader.GetBoolean(1), reader.GetBoolean(2));
+            result[name] = new IndexInfo(name, reader.GetBoolean(1), reader.GetBoolean(2),
+                reader.GetFieldValue<string[]>(3), reader.GetFieldValue<string[]>(4));
         }
 
         return result;
@@ -963,5 +998,10 @@ internal sealed class SchemaAnalyzer
         string? CharacterSet,
         string? Comment);
 
-    private record IndexInfo(string Name, bool IsUnique, bool IsConstraint);
+    private record IndexInfo(string Name, bool IsUnique, bool IsConstraint,
+        IReadOnlyList<string> Columns, IReadOnlyList<string> IncludeColumns);
+
+    private static string DescribeIndex(IReadOnlyList<string> keyColumns, bool unique, IReadOnlyList<string> includeColumns) =>
+        $"{(unique ? "UNIQUE " : "")}({string.Join(", ", keyColumns)})" +
+        (includeColumns.Count == 0 ? "" : $" INCLUDE ({string.Join(", ", includeColumns)})");
 }

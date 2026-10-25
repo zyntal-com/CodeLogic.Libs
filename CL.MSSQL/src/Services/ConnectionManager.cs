@@ -57,6 +57,45 @@ public sealed class ConnectionManager
         _logger?.Debug($"[MSSQL] Configuration registered for '{connectionId}'");
     }
 
+    /// <summary>
+    /// Replaces the configuration registered under <paramref name="connectionId"/>. When the
+    /// connection string changed, idle pooled connections opened with the old settings are
+    /// cleared so new work reconnects; connections already handed out finish normally.
+    /// Other connection IDs are not touched.
+    /// </summary>
+    /// <returns><see langword="true"/> when the connection string changed (a reconnect is needed).</returns>
+    public Task<bool> ReplaceConfigurationAsync(SqlServerDatabaseConfig config, string connectionId = "Default")
+    {
+        ArgumentNullException.ThrowIfNull(config);
+        _configs.TryGetValue(connectionId, out var previous);
+        RegisterConfiguration(config, connectionId);
+
+        var reconnect = previous is null || previous.BuildConnectionString() != config.BuildConnectionString();
+        if (reconnect && previous is not null)
+            ClearPool(previous);
+        return Task.FromResult(reconnect);
+    }
+
+    /// <summary>
+    /// Removes the configuration registered under <paramref name="connectionId"/> and clears its
+    /// idle pooled connections. Connections already handed out finish normally.
+    /// </summary>
+    /// <returns><see langword="false"/> when nothing was registered under that ID.</returns>
+    public Task<bool> UnregisterConfigurationAsync(string connectionId)
+    {
+        if (!_configs.TryRemove(connectionId, out var previous)) return Task.FromResult(false);
+        ClearPool(previous);
+        _logger?.Debug($"[MSSQL] Configuration removed for '{connectionId}'");
+        return Task.FromResult(true);
+    }
+
+    private static void ClearPool(SqlServerDatabaseConfig config)
+    {
+        if (!config.EnablePooling) return;
+        using var connection = new SqlConnection(config.BuildConnectionString());
+        SqlConnection.ClearPool(connection);
+    }
+
     /// <summary>Returns the configuration for the given connection ID, or null if not found.</summary>
     public SqlServerDatabaseConfig? GetConfiguration(string connectionId = "Default")
         => _configs.TryGetValue(connectionId, out var cfg) ? cfg : null;

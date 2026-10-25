@@ -64,7 +64,7 @@ Full guide: **[CL.GameNetQuery documentation](https://zyntal-com.github.io/CodeL
 
 ## Requirements
 
-- [CodeLogic 4](https://github.com/zyntal-com/CodeLogic) · .NET 10
+- [CodeLogic 4.9+](https://github.com/zyntal-com/CodeLogic) · .NET 10
 - No external NuGet dependencies.
 
 ## License

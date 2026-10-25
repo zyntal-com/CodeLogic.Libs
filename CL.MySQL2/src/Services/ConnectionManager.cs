@@ -57,6 +57,45 @@ public sealed class ConnectionManager
         _logger?.Debug($"[MySQL2] Configuration registered for '{connectionId}' → {config.Host}:{config.Port}/{config.Database}");
     }
 
+    /// <summary>
+    /// Replaces the configuration registered under <paramref name="connectionId"/>. When the
+    /// connection string changed, idle pooled connections opened with the old settings are
+    /// cleared so new work reconnects; connections already handed out finish normally.
+    /// Other connection IDs are not touched.
+    /// </summary>
+    /// <returns><see langword="true"/> when the connection string changed (a reconnect is needed).</returns>
+    public async Task<bool> ReplaceConfigurationAsync(MySqlDatabaseConfig config, string connectionId = "Default")
+    {
+        ArgumentNullException.ThrowIfNull(config);
+        _configs.TryGetValue(connectionId, out var previous);
+        RegisterConfiguration(config, connectionId);
+
+        var reconnect = previous is null || previous.BuildConnectionString() != config.BuildConnectionString();
+        if (reconnect && previous is not null)
+            await ClearPoolAsync(previous).ConfigureAwait(false);
+        return reconnect;
+    }
+
+    /// <summary>
+    /// Removes the configuration registered under <paramref name="connectionId"/> and clears its
+    /// idle pooled connections. Connections already handed out finish normally.
+    /// </summary>
+    /// <returns><see langword="false"/> when nothing was registered under that ID.</returns>
+    public async Task<bool> UnregisterConfigurationAsync(string connectionId)
+    {
+        if (!_configs.TryRemove(connectionId, out var previous)) return false;
+        await ClearPoolAsync(previous).ConfigureAwait(false);
+        _logger?.Debug($"[MySQL2] Configuration removed for '{connectionId}'");
+        return true;
+    }
+
+    private static async Task ClearPoolAsync(MySqlDatabaseConfig config)
+    {
+        if (!config.EnablePooling) return;
+        await using var connection = new MySqlConnection(config.BuildConnectionString());
+        await MySqlConnection.ClearPoolAsync(connection).ConfigureAwait(false);
+    }
+
     /// <summary>Returns the configuration for the given connection ID, or null if not found.</summary>
     public MySqlDatabaseConfig? GetConfiguration(string connectionId = "Default")
         => _configs.TryGetValue(connectionId, out var cfg) ? cfg : null;

@@ -105,7 +105,7 @@ Result<Dictionary<string, SyncResult>> schema = await mysql.SyncSchemaAsync(
 mysql.SetSyncMode(SyncMode.Production, connectionId: "Default");
 ```
 
-Indexes are matched by name. If a `[CompositeIndex]` keeps its name but its columns change, sync logs a column-drift warning and leaves the existing index as it is; give the index a new name to have the new definition created.
+Indexes are matched by name. If an index keeps its name but its definition changes (columns, their order, or uniqueness), sync logs a drift warning. `Production` leaves the existing index as it is and reports `DriftPending`; `Developer` and `Migration` rebuild it.
 
 Every desired schema is hashed into `__schema_state`. An unchanged model takes the CRC fast path and skips `information_schema` inspection and DDL entirely. `SyncResult` reports operations, errors, duration, CRC, whether work was skipped, and whether destructive drift remains pending.
 
@@ -384,6 +384,20 @@ Applied database settings include endpoint and credentials, pooling, connection 
 
 The cache configuration's global switch, entry limit, `DateTime` quantization window, default TTL (used by the parameterless `.WithCache()`), and hit/miss event switch are all applied at startup.
 
+### Changing config while running
+
+Both sections apply live — no restart — when changed through `Libraries.UpdateConfigAsync`, `Libraries.ReloadConfigAsync`, or the CodeLogic config file watcher (CodeLogic 4.9+). Only the databases that changed are touched:
+
+| Change to a database | What happens |
+|----------------------|--------------|
+| Connection settings (host, credentials, pooling, timeouts, SSL, charset) | Its idle pool is cleared, the connection is tested, and its schema-state tables are ensured. In-flight queries finish on their old connections. |
+| Other settings (slow-query threshold, batch size, cache override, N+1 threshold, …) | Updated in place; no reconnect. |
+| Added / enabled | Connects. |
+| Removed / disabled | Its pool is cleared and the ID is unregistered. |
+| Untouched | Nothing — its connections stay open. |
+
+If a changed database cannot be reached, the change stays saved, the other databases are still applied, and the result reports `Applied = false` (the library shows Degraded until a later change connects). A sync mode set at runtime with `SetSyncMode` survives unrelated changes. Enabling the first database when the library started with none still requires a restart.
+
 ## Main entry points
 
 | Member | Purpose |
@@ -410,7 +424,7 @@ The cache configuration's global switch, entry limit, `DateTime` quantization wi
 ## Requirements
 
 - .NET 10
-- CodeLogic 4
+- CodeLogic 4.9+
 - MySqlConnector 2.x
 - MySQL 5.7+, MariaDB 10.3+, or a compatible Percona release
 

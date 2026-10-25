@@ -3,6 +3,25 @@
 All notable changes to **CodeLogic.GitHelper** are documented here. Versions follow
 [Semantic Versioning](https://semver.org/).
 
+## 2026-10-24
+
+### Added
+
+- **Live config changes** (requires CodeLogic 4.9+). `GitHelperLibrary` implements `IConfigReloadable`:
+  a change to `config.githelper.json` made through `Libraries.UpdateConfigAsync`,
+  `Libraries.ReloadConfigAsync` or the config file watcher is applied without a restart, touching only
+  the repositories that changed. Changed or removed repositories are evicted from the cache and their
+  old `GitRepository` is disposed once its running git operation finishes; untouched repositories keep
+  their instances; library-wide settings and `baseDirectory` apply at once; added or changed
+  repositories with `autoFetch` are fetched in the background. `Enabled` can be switched either way.
+  The `RequiresRestart` hints on `id`, `repositoryUrl`, `localPath` and `baseDirectory` were removed.
+
+### Changed
+
+- `GitManager` keeps its own copy of the configuration. Repositories added with `RegisterRepository`
+  no longer appear in `Configuration.Get<GitHelperConfig>()` (and so can no longer be written to
+  `config.githelper.json` by a later save); they are kept across config changes.
+
 ## 2026-09-12
 
 ### Changed

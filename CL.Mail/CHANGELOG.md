@@ -3,6 +3,17 @@
 All notable changes to **CodeLogic.Mail** are documented here. Versions follow
 [Semantic Versioning](https://semver.org/).
 
+## 2026-10-24
+
+### Added
+
+- **Live config changes** (requires CodeLogic 4.9+). `MailLibrary` implements `IConfigReloadable`: a
+  change to `config.mail.json` made through `Libraries.UpdateConfigAsync`, `Libraries.ReloadConfigAsync`
+  or the config file watcher is applied without a restart, rebuilding only what changed. Changed SMTP
+  settings replace `Smtp` (sends in flight finish on the old settings); a changed template directory
+  replaces `TemplateProvider`/`TemplateEngine`; changed IMAP settings replace `Imap` and close the old
+  connection (re-read `Imap` and restart IDLE). `Enabled` can be switched either way.
+
 ## 2026-09-12
 
 ### Changed

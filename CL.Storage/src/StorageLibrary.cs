@@ -25,7 +25,7 @@ using CodeLogic.Framework.Libraries;
 namespace CL.Storage;
 
 /// <summary>Provider-neutral storage library for CodeLogic applications.</summary>
-public sealed class StorageLibrary : ILibrary, IAsyncDisposable
+public sealed partial class StorageLibrary : ILibrary, IAsyncDisposable
 {
     private readonly object _stateGate = new();
     private readonly object _registryGate = new();
@@ -96,7 +96,7 @@ public sealed class StorageLibrary : ILibrary, IAsyncDisposable
         Name = "Storage Library",
         Version = CL.Internal.InternalLibraryVersion.Current,
         Description = "Provider-neutral mounted storage connections",
-        Author = "Media2A",
+        Author = "Zyntal.com",
         Tags = ["storage", "filesystem", "cloud"]
     };
 
@@ -2521,11 +2521,28 @@ public sealed class StorageLibrary : ILibrary, IAsyncDisposable
             : context.Configuration.Get<T>();
 
     /// <summary>Saves a configuration section, to memory in runtime-only mode.</summary>
-    private Task SaveConfigAsync<T>(LibraryContext context, T value) where T : ConfigModelBase, new()
+    /// <remarks>
+    /// Marks the save as the library's own, so the resulting config-change notification is not
+    /// applied a second time (see <see cref="OnConfigChangedAsync"/>): the callers hold the mutation
+    /// gate and update the registry themselves.
+    /// </remarks>
+    private async Task SaveConfigAsync<T>(LibraryContext context, T value) where T : ConfigModelBase, new()
     {
-        if (!_runtimeOnly) return context.Configuration.SaveAsync(value);
-        _memoryConfig[typeof(T)] = value;
-        return Task.CompletedTask;
+        if (_runtimeOnly)
+        {
+            _memoryConfig[typeof(T)] = value;
+            return;
+        }
+
+        _savingOwnConfig.Value = true;
+        try
+        {
+            await context.Configuration.SaveAsync(value).ConfigureAwait(false);
+        }
+        finally
+        {
+            _savingOwnConfig.Value = false;
+        }
     }
 
     internal StorageEventPublisher CaptureEventPublisher()
@@ -2930,7 +2947,12 @@ public sealed class StorageLibrary : ILibrary, IAsyncDisposable
     {
         Enabled = source.Enabled,
         RootPath = source.RootPath,
-        FollowLinks = source.FollowLinks
+        FollowLinks = source.FollowLinks,
+        TransferLimits = new StorageTransferLimitsConfig
+        {
+            MaxUploadBytesPerSecond = source.TransferLimits?.MaxUploadBytesPerSecond,
+            MaxDownloadBytesPerSecond = source.TransferLimits?.MaxDownloadBytesPerSecond
+        }
     };
 
     private void ApplyRuntimeLocalOverrides(LocalStorageConfig target)

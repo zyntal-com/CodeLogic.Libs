@@ -1,5 +1,36 @@
 # Changelog
 
+## 2026-10-24
+
+### Added
+
+- **Live config changes per database** (parity with CL.MySQL2; requires CodeLogic 4.9+).
+  `MSSQLLibrary` implements `IConfigReloadable`: a change to `config.mssql.json` made through
+  `Libraries.UpdateConfigAsync`, `Libraries.ReloadConfigAsync` or the config file watcher is applied
+  without a restart and touches only the databases that changed. A changed connection string clears
+  that database's idle pool, re-tests it and ensures its schema-state tables; other settings update
+  in place; added/removed databases connect/disconnect; untouched databases keep their connections.
+  `mssql.cache` changes apply immediately. An unreachable database leaves the change saved, still
+  applies the rest, and is reported as not applied. A runtime `SetSyncMode` survives unrelated changes.
+- `ConnectionManager.ReplaceConfigurationAsync` and `ConnectionManager.UnregisterConfigurationAsync`
+  (same surface as CL.MySQL2).
+
+- **Index drift warning** (parity with CL.MySQL2 and CL.PostgreSQL): when an index declared on
+  the model (`[CompositeIndex]`, `[Index]` or `Column.Index`) exists under the same name but with a
+  different definition (key columns or their order, `UNIQUE`, `INCLUDE`), schema sync logs a
+  Warning naming the table and both definitions. An index on a column renamed with
+  `PreviousName` in the same sync is not reported as drift or rebuilt.
+- **Nested casts in aggregate selectors**: `SumAsync(r => (long?)(long)r.Amount)` and similar
+  unwrap to the column, like CL.MySQL2 and CL.PostgreSQL.
+
+### Changed — behaviour
+
+- **`Production` (Safe) no longer rebuilds a drifted index.** It used to emit `DROP INDEX` +
+  `CREATE INDEX` at every level, which contradicted "Production never drops". At
+  `SchemaSyncLevel.Safe` the index is now left as it is and the table is flagged `DriftPending`;
+  `Developer`, `Migration` (and explicit `Additive` / `Full` levels) still drop and recreate it.
+  Indexes dropped so a column can be altered are unchanged.
+
 ## 2026-10-23
 
 ### Added

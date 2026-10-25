@@ -283,6 +283,27 @@ if (opened.IsSuccess)
 
 Do not dispose reusable clients returned by `GetNativeClient`; dispose session leases.
 
+### Editing the config while running
+
+The same rules apply when a `config.storage*.json` section is changed outside the library (CodeLogic
+4.9+) — through `Libraries.UpdateConfigAsync`, `Libraries.ReloadConfigAsync`, or the config file
+watcher:
+
+- **Changed or added connection**: built and health-checked, then swapped in; the connection it
+  replaces finishes its in-flight operations and leases before it is disposed.
+- **Removed or disabled connection**: retired the same way.
+- **Untouched connections**: keep running, sessions and all.
+- **Failed health check**: the current backend stays in service, the change stays saved, and the
+  result reports `ConfigApplyResult.Applied = false` (the library shows Degraded until a later change
+  applies). The failed connection is retried by the next apply, so once the cause is fixed (an endpoint
+  back up, a folder created) `Libraries.ReloadConfigAsync` applies it even though the file is unchanged.
+- **`storage` section**: `defaultConnection` and `healthCheckTimeoutSeconds` apply at once, the
+  library-wide speed limits are re-attached to every connection, and `maxBufferedDownloadBytes` applies
+  to connections created or changed afterwards. Turning `enabled` on or off requires a restart.
+
+The default connection cannot be removed or disabled this way; point `defaultConnection` elsewhere
+first. Runtime connections installed with `persist: false` stay in effect on top of the file.
+
 ### Runtime-only mode
 
 Applications that manage connections themselves can run the library without configuration files:

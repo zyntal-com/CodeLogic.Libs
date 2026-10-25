@@ -1157,7 +1157,13 @@ public sealed class QueryBuilder<T> where T : class, new()
                 await using var cmd = BuildCommand(conn, sql, parms);
                 var raw = await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
                 if (raw is null || raw is DBNull) return default!;
-                return (TResult)Convert.ChangeType(raw, typeof(TResult))!;
+                // Convert.ChangeType does not understand Nullable<T>: convert to the
+                // underlying type so nullable selectors such as (DateTime?)r.X work.
+                var underlyingType = Nullable.GetUnderlyingType(typeof(TResult)) ?? typeof(TResult);
+                if (underlyingType.IsEnum)
+                    return (TResult)Enum.ToObject(underlyingType,
+                        Convert.ChangeType(raw, Enum.GetUnderlyingType(underlyingType)));
+                return (TResult)Convert.ChangeType(raw, underlyingType)!;
             }, ct).ConfigureAwait(false);
 
             return Result<TResult>.Success(value);

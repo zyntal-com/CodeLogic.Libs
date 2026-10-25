@@ -11,11 +11,11 @@
     <PackageId>CodeLogic.PostgreSQL</PackageId>
     <PackageTags>postgresql;postgres;npgsql;database;orm;linq;repository;migrations</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
-    <Authors>Media2A</Authors>
+    <Authors>Zyntal.com</Authors>
     <Description>Typed PostgreSQL data access for CodeLogic 4: repositories, a LINQ query builder with joins, projections and cursor paging, ON CONFLICT upserts, declarative schema sync, database-tracked migrations, and a self-invalidating result cache.</Description>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Npgsql" Version="9.*" />
+    <PackageReference Include="Npgsql" Version="10.*" />
   </ItemGroup>  <ItemGroup>
     <None Include="README.md" Pack="true" PackagePath="/" />
   </ItemGroup>

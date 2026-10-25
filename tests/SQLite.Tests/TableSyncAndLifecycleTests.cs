@@ -509,7 +509,7 @@ public sealed class TableSyncAndLifecycleTests
 
         Assert.Equal("CL.SQLite", m.Id);
         Assert.Equal("SQLite Library", m.Name);
-        Assert.Equal("Media2A", m.Author);
+        Assert.Equal("Zyntal.com", m.Author);
         Assert.False(string.IsNullOrWhiteSpace(m.Version));
         Assert.False(string.IsNullOrWhiteSpace(m.Description));
         Assert.Contains("sqlite", m.Tags);

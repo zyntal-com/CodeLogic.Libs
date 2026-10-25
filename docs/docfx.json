@@ -14,7 +14,6 @@
             "CL.SQLite/CL.SQLite.csproj",
             "CL.SocialConnect/CL.SocialConnect.csproj",
             "CL.Storage/CL.Storage.csproj",
-            "CL.StorageS3/CL.StorageS3.csproj",
             "CL.SystemStats/CL.SystemStats.csproj",
             "CL.TwoFactorAuth/CL.TwoFactorAuth.csproj",
             "CL.GameNetQuery/CL.GameNetQuery.csproj"
@@ -47,7 +46,7 @@
       "_appLogoPath": "images/logo.svg",
       "_appFaviconPath": "images/logo.svg",
       "_enableSearch": true,
-      "_appFooter": "Copyright &copy; 2026 Media2A &middot; MIT-licensed &middot; Built with <a href='https://dotnet.github.io/docfx'>DocFX</a>.",
+      "_appFooter": "Copyright &copy; 2026 Zyntal.com &middot; MIT-licensed &middot; Built with <a href='https://dotnet.github.io/docfx'>DocFX</a>.",
       "_appName": "CodeLogic Libraries",
       "_disableContribution": false
     },

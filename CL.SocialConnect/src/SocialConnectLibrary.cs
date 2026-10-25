@@ -1,6 +1,7 @@
 using CL.SocialConnect.Models;
 using CL.SocialConnect.Services.Discord;
 using CL.SocialConnect.Services.Steam;
+using CodeLogic.Core.Configuration;
 using CodeLogic.Framework.Libraries;
 
 namespace CL.SocialConnect;
@@ -16,6 +17,8 @@ namespace CL.SocialConnect;
 ///   <item><description><b>Start</b> — logs that the library is ready.</description></item>
 ///   <item><description><b>Stop</b> — disposes HTTP clients and clears state.</description></item>
 /// </list>
+/// Config changes made while running (admin UI, reload, file watcher) are applied live —
+/// see <see cref="OnConfigChangedAsync"/>.
 /// </para>
 /// <para>
 /// Access services via the public properties:
@@ -26,7 +29,7 @@ namespace CL.SocialConnect;
 /// </list>
 /// </para>
 /// </summary>
-public sealed class SocialConnectLibrary : ILibrary
+public sealed class SocialConnectLibrary : ILibrary, IConfigReloadable
 {
     /// <inheritdoc/>
     public LibraryManifest Manifest { get; } = new()
@@ -35,7 +38,7 @@ public sealed class SocialConnectLibrary : ILibrary
         Name = "Social Connect Library",
         Version = CL.Internal.InternalLibraryVersion.Current,
         Description = "Discord webhook messaging and Steam profile/authentication services",
-        Author = "Media2A",
+        Author = "Zyntal.com",
         Tags = ["discord", "steam", "webhook", "social", "gaming"]
     };
 
@@ -81,29 +84,87 @@ public sealed class SocialConnectLibrary : ILibrary
             return Task.CompletedTask;
         }
 
-        // Discord service
-        if (config.Discord.Enabled)
-        {
-            _discord = new DiscordWebhookService(config.Discord, context.Logger, context.Events);
-            context.Logger.Info("Discord webhook service initialized");
-        }
-
-        // Steam profile service
-        if (config.Steam.Enabled)
-        {
-            _steam = new SteamProfileService(config.Steam, context.Logger, context.Events);
-            context.Logger.Info("Steam profile service initialized");
-
-            // Steam authentication service (optional, requires AppId)
-            if (config.Steam.AuthEnabled)
-            {
-                _auth = new SteamAuthenticationService(config.Steam, context.Logger, context.Events);
-                context.Logger.Info("Steam authentication service initialized");
-            }
-        }
+        BuildDiscord(context, config);
+        BuildSteam(context, config);
 
         context.Logger.Info($"{Manifest.Name} initialized");
         return Task.CompletedTask;
+    }
+
+    private void BuildDiscord(LibraryContext context, SocialConnectConfig config)
+    {
+        _discord = null;
+        if (!config.Enabled || !config.Discord.Enabled) return;
+
+        _discord = new DiscordWebhookService(config.Discord, context.Logger, context.Events);
+        context.Logger.Info("Discord webhook service initialized");
+    }
+
+    private void BuildSteam(LibraryContext context, SocialConnectConfig config)
+    {
+        _steam = null;
+        _auth = null;
+        if (!config.Enabled || !config.Steam.Enabled) return;
+
+        // Steam profile service
+        _steam = new SteamProfileService(config.Steam, context.Logger, context.Events);
+        context.Logger.Info("Steam profile service initialized");
+
+        // Steam authentication service (optional, requires AppId)
+        if (config.Steam.AuthEnabled)
+        {
+            _auth = new SteamAuthenticationService(config.Steam, context.Logger, context.Events);
+            context.Logger.Info("Steam authentication service initialized");
+        }
+    }
+
+    // ── Live config changes ──────────────────────────────────────────────────
+
+    /// <summary>
+    /// Applies a config change without a restart, rebuilding only the service whose settings
+    /// changed: Discord settings replace <see cref="Discord"/>; Steam settings replace
+    /// <see cref="Steam"/> and <see cref="Auth"/> (the profile cache starts empty). Services can be
+    /// switched on or off, and so can the whole library. A replaced service is disposed only after
+    /// its request timeout, so requests already running on it finish.
+    /// </summary>
+    public Task OnConfigChangedAsync(LibraryContext context, ConfigChangedEventArgs change, CancellationToken cancellationToken)
+    {
+        if (change.NewValue is not SocialConnectConfig current) return Task.CompletedTask;
+        var previous = change.GetOld<SocialConnectConfig>();
+
+        if (!ConfigDiff.ValueEquals(ActiveDiscord(previous), ActiveDiscord(current)))
+        {
+            var old = _discord;
+            BuildDiscord(context, current);
+            RetireLater(old, previous?.Discord.TimeoutSeconds ?? 0);
+            if (_discord is null) context.Logger.Info("Discord webhook service turned off");
+        }
+
+        if (!ConfigDiff.ValueEquals(ActiveSteam(previous), ActiveSteam(current)))
+        {
+            var oldSteam = _steam;
+            var oldAuth = _auth;
+            BuildSteam(context, current);
+            RetireLater(oldSteam, previous?.Steam.TimeoutSeconds ?? 0);
+            RetireLater(oldAuth, previous?.Steam.TimeoutSeconds ?? 0);
+            if (_steam is null) context.Logger.Info("Steam services turned off");
+        }
+
+        return Task.CompletedTask;
+    }
+
+    private static DiscordConfig? ActiveDiscord(SocialConnectConfig? config) =>
+        config is { Enabled: true, Discord.Enabled: true } ? config.Discord : null;
+
+    private static SteamConfig? ActiveSteam(SocialConnectConfig? config) =>
+        config is { Enabled: true, Steam.Enabled: true } ? config.Steam : null;
+
+    /// <summary>Disposes a replaced service once requests already running on it have timed out at the latest.</summary>
+    private static void RetireLater(IDisposable? service, int timeoutSeconds)
+    {
+        if (service is null) return;
+        var grace = TimeSpan.FromSeconds(Math.Max(timeoutSeconds, 10) + 5);
+        _ = Task.Delay(grace).ContinueWith(_ => service.Dispose(), TaskScheduler.Default);
     }
 
     // ── Phase 3: Start ────────────────────────────────────────────────────────

@@ -92,13 +92,23 @@ Auto-generated on first run as `config.socialconnect.json`:
 | `Steam.TimeoutSeconds` | `15` | HTTP timeout for Steam calls (1–120). |
 | `Steam.ApiBaseUrl` | `https://api.steampowered.com` | Steam Web API base URL. |
 
+### Changing config while running
+
+With CodeLogic 4.9+, `config.socialconnect.json` applies live when changed through `Libraries.UpdateConfigAsync`, `Libraries.ReloadConfigAsync`, or the config file watcher. Only the service whose settings changed is rebuilt:
+
+- **Discord settings**: `social.Discord` is replaced.
+- **Steam settings**: `social.Steam` and `social.Auth` are replaced; the profile cache starts empty.
+- **Enabled flags**: each service, and the whole library, can be switched on or off.
+
+A replaced service is disposed only after its request timeout, so requests already running on it finish. Read `social.Discord` / `social.Steam` / `social.Auth` when you use them rather than keeping an old instance.
+
 ## Documentation
 
 Full guide: **[CL.SocialConnect documentation](https://zyntal-com.github.io/CodeLogic.Libs/libs/socialconnect.html)**
 
 ## Requirements
 
-- [CodeLogic 4](https://github.com/zyntal-com/CodeLogic) · .NET 10
+- [CodeLogic 4.9+](https://github.com/zyntal-com/CodeLogic) · .NET 10
 - No external NuGet dependencies
 
 ## License

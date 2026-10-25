@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Linq.Expressions;
 using CL.PostgreSQL.Core;
+using CL.PostgreSQL.Models;
 using CodeLogic;
 using CodeLogic.Core.Logging;
 using CodeLogic.Core.Results;
@@ -29,12 +30,8 @@ public sealed class Repository<T> where T : class, new()
         string connectionId = "Default",
         int slowQueryThresholdMs = 1000,
         int maxBatchInsertSize = 500)
+        : this(connectionManager, logger, connectionId, slowQueryThresholdMs, maxBatchInsertSize, distinguishDuplicateKeyError: false)
     {
-        _connectionManager = connectionManager ?? throw new ArgumentNullException(nameof(connectionManager));
-        _logger = logger;
-        _connectionId = connectionId;
-        _slowQueryThresholdMs = slowQueryThresholdMs;
-        _maxBatchInsertSize = maxBatchInsertSize;
     }
 
     public Repository(
@@ -43,6 +40,33 @@ public sealed class Repository<T> where T : class, new()
         TransactionScope transactionScope,
         int slowQueryThresholdMs = 1000,
         int maxBatchInsertSize = 500)
+        : this(connectionManager, logger, transactionScope, slowQueryThresholdMs, maxBatchInsertSize, distinguishDuplicateKeyError: false)
+    {
+    }
+
+    public Repository(
+        ConnectionManager connectionManager,
+        ILogger? logger,
+        string connectionId,
+        int slowQueryThresholdMs,
+        int maxBatchInsertSize,
+        bool distinguishDuplicateKeyError)
+    {
+        _connectionManager = connectionManager ?? throw new ArgumentNullException(nameof(connectionManager));
+        _logger = logger;
+        _connectionId = connectionId;
+        _slowQueryThresholdMs = slowQueryThresholdMs;
+        _maxBatchInsertSize = maxBatchInsertSize;
+        DistinguishDuplicateKeyError = distinguishDuplicateKeyError;
+    }
+
+    public Repository(
+        ConnectionManager connectionManager,
+        ILogger? logger,
+        TransactionScope transactionScope,
+        int slowQueryThresholdMs,
+        int maxBatchInsertSize,
+        bool distinguishDuplicateKeyError)
     {
         _connectionManager = connectionManager ?? throw new ArgumentNullException(nameof(connectionManager));
         _logger = logger;
@@ -50,7 +74,15 @@ public sealed class Repository<T> where T : class, new()
         _connectionId = transactionScope.ConnectionId;
         _slowQueryThresholdMs = slowQueryThresholdMs;
         _maxBatchInsertSize = maxBatchInsertSize;
+        DistinguishDuplicateKeyError = distinguishDuplicateKeyError;
     }
+
+    /// <summary>
+    /// When true, a unique violation (SQLSTATE 23505) in <see cref="InsertAsync"/> and
+    /// <see cref="InsertManyAsync"/> returns error code <c>postgresql.duplicate_key</c> and logs at
+    /// Warning instead of <c>postgresql.insert_failed</c> / <c>postgresql.bulk_insert_failed</c> at Error.
+    /// </summary>
+    public bool DistinguishDuplicateKeyError { get; set; }
 
     // ── CRUD ──────────────────────────────────────────────────────────────────
 
@@ -95,6 +127,12 @@ public sealed class Repository<T> where T : class, new()
         }
         catch (Exception ex)
         {
+            if (DistinguishDuplicateKeyError && IsDuplicateKeyException(ex))
+            {
+                _logger?.Warning($"[PostgreSQL] InsertAsync duplicate key: {ex.Message}", ex);
+                return Result<T>.Failure(Error.FromException(ex, "postgresql.duplicate_key"));
+            }
+
             _logger?.Error($"[PostgreSQL] InsertAsync failed: {ex.Message}", ex);
             return Result<T>.Failure(Error.FromException(ex, "postgresql.insert_failed"));
         }
@@ -159,6 +197,12 @@ public sealed class Repository<T> where T : class, new()
         }
         catch (Exception ex)
         {
+            if (DistinguishDuplicateKeyError && IsDuplicateKeyException(ex))
+            {
+                _logger?.Warning($"[PostgreSQL] InsertManyAsync duplicate key: {ex.Message}", ex);
+                return Result<int>.Failure(Error.FromException(ex, "postgresql.duplicate_key"));
+            }
+
             _logger?.Error($"[PostgreSQL] InsertManyAsync failed: {ex.Message}", ex);
             return Result<int>.Failure(Error.FromException(ex, "postgresql.bulk_insert_failed"));
         }
@@ -893,6 +937,192 @@ public sealed class Repository<T> where T : class, new()
             _logger?.Error($"[PostgreSQL] FindAsync failed: {ex.Message}", ex);
             return Result<List<T>>.Failure(Error.FromException(ex, "postgresql.find_failed"));
         }
+    }
+
+    // ── Insert ignoring duplicates ───────────────────────────────────────────
+
+    /// <summary>
+    /// Inserts a single entity, ignoring a duplicate-key conflict (UNIQUE index or PRIMARY KEY).
+    /// If the row was inserted, the auto-generated PK (if any) is set on <paramref name="entity"/>
+    /// and <see cref="InsertOutcome.Inserted"/> is returned. If a duplicate exists,
+    /// <see cref="InsertOutcome.Duplicate"/> is returned without raising an error.
+    /// Any other error returns a failure Result and nothing is written.
+    /// </summary>
+    /// <remarks>
+    /// Issues <c>INSERT ... ON CONFLICT DO NOTHING RETURNING ...</c>: with no conflict target every
+    /// unique constraint and unique index is an arbiter, so any duplicate key is skipped server-side.
+    /// Inside an explicit <see cref="TransactionScope"/> the statement runs under a savepoint, so a
+    /// failure does not abort the caller's transaction and earlier work in it is left untouched.
+    /// </remarks>
+    public async Task<Result<InsertOutcome>> InsertIgnoreAsync(T entity, CancellationToken ct = default)
+    {
+        try
+        {
+            var table = EntityMetadata<T>.TableName;
+            var insertCols = EntityMetadata<T>.Columns.Where(c => !c.IsAutoIncrement).ToArray();
+            var columnList = string.Join(", ", insertCols.Select(c => $"{PostgreSqlDialect.Quote(c.ColumnName)}"));
+            var paramList  = string.Join(", ", insertCols.Select(c => $"@{c.ColumnName}"));
+            var pk = EntityMetadata<T>.PrimaryKey;
+            // A skipped row returns no row at all, so RETURNING tells inserted from duplicate.
+            var returning = pk is null ? "RETURNING 1" : $"RETURNING {PostgreSqlDialect.Quote(pk.ColumnName)}";
+            var sql = $"INSERT INTO {EntityMetadata<T>.QualifiedTableNameFor(_connectionId)} ({columnList}) VALUES ({paramList}) ON CONFLICT DO NOTHING {returning};";
+
+            LogQuery(sql);
+            var sw = Stopwatch.StartNew();
+
+            var lastId = await ExecuteInsertIgnoreAtomicAsync(async (conn, tx) =>
+            {
+                await using var cmd = conn.CreateCommand(_connectionId);
+                cmd.Transaction = tx;
+                cmd.CommandText = sql;
+                foreach (var col in insertCols)
+                    cmd.Parameters.Add(TypeConverter.CreateParameter($"@{col.ColumnName}", TypeConverter.ToDbValue(col.Get(entity), col.EffectiveStorageType), col.Attribute, col.Property.PropertyType));
+                return await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
+            }, ct).ConfigureAwait(false);
+
+            sw.Stop();
+            LogSlowQuery(sql, sw.ElapsedMilliseconds);
+
+            if (lastId is null || lastId is DBNull)
+            {
+                _logger?.Debug($"[PostgreSQL] InsertIgnoreAsync ignored duplicate key for `{table}`");
+                return Result<InsertOutcome>.Success(InsertOutcome.Duplicate);
+            }
+
+            if (pk is not null && pk.IsAutoIncrement)
+                pk.Set(entity, TypeConverter.FromDbValue(lastId, pk.Property.PropertyType, pk.EffectiveStorageType));
+
+            QueryCache.Invalidate(table);
+            return Result<InsertOutcome>.Success(InsertOutcome.Inserted);
+        }
+        catch (Exception ex)
+        {
+            _logger?.Error($"[PostgreSQL] InsertIgnoreAsync failed: {ex.Message}", ex);
+            return Result<InsertOutcome>.Failure(Error.FromException(ex, "postgresql.insert_failed"));
+        }
+    }
+
+    /// <summary>
+    /// Bulk-inserts a collection of entities, ignoring duplicate-key conflicts (UNIQUE index or
+    /// PRIMARY KEY), including duplicates within the collection itself. Returns the number of rows
+    /// actually inserted (duplicates contribute 0). Batches use <c>ON CONFLICT DO NOTHING</c>; any
+    /// other error rolls back everything the call wrote, so a failure Result means nothing was written.
+    /// </summary>
+    public async Task<Result<int>> InsertManyIgnoreAsync(IEnumerable<T> entities, CancellationToken ct = default)
+    {
+        var list = entities as IList<T> ?? entities.ToList();
+        if (list.Count == 0) return Result<int>.Success(0);
+
+        try
+        {
+            var table = EntityMetadata<T>.TableName;
+            var insertCols = EntityMetadata<T>.Columns.Where(c => !c.IsAutoIncrement).ToArray();
+            var columnList = string.Join(", ", insertCols.Select(c => $"{PostgreSqlDialect.Quote(c.ColumnName)}"));
+            var batchSize = Math.Min(_maxBatchInsertSize, PostgreSqlDialect.MaxBatchRows(insertCols.Length));
+            var sw = Stopwatch.StartNew();
+
+            var inserted = await ExecuteInsertIgnoreAtomicAsync(async (conn, tx) =>
+            {
+                var total = 0;
+                for (var start = 0; start < list.Count; start += batchSize)
+                {
+                    var count = Math.Min(batchSize, list.Count - start);
+
+                    await using var cmd = conn.CreateCommand(_connectionId);
+                    cmd.Transaction = tx;
+
+                    var valueTuples = new string[count];
+                    for (var i = 0; i < count; i++)
+                    {
+                        var entity = list[start + i];
+                        var tupleParts = new string[insertCols.Length];
+                        for (var j = 0; j < insertCols.Length; j++)
+                        {
+                            var paramName = $"@p_{i}_{j}";
+                            tupleParts[j] = paramName;
+                            cmd.Parameters.Add(TypeConverter.CreateParameter(paramName, TypeConverter.ToDbValue(insertCols[j].Get(entity!), insertCols[j].EffectiveStorageType), insertCols[j].Attribute, insertCols[j].Property.PropertyType));
+                        }
+                        valueTuples[i] = "(" + string.Join(", ", tupleParts) + ")";
+                    }
+
+                    cmd.CommandText = $"INSERT INTO {EntityMetadata<T>.QualifiedTableNameFor(_connectionId)} ({columnList}) VALUES {string.Join(", ", valueTuples)} ON CONFLICT DO NOTHING;";
+                    LogQuery(cmd.CommandText);
+                    total += await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+                }
+                return total;
+            }, ct).ConfigureAwait(false);
+
+            sw.Stop();
+            _logger?.Debug($"[PostgreSQL] Bulk-inserted (ignore duplicates) {inserted} records into `{table}` in {sw.ElapsedMilliseconds}ms");
+            if (inserted > 0)
+                QueryCache.Invalidate(table);
+            return Result<int>.Success(inserted);
+        }
+        catch (Exception ex)
+        {
+            _logger?.Error($"[PostgreSQL] InsertManyIgnoreAsync failed: {ex.Message}", ex);
+            return Result<int>.Failure(Error.FromException(ex, "postgresql.bulk_insert_failed"));
+        }
+    }
+
+    private const string InsertIgnoreSavepoint = "cl_pg_insert_ignore";
+
+    /// <summary>
+    /// Runs an insert-ignoring-duplicates body atomically: in its own transaction, or under a
+    /// savepoint when the repository is bound to an ambient <see cref="TransactionScope"/>. Any
+    /// exception rolls back everything the call wrote; the caller's earlier work is untouched and,
+    /// because PostgreSQL aborts a transaction on any error, the caller's transaction stays usable.
+    /// </summary>
+    private Task<TResult> ExecuteInsertIgnoreAtomicAsync<TResult>(
+        Func<NpgsqlConnection, NpgsqlTransaction, Task<TResult>> body,
+        CancellationToken ct)
+        => ExecuteAsync(async conn =>
+        {
+            var ownTransaction = _transactionScope is null
+                ? await conn.BeginTransactionAsync(ct).ConfigureAwait(false)
+                : null;
+            var transaction = ownTransaction ?? _transactionScope!.Transaction;
+            try
+            {
+                if (ownTransaction is null)
+                    await transaction.SaveAsync(InsertIgnoreSavepoint, ct).ConfigureAwait(false);
+
+                var result = await body(conn, transaction).ConfigureAwait(false);
+
+                if (ownTransaction is not null)
+                    await ownTransaction.CommitAsync(ct).ConfigureAwait(false);
+                else
+                    await transaction.ReleaseAsync(InsertIgnoreSavepoint, ct).ConfigureAwait(false);
+                return result;
+            }
+            catch
+            {
+                try
+                {
+                    if (ownTransaction is not null)
+                        await ownTransaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+                    else
+                        await transaction.RollbackAsync(InsertIgnoreSavepoint, CancellationToken.None).ConfigureAwait(false);
+                }
+                catch (Exception rollbackEx)
+                {
+                    _logger?.Warning($"[PostgreSQL] insert-ignore rollback failed: {rollbackEx.Message}");
+                }
+                throw;
+            }
+            finally
+            {
+                if (ownTransaction is not null)
+                    await ownTransaction.DisposeAsync().ConfigureAwait(false);
+            }
+        }, ct);
+
+    /// <summary>PostgreSQL SQLSTATE 23505 = unique_violation (UNIQUE constraint, unique index or PRIMARY KEY).</summary>
+    private static bool IsDuplicateKeyException(Exception ex)
+    {
+        if (ex is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation }) return true;
+        if (ex.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation }) return true;
+        return false;
     }
 
     // ── Private helpers ────────────────────────────────────────────────────────
