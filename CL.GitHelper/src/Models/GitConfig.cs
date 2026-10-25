@@ -11,7 +11,7 @@ public sealed class RepositoryConfiguration
     /// <summary>
     /// Unique identifier for this repository (e.g., "Default", "MyRepo").
     /// </summary>
-    [ConfigField(Label = "ID", Required = true, RequiresRestart = true, Group = "Identity", Order = 0)]
+    [ConfigField(Label = "ID", Required = true, Group = "Identity", Order = 0)]
     public string Id { get; set; } = "Default";
 
     /// <summary>
@@ -25,7 +25,7 @@ public sealed class RepositoryConfiguration
     /// </summary>
     [ConfigField(Label = "Repository URL", Required = true,
         Placeholder = "https://github.com/org/repo.git or git@github.com:org/repo.git",
-        RequiresRestart = true, Group = "Identity", Order = 2)]
+        Group = "Identity", Order = 2)]
     public string RepositoryUrl { get; set; } = "";
 
     /// <summary>
@@ -34,7 +34,7 @@ public sealed class RepositoryConfiguration
     /// </summary>
     [ConfigField(Label = "Local Path", Required = true,
         Description = "Absolute or relative to the base directory.",
-        RequiresRestart = true, Group = "Identity", Order = 3)]
+        Group = "Identity", Order = 3)]
     public string LocalPath { get; set; } = "";
 
     /// <summary>
@@ -122,7 +122,7 @@ public sealed class GitHelperConfig : ConfigModelBase
     /// </summary>
     [ConfigField(Label = "Base Directory",
         Description = "Root folder for cloned repos. Blank = library data directory.",
-        RequiresRestart = true, Group = "General", Order = 1)]
+        Group = "General", Order = 1)]
     public string BaseDirectory { get; set; } = "";
 
     /// <summary>

@@ -717,6 +717,18 @@ public sealed class GitRepository : IDisposable
 
     // ── IDisposable ───────────────────────────────────────────────────────────
 
+    /// <summary>
+    /// Disposes this instance once the git operation currently running on it (if any) has
+    /// finished. Used when a config change replaces the repository.
+    /// </summary>
+    internal async Task DisposeWhenIdleAsync()
+    {
+        if (_disposed) return;
+        try { await _lock.WaitAsync().ConfigureAwait(false); }
+        catch (ObjectDisposedException) { return; }
+        Dispose();
+    }
+
     /// <inheritdoc/>
     public void Dispose()
     {

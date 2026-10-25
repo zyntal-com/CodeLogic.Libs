@@ -18,7 +18,7 @@ public sealed class CommonLibrary : ILibrary
         Name        = "CL.Common",
         Version     = CL.Internal.InternalLibraryVersion.Current,
         Description = "General-purpose utility toolkit — security, generators, caching, imaging, and more",
-        Author      = "Media2A",
+        Author      = "Zyntal.com",
         Dependencies = []
     };
 

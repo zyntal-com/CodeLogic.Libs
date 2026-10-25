@@ -180,6 +180,17 @@ public sealed record MailMessage
 | `DefaultFromName` | `string?` | `null` | Fallback sender display name. |
 | `TemplateDirectory` | `string` | `templates` | Template folder; relative to the library data dir unless an absolute path is given. |
 
+### Changing config while running
+
+With CodeLogic 4.9+, `config.mail.json` applies live when changed through `Libraries.UpdateConfigAsync`, `Libraries.ReloadConfigAsync`, or the config file watcher. Only what changed is rebuilt:
+
+- **SMTP settings**: `mail.Smtp` is replaced. Every send opens its own connection, so sends already running finish on the old settings.
+- **Template directory**: `mail.TemplateProvider` and `mail.TemplateEngine` are replaced.
+- **IMAP settings** (added, changed or removed): `mail.Imap` is replaced and the old connection is closed. Re-read `mail.Imap` — don't keep the old instance — and call `StartIdleAsync` again if you were idling.
+- **`enabled`**: can be switched either way.
+
+Other settings (default sender, ...) are read when used and need nothing rebuilt.
+
 ## Health check
 
 `HealthCheckAsync()` reports the configured endpoints.

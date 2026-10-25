@@ -274,6 +274,17 @@ public sealed class PostgreSqlDatabaseConfig
     public int MaxBatchInsertSize { get; set; } = 500;
 
     /// <summary>
+    /// When true, a PostgreSQL unique violation (SQLSTATE 23505) in <c>InsertAsync</c> and
+    /// <c>InsertManyAsync</c> returns the distinct error code <c>postgresql.duplicate_key</c> and
+    /// logs at Warning instead of Error. When false (the default), the error code is
+    /// <c>postgresql.insert_failed</c> / <c>postgresql.bulk_insert_failed</c> and logs at Error.
+    /// </summary>
+    [ConfigField(Label = "Distinguish Duplicate Key Errors",
+        Description = "When true, PostgreSQL unique violations (23505) return error code postgresql.duplicate_key and log at Warning. Default: false.",
+        Group = "Advanced", Collapsed = true)]
+    public bool DistinguishDuplicateKeyError { get; set; } = false;
+
+    /// <summary>
     /// Advisory ceiling on the number of values in a generated <c>IN (...)</c> list. A wider
     /// list is still sent whole — nothing is chunked and nothing throws — but a warning is
     /// logged once per query build naming the entity and the value count, so an accidental

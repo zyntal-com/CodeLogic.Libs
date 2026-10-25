@@ -49,6 +49,9 @@ await pg.SyncTableAsync<User>();
 var repo = pg.GetRepository<User>();
 var created = await repo.InsertAsync(new User { Email = "ada@example.com" });
 
+// Idempotent insert (re-sent batches keyed by a unique id): duplicates are a normal outcome
+var outcome = await repo.InsertIgnoreAsync(new User { Email = "ada@example.com" });
+
 // Fluent query builder
 var recent = await pg.Query<User>()
     .Where(u => u.CreatedUtc >= DateTime.UtcNow.AddDays(-7))
@@ -120,6 +123,17 @@ Auto-generated on first run as `config.postgresql.json` (section `postgresql`). 
 | `slowQueryThresholdMs` | `1000` | Queries at or above this duration raise a `SlowQueryEvent`. |
 | `transientRetryCount` | `3` | Retries for serialization failures, deadlocks and unavailable locks (SQLSTATE `40001`, `40P01`, `55P03`). |
 
+### Changing config while running
+
+With CodeLogic 4.9+, both sections apply live when changed through `Libraries.UpdateConfigAsync`, `Libraries.ReloadConfigAsync`, or the config file watcher — and only the databases that changed are touched:
+
+- **Connection settings changed** (endpoint, credentials, TLS, pooling, timeouts): the idle pool is cleared, the connection tested, and the schema-state tables ensured. In-flight queries finish on their old connections.
+- **Other settings changed** (default schema, query timeout, cache override, N+1 threshold, …): updated in place, no reconnect.
+- **Added / removed** (or enabled / disabled): connected / disconnected.
+- **Untouched databases**: nothing happens; their connections stay open.
+
+An unreachable database leaves the change saved and reports `ConfigApplyResult.Applied = false`; the other databases are still applied. A runtime `SetSyncMode` survives unrelated changes. Enabling the first database when the library started with none requires a restart.
+
 ## Notes for PostgreSQL
 
 A few places where PostgreSQL genuinely differs from the MySQL and SQL Server siblings:
@@ -141,7 +155,7 @@ Full guide: **[CL.PostgreSQL documentation](https://zyntal-com.github.io/CodeLog
 
 ## Requirements
 
-- [CodeLogic 4](https://github.com/zyntal-com/CodeLogic) · .NET 10
+- [CodeLogic 4.9+](https://github.com/zyntal-com/CodeLogic) · .NET 10
 - Npgsql 9.x · PostgreSQL 12+ (covering `INCLUDE` indexes need 11+; identity columns need 10+)
 
 ## License

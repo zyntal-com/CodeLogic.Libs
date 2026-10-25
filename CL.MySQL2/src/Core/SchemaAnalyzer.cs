@@ -220,6 +220,38 @@ internal sealed class SchemaAnalyzer
         var modelColumnNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var modelIndexNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "PRIMARY" };
         var modelFkNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        // previous → new column name, so an index on a column renamed in this pass is not drift.
+        var renamedColumns = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var quotedTable = MySqlDialect.Quote(tableName);
+
+        // Creates a model index that is missing. One that exists under the same name with a
+        // different definition is reported at every level, and rebuilt only at Additive+ (a
+        // rebuild is a drop); at Safe the sync's Full-level check flags the table DriftPending.
+        void ReconcileIndex(string idxName, IReadOnlyList<string> columns, bool unique)
+        {
+            if (!modelIndexNames.Add(idxName)) return;
+            var add = $"ADD {(unique ? "UNIQUE KEY" : "INDEX")} {MySqlDialect.Quote(idxName)} " +
+                      $"({string.Join(", ", columns.Select(MySqlDialect.Quote))})";
+            if (!existingIndexes.TryGetValue(idxName, out var existing))
+            {
+                alterStatements.Add($"ALTER TABLE {quotedTable} {add};");
+                return;
+            }
+
+            var existingColumns = existing.Columns.Select(c => renamedColumns.GetValueOrDefault(c, c)).ToArray();
+            if (existingColumns.SequenceEqual(columns, StringComparer.OrdinalIgnoreCase) && existing.IsUnique == unique)
+                return;
+
+            _logger?.Warning(
+                $"[MySQL2] Index `{idxName}` on table `{tableName}` has drifted. " +
+                $"Existing: {(existing.IsUnique ? "UNIQUE " : "")}({string.Join(", ", existingColumns)}), " +
+                $"Model: {(unique ? "UNIQUE " : "")}({string.Join(", ", columns)}).");
+            if (level < SchemaSyncLevel.Additive) return;
+
+            // One ALTER swaps the definition atomically, and MySQL accepts it even when the
+            // index backs a foreign key.
+            alterStatements.Add($"ALTER TABLE {quotedTable} DROP INDEX {MySqlDialect.Quote(idxName)}, {add};");
+        }
 
         foreach (var prop in properties)
         {
@@ -240,6 +272,7 @@ internal sealed class SchemaAnalyzer
                     alterStatements.Add($"ALTER TABLE {MySqlDialect.Quote(tableName)} CHANGE COLUMN {MySqlDialect.Quote(previous)} {colDef};");
                     // The old name is consumed by the rename — keep it out of the Full drop set.
                     modelColumnNames.Add(previous);
+                    renamedColumns[previous] = colName;
                     _logger?.Info($"[MySQL2] Will rename column `{tableName}`.`{previous}` → `{colName}`");
                 }
                 else
@@ -264,38 +297,21 @@ internal sealed class SchemaAnalyzer
 
             // Single-column indexes
             if (colAttr?.Index == true && colAttr.Primary == false && colAttr.Unique == false)
-            {
-                var idxName = $"idx_{tableName}_{colName}";
-                modelIndexNames.Add(idxName);
-                if (!existingIndexes.ContainsKey(idxName))
-                    alterStatements.Add($"ALTER TABLE {MySqlDialect.Quote(tableName)} ADD INDEX {MySqlDialect.Quote(idxName)} ({MySqlDialect.Quote(colName)});");
-            }
+                ReconcileIndex($"idx_{tableName}_{colName}", [colName], unique: false);
 
             if (colAttr?.Unique == true && colAttr.Primary == false)
-            {
-                var idxName = $"uq_{tableName}_{colName}";
-                modelIndexNames.Add(idxName);
-                if (!existingIndexes.ContainsKey(idxName))
-                    alterStatements.Add($"ALTER TABLE {MySqlDialect.Quote(tableName)} ADD UNIQUE KEY {MySqlDialect.Quote(idxName)} ({MySqlDialect.Quote(colName)});");
-            }
+                ReconcileIndex($"uq_{tableName}_{colName}", [colName], unique: true);
 
-            // [Index] attributes — same as CREATE TABLE path.
+            // [Index] attributes — same as CREATE TABLE path. MySQL has no INCLUDE clause, so
+            // the covering columns are appended to the key.
             foreach (var idxAttr in prop.GetCustomAttributes<IndexAttribute>())
             {
                 var idxName = !string.IsNullOrEmpty(idxAttr.Name)
                     ? idxAttr.Name!
                     : (idxAttr.Unique ? $"uq_{tableName}_{colName}" : $"idx_{tableName}_{colName}");
-                modelIndexNames.Add(idxName);
-                if (!existingIndexes.ContainsKey(idxName))
-                {
-                    var includeCols = (idxAttr.Include ?? Array.Empty<string>())
-                        .Select(propName => ResolveColumnName(entityType, propName))
-                        .ToArray();
-                    var colList = string.Join(", ",
-                        new[] { $"{MySqlDialect.Quote(colName)}" }.Concat(includeCols.Select(c => $"{MySqlDialect.Quote(c)}")));
-                    var keyword = idxAttr.Unique ? "UNIQUE KEY" : "INDEX";
-                    alterStatements.Add($"ALTER TABLE {MySqlDialect.Quote(tableName)} ADD {keyword} {MySqlDialect.Quote(idxName)} ({colList});");
-                }
+                var includeCols = (idxAttr.Include ?? Array.Empty<string>())
+                    .Select(propName => ResolveColumnName(entityType, propName));
+                ReconcileIndex(idxName, [colName, .. includeCols], idxAttr.Unique);
             }
 
             // Foreign keys
@@ -320,24 +336,7 @@ internal sealed class SchemaAnalyzer
         // Composite indexes
         var compositeIndexes = entityType.GetCustomAttributes<CompositeIndexAttribute>();
         foreach (var ci in compositeIndexes)
-        {
-            modelIndexNames.Add(ci.IndexName);
-            if (!existingIndexes.TryGetValue(ci.IndexName, out var existing))
-            {
-                var cols = string.Join(", ", ci.ColumnNames.Select(c => $"{MySqlDialect.Quote(c)}"));
-                var keyword = ci.Unique ? "UNIQUE KEY" : "INDEX";
-                alterStatements.Add($"ALTER TABLE {MySqlDialect.Quote(tableName)} ADD {keyword} {MySqlDialect.Quote(ci.IndexName)} ({cols});");
-            }
-            else
-            {
-                if (!existing.Columns.SequenceEqual(ci.ColumnNames, StringComparer.OrdinalIgnoreCase))
-                {
-                    _logger?.Warning(
-                        $"[MySQL2] Composite index `{ci.IndexName}` on table `{tableName}` has drifted columns. " +
-                        $"Existing: [{string.Join(", ", existing.Columns)}], Model: [{string.Join(", ", ci.ColumnNames)}].");
-                }
-            }
-        }
+            ReconcileIndex(ci.IndexName, ci.ColumnNames, ci.Unique);
 
         // ── Level: Additive ── drop removed indexes and FKs
         if (level >= SchemaSyncLevel.Additive)

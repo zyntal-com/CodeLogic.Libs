@@ -10,7 +10,7 @@
     <PackageId>CodeLogic.Mail</PackageId>
     <PackageTags>smtp;imap;email;template</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
-    <Authors>Media2A</Authors>
+    <Authors>Zyntal.com</Authors>
     <Description>SMTP/IMAP email library with template engine for CodeLogic 4 applications</Description>
   </PropertyGroup>
   <ItemGroup>

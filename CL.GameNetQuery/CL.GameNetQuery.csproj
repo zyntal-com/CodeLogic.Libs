@@ -10,7 +10,7 @@
     <PackageId>CodeLogic.GameNetQuery</PackageId>
     <PackageTags>gameserver;valve;source;minecraft;rcon;query</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
-    <Authors>Media2A</Authors>
+    <Authors>Zyntal.com</Authors>
     <Description>Game server query library — Valve Source Engine (CSS/CS2), Minecraft UDP/RCON queries</Description>
   </PropertyGroup>  <ItemGroup>
     <None Include="README.md" Pack="true" PackagePath="/" />

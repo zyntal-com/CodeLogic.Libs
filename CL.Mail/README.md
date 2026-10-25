@@ -93,13 +93,24 @@ Auto-generated on first run as `config.mail.json`. The `Imap` section is optiona
 | `DefaultFromEmail` / `DefaultFromName` | `null` | Fallback sender when a message omits `From`. |
 | `TemplateDirectory` | `templates` | Template folder; relative to the library data dir unless absolute. |
 
+### Changing config while running
+
+With CodeLogic 4.9+, `config.mail.json` applies live when changed through `Libraries.UpdateConfigAsync`, `Libraries.ReloadConfigAsync`, or the config file watcher. Only what changed is rebuilt:
+
+- **SMTP settings**: `mail.Smtp` is replaced. Every send opens its own connection, so sends already running finish on the old settings.
+- **Template directory**: `mail.TemplateProvider` and `mail.TemplateEngine` are replaced.
+- **IMAP settings** (added, changed or removed): `mail.Imap` is replaced and the old connection is closed. Re-read `mail.Imap` — don't keep the old instance — and call `StartIdleAsync` again if you were idling.
+- **`enabled`**: can be switched either way.
+
+Other settings (default sender, ...) are read when used and need nothing rebuilt.
+
 ## Documentation
 
 Full guide: **[CL.Mail documentation](https://zyntal-com.github.io/CodeLogic.Libs/libs/mail/index.html)**
 
 ## Requirements
 
-- [CodeLogic 4](https://github.com/zyntal-com/CodeLogic) · .NET 10
+- [CodeLogic 4.9+](https://github.com/zyntal-com/CodeLogic) · .NET 10
 - MailKit 4.x · MimeKit 4.x
 
 ## License

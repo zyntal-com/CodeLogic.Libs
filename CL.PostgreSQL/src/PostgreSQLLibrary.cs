@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using CL.PostgreSQL.Configuration;
 using CL.PostgreSQL.Core;
@@ -5,6 +6,7 @@ using CL.PostgreSQL.Events;
 using CL.PostgreSQL.Localization;
 using CL.PostgreSQL.Models;
 using CL.PostgreSQL.Services;
+using CodeLogic.Core.Configuration;
 using CodeLogic.Core.Results;
 using CodeLogic.Framework.Libraries;
 using Npgsql;
@@ -23,9 +25,11 @@ namespace CL.PostgreSQL;
 ///   <item><description><b>Start</b> — Runs a health check and logs server version.</description></item>
 ///   <item><description><b>Stop</b> — Closes connections and disposes resources.</description></item>
 /// </list>
+/// Config changes made while running (admin UI, reload, file watcher) are applied live per
+/// database — see <see cref="OnConfigChangedAsync"/>.
 /// </para>
 /// </summary>
-public sealed class PostgreSQLLibrary : ILibrary
+public sealed class PostgreSQLLibrary : ILibrary, IConfigReloadable
 {
     /// <inheritdoc/>
     public LibraryManifest Manifest { get; } = new()
@@ -34,7 +38,7 @@ public sealed class PostgreSQLLibrary : ILibrary
         Name = "PostgreSQL Library",
         Version = CL.Internal.InternalLibraryVersion.Current,
         Description = "PostgreSQL with typed LINQ, SQL aggregation, projection pushdown, compiled materializers, covering indexes, retention, and a working cache.",
-        Author = "Media2A",
+        Author = "Zyntal.com",
         Tags = ["postgresql", "postgres", "database", "orm", "repository"]
     };
 
@@ -51,6 +55,7 @@ public sealed class PostgreSQLLibrary : ILibrary
     private bool? _lastHealthy;
     private RetentionWorker? _retentionWorker;
     private readonly HashSet<(Type Type, string ConnectionId)> _registeredEntities = new();
+    private readonly ConcurrentDictionary<string, SyncMode> _syncModeOverrides = new(StringComparer.OrdinalIgnoreCase);
     private readonly Lock _registrationLock = new();
 
     // ── Phase 1: Configure ────────────────────────────────────────────────────
@@ -110,12 +115,13 @@ public sealed class PostgreSQLLibrary : ILibrary
             _connectionManager.RegisterConfiguration(kvp.Value, kvp.Key);
         }
 
+        // Look the config up through _config (not the local) so live config changes are seen.
         _tableSyncService = new TableSyncService(
             _connectionManager,
             context.DataDirectory,
             context.Logger,
             context.Events,
-            connectionId => config.Databases.TryGetValue(connectionId, out var cfg) ? cfg : null);
+            connectionId => _config?.Databases.TryGetValue(connectionId, out var cfg) == true ? cfg : null);
 
         foreach (var kvp in enabledDbs)
         {
@@ -150,13 +156,7 @@ public sealed class PostgreSQLLibrary : ILibrary
         }
 
         // Apply cache configuration so queries see the right knobs from the first call.
-        var cacheConfig = context.Configuration.Get<CacheConfiguration>();
-        QueryCache.Configure(
-            enabled: cacheConfig.Enabled,
-            maxEntries: cacheConfig.MaxEntries,
-            timeQuantizeSeconds: cacheConfig.TimeQuantizeSeconds,
-            publishEvents: cacheConfig.PublishEvents,
-            defaultTtlSeconds: cacheConfig.DefaultTtlSeconds);
+        ApplyCacheConfiguration(context.Configuration.Get<CacheConfiguration>());
 
         // Wire the smart-cache pool registry so its background timers log to the
         // app's logger and so it can be cleanly disposed on stop.
@@ -398,7 +398,8 @@ public sealed class PostgreSQLLibrary : ILibrary
             _context?.Logger,
             connectionId,
             dbConfig?.SlowQueryThresholdMs ?? 1000,
-            dbConfig?.MaxBatchInsertSize ?? 500);
+            dbConfig?.MaxBatchInsertSize ?? 500,
+            dbConfig?.DistinguishDuplicateKeyError ?? false);
     }
 
     /// <summary>
@@ -435,7 +436,8 @@ public sealed class PostgreSQLLibrary : ILibrary
             _context?.Logger,
             transactionScope,
             dbConfig?.SlowQueryThresholdMs ?? 1000,
-            dbConfig?.MaxBatchInsertSize ?? 500);
+            dbConfig?.MaxBatchInsertSize ?? 500,
+            dbConfig?.DistinguishDuplicateKeyError ?? false);
     }
 
     /// <summary>
@@ -644,14 +646,139 @@ public sealed class PostgreSQLLibrary : ILibrary
     /// the config file or restarting. Useful to flip <see cref="SyncMode.Migration"/> back to
     /// <see cref="SyncMode.Production"/> once a one-shot migration pass has completed.
     /// </summary>
+    /// <remarks>
+    /// The runtime value survives live config changes to the connection, unless the change
+    /// itself sets a different <see cref="PostgreSqlDatabaseConfig.SyncMode"/> — then the config wins.
+    /// </remarks>
     public void SetSyncMode(SyncMode mode, string connectionId = "Default")
     {
         if (_config?.Databases.TryGetValue(connectionId, out var cfg) == true)
         {
             cfg.SyncMode = mode;
+            _syncModeOverrides[connectionId] = mode;
             _context?.Logger.Info($"[PostgreSQL] [{connectionId}] Sync mode set to {mode} at runtime.");
         }
     }
+
+    // ── Live config changes ──────────────────────────────────────────────────
+
+    /// <summary>
+    /// Applies a config change without a restart, touching only the databases that changed:
+    /// a database whose connection settings changed is reconnected (its idle pool cleared,
+    /// connection tested, schema-state tables ensured); one whose other settings changed is
+    /// updated in place; added databases connect, removed or disabled ones disconnect, and
+    /// untouched databases keep their connections. Throws when a database cannot be reached —
+    /// the change stays saved and the remaining databases are still applied.
+    /// </summary>
+    public async Task OnConfigChangedAsync(LibraryContext context, ConfigChangedEventArgs change, CancellationToken cancellationToken)
+    {
+        switch (change.NewValue)
+        {
+            case DatabaseConfiguration databases:
+                await ApplyDatabaseChangesAsync(context, change.GetOld<DatabaseConfiguration>(), databases, cancellationToken)
+                    .ConfigureAwait(false);
+                break;
+
+            case CacheConfiguration cache:
+                ApplyCacheConfiguration(cache);
+                context.Logger.Info("[PostgreSQL] Cache configuration applied");
+                break;
+        }
+    }
+
+    private async Task ApplyDatabaseChangesAsync(
+        LibraryContext context,
+        DatabaseConfiguration? previous,
+        DatabaseConfiguration current,
+        CancellationToken ct)
+    {
+        var diff = ConfigDiff.Keyed(EnabledDatabases(previous), EnabledDatabases(current), StringComparer.OrdinalIgnoreCase);
+
+        ReapplySyncModeOverrides(previous, current);
+        _config = current;
+
+        if (!diff.HasChanges) return;
+
+        var connections = _connectionManager;
+        if (connections is null || _tableSyncService is null)
+        {
+            if (diff.Added.Count > 0)
+                throw new InvalidOperationException(
+                    $"{Manifest.Name} started with no enabled databases; restart to enable " +
+                    $"'{string.Join("', '", diff.Added.Keys)}'.");
+            return;
+        }
+
+        var unreachable = new List<string>();
+
+        foreach (var id in diff.Removed.Keys)
+        {
+            await connections.UnregisterConfigurationAsync(id).ConfigureAwait(false);
+            context.Logger.Info($"[PostgreSQL] [{id}] Removed — connection closed");
+        }
+
+        // RegisterConfiguration also refreshes the per-connection runtime knobs
+        // (schema, timeouts, cache override, N+1 threshold, ...).
+        foreach (var (id, databaseChange) in diff.Changed)
+        {
+            var reconnect = await connections.ReplaceConfigurationAsync(databaseChange.New, id).ConfigureAwait(false);
+            if (!reconnect)
+                context.Logger.Info($"[PostgreSQL] [{id}] Settings updated in place");
+            else if (!await ConnectAsync(context, id, databaseChange.New, ct).ConfigureAwait(false))
+                unreachable.Add(id);
+        }
+
+        foreach (var (id, database) in diff.Added)
+        {
+            connections.RegisterConfiguration(database, id);
+            if (!await ConnectAsync(context, id, database, ct).ConfigureAwait(false))
+                unreachable.Add(id);
+        }
+
+        if (unreachable.Count > 0)
+            throw new InvalidOperationException(
+                $"Could not connect to database(s) '{string.Join("', '", unreachable)}' with the new settings.");
+    }
+
+    /// <summary>Tests a (re)connected database and ensures its schema-state and migration tables.</summary>
+    private async Task<bool> ConnectAsync(LibraryContext context, string id, PostgreSqlDatabaseConfig database, CancellationToken ct)
+    {
+        context.Logger.Info($"[PostgreSQL] Connecting '{id}' to {database.Host}:{database.Port}/{database.Database}");
+        if (!await _connectionManager!.TestConnectionAsync(id, ct).ConfigureAwait(false))
+        {
+            context.Logger.Warning(string.Format(_strings?.ConnectionTestFailed ?? "Connection '{0}' test failed", id));
+            return false;
+        }
+
+        await _tableSyncService!.GetSchemaStateStore().EnsureStateTableAsync(id, ct).ConfigureAwait(false);
+        await _tableSyncService.GetMigrationTracker().EnsureMigrationsTableAsync(id, ct).ConfigureAwait(false);
+        context.Logger.Info(string.Format(_strings?.ConnectionTestSuccess ?? "Connection '{0}' test successful", id));
+        return true;
+    }
+
+    private void ReapplySyncModeOverrides(DatabaseConfiguration? previous, DatabaseConfiguration current)
+    {
+        foreach (var (id, mode) in _syncModeOverrides)
+        {
+            var configuredBefore = previous?.Databases.TryGetValue(id, out var before) == true ? before.SyncMode : (SyncMode?)null;
+            if (current.Databases.TryGetValue(id, out var now) && now.SyncMode == configuredBefore)
+                now.SyncMode = mode;
+            else
+                _syncModeOverrides.TryRemove(id, out _);
+        }
+    }
+
+    private static Dictionary<string, PostgreSqlDatabaseConfig> EnabledDatabases(DatabaseConfiguration? config) =>
+        config?.Databases.Where(d => d.Value.Enabled).ToDictionary(d => d.Key, d => d.Value)
+        ?? new Dictionary<string, PostgreSqlDatabaseConfig>();
+
+    private static void ApplyCacheConfiguration(CacheConfiguration cache) =>
+        QueryCache.Configure(
+            enabled: cache.Enabled,
+            maxEntries: cache.MaxEntries,
+            timeQuantizeSeconds: cache.TimeQuantizeSeconds,
+            publishEvents: cache.PublishEvents,
+            defaultTtlSeconds: cache.DefaultTtlSeconds);
 
     // ── Imperative migrations ────────────────────────────────────────────────
 

@@ -184,6 +184,17 @@ Two files are written on first run.
 
 Full caching behaviour is on the [Performance & Caching](performance.md) page.
 
+### Changing config while running
+
+With CodeLogic 4.9+, both sections apply live when changed through `Libraries.UpdateConfigAsync`, `Libraries.ReloadConfigAsync`, or the config file watcher — and only the databases that changed are touched:
+
+- **Connection settings changed** (the effective connection string — `connectionString`, or endpoint, credentials, encryption, pooling, timeouts): the idle pool is cleared, the connection tested, and the schema-state tables ensured. In-flight queries finish on their old connections.
+- **Other settings changed**: updated in place, no reconnect.
+- **Added / removed** (or enabled / disabled): connected / disconnected.
+- **Untouched databases**: nothing happens; their connections stay open.
+
+An unreachable database leaves the change saved and reports `ConfigApplyResult.Applied = false`; the other databases are still applied. A runtime `SetSyncMode` survives unrelated changes. Enabling the first database when the library started with none requires a restart.
+
 ## Health check
 
 ```csharp

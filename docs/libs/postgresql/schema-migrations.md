@@ -65,6 +65,7 @@ With no explicit `DataType` the CLR type decides, and it picks a native PostgreS
 
 - `[CompositeIndex("name", "col", "col2", Unique = true)]` on the class. A unique composite
   becomes a table constraint, so `ON CONFLICT` can arbitrate on it.
+  Indexes are matched by **name**: when an existing index keeps its name but its definition differs from the model (key columns or their order, `UNIQUE`, `INCLUDE`; this covers `[CompositeIndex]`, `[Index]` and `Column.Index` / `Column.Unique`), sync logs a drift warning at every level. `Production` (Safe) never rebuilds it and flags the table `DriftPending`; `Developer` and `Migration` drop and recreate it. An index on a column renamed with `PreviousName` follows the rename and is not drift.
 - `[Index(Name, Unique, Include)]` on a property. `Include` becomes a real `INCLUDE` covering
   clause (PostgreSQL 11+).
 - `[ForeignKey("table", "column", OnDelete, OnUpdate)]`. The referenced table is qualified

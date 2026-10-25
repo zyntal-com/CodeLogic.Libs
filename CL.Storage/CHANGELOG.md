@@ -217,6 +217,16 @@ are listed under *Added*, even where they changed while this release was being b
 
 ### Added
 
+- **Live config changes** (requires CodeLogic 4.9+). `StorageLibrary` implements `IConfigReloadable`:
+  a `storage*` section changed through `Libraries.UpdateConfigAsync`, `Libraries.ReloadConfigAsync` or
+  the config file watcher is applied without a restart and touches only the connections that changed.
+  Changed and added connections are built and health-checked before they replace the current backend,
+  which drains its in-flight operations first; removed or disabled connections are retired; untouched
+  connections keep running. A failed health check keeps the current backend and is reported as not
+  applied; the next apply (e.g. `ReloadConfigAsync` once the cause is fixed) retries it even if the
+  file did not change. Library-wide speed limits are re-attached live. The default connection cannot be removed or
+  disabled this way, and toggling `storage.enabled` requires a restart. The library's own persisted
+  changes (`AddOrUpdateConnectionAsync`, `RemoveConnectionAsync`) are not applied a second time.
 - **Transfer reports** (`StorageTransferReport`, `StorageTransferOutcome`, `StorageSkipReason`,
   `StorageConditionEnforcement`): outcome, skip reason, written path, digest, destination ETag/version, how
   a condition was enforced, and exactly what an unfinished transfer left (`DestinationCommitted`,
@@ -298,6 +308,9 @@ are listed under *Added*, even where they changed while this release was being b
 
 ### Fixed
 
+- Persisting one local connection (`AddOrUpdateConnectionAsync`/`RemoveConnectionAsync` with `persist: true`)
+  wrote every other local connection back to `config.storage.local.json` without its `TransferLimits`: the
+  library's copy of the section dropped them. The copy now keeps them.
 - `Mirror` copied an older source over a newer destination of the same size; its deletes ran even after
   copies failed; a folder deleted as extraneous took excluded files with it.
 - Sync looked up each action with a linear search inside the copy loop (quadratic).

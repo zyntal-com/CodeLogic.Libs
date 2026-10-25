@@ -1,6 +1,7 @@
 using CL.SQLite.Localization;
 using CL.SQLite.Models;
 using CL.SQLite.Services;
+using CodeLogic.Core.Configuration;
 using CodeLogic.Framework.Libraries;
 
 namespace CL.SQLite;
@@ -9,8 +10,10 @@ namespace CL.SQLite;
 /// <b>CL.SQLite</b> — CodeLogic library providing SQLite database access with a connection pool,
 /// a LINQ query builder, on-demand table synchronization, and a migration ledger.
 /// Table sync is not automatic: call <see cref="TableSync"/> yourself for the entities you want reconciled.
+/// Config changes made while running (admin UI, reload, file watcher) are applied live per
+/// database — see <see cref="OnConfigChangedAsync"/>.
 /// </summary>
-public sealed class SQLiteLibrary : ILibrary
+public sealed class SQLiteLibrary : ILibrary, IConfigReloadable
 {
     public LibraryManifest Manifest { get; } = new()
     {
@@ -18,7 +21,7 @@ public sealed class SQLiteLibrary : ILibrary
         Name = "SQLite Library",
         Version = CL.Internal.InternalLibraryVersion.Current,
         Description = "SQLite database library with connection pooling, LINQ queries, and table sync",
-        Author = "Media2A",
+        Author = "Zyntal.com",
         Tags = ["sqlite", "database", "orm", "repository"]
     };
 
@@ -225,6 +228,78 @@ public sealed class SQLiteLibrary : ILibrary
             connectionId,
             slowMs);
     }
+
+    // ── Live config changes ──────────────────────────────────────────────────
+
+    /// <summary>
+    /// Applies a config change without a restart, touching only the databases that changed:
+    /// a database whose connection-shaping settings changed (path, cache mode, WAL, foreign keys,
+    /// connection timeout, pool size) gets a fresh pool and is tested; one whose other settings
+    /// changed is updated in place; added databases are registered, removed or disabled ones are
+    /// released, and untouched databases keep their pooled connections. Throws when a database
+    /// cannot be opened — the change stays saved and the remaining databases are still applied.
+    /// </summary>
+    public async Task OnConfigChangedAsync(LibraryContext context, ConfigChangedEventArgs change, CancellationToken cancellationToken)
+    {
+        if (change.NewValue is not SQLiteConfig current) return;
+
+        var diff = ConfigDiff.Keyed(
+            EnabledDatabases(change.GetOld<SQLiteConfig>()),
+            EnabledDatabases(current),
+            StringComparer.OrdinalIgnoreCase);
+        _config = current;
+
+        if (!diff.HasChanges) return;
+
+        var connections = _connectionManager;
+        if (connections is null)
+        {
+            if (diff.Added.Count > 0)
+                throw new InvalidOperationException(
+                    $"{Manifest.Name} started with no enabled databases; restart to enable " +
+                    $"'{string.Join("', '", diff.Added.Keys)}'.");
+            return;
+        }
+
+        var unreachable = new List<string>();
+
+        foreach (var id in diff.Removed.Keys)
+        {
+            await connections.UnregisterConfigurationAsync(id).ConfigureAwait(false);
+            context.Logger.Info($"[SQLite] [{id}] Removed — connections released");
+        }
+
+        foreach (var (id, databaseChange) in diff.Changed)
+        {
+            if (!await connections.ReplaceConfigurationAsync(id, databaseChange.New).ConfigureAwait(false))
+                context.Logger.Info($"[SQLite] [{id}] Settings updated in place");
+            else if (!await TestAsync(context, id, cancellationToken).ConfigureAwait(false))
+                unreachable.Add(id);
+        }
+
+        foreach (var (id, database) in diff.Added)
+        {
+            connections.RegisterConfiguration(id, database);
+            if (!await TestAsync(context, id, cancellationToken).ConfigureAwait(false))
+                unreachable.Add(id);
+        }
+
+        if (unreachable.Count > 0)
+            throw new InvalidOperationException(
+                $"Could not open database(s) '{string.Join("', '", unreachable)}' with the new settings.");
+    }
+
+    private async Task<bool> TestAsync(LibraryContext context, string id, CancellationToken ct)
+    {
+        var ok = await _connectionManager!.TestConnectionAsync(id, ct).ConfigureAwait(false);
+        if (ok)
+            context.Logger.Info($"[SQLite] [{id}] Opened {_connectionManager.GetDatabasePath(id)}");
+        return ok;
+    }
+
+    private static Dictionary<string, SQLiteDatabaseConfig> EnabledDatabases(SQLiteConfig? config) =>
+        config?.Databases.Where(d => d.Value.Enabled).ToDictionary(d => d.Key, d => d.Value)
+        ?? new Dictionary<string, SQLiteDatabaseConfig>();
 
     // ── IDisposable ───────────────────────────────────────────────────────────
 

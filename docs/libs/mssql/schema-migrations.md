@@ -35,7 +35,7 @@ Native types cover SQL Server integer, decimal, money, real/float, bit, ANSI/Uni
 
 Default inference uses `nvarchar(255)` for strings, `datetime2` for `DateTime`, `uniqueidentifier` for `Guid`, `bit` for booleans, `varbinary(max)` for bytes, and `int` for enums.
 
-Indexes support unique and composite definitions. `[Index(Include = [...])]` emits a true SQL Server `INCLUDE` list. Foreign keys support cascade, set-null, set-default, and no-action behavior. Comments use `MS_Description` extended properties.
+Indexes support unique and composite definitions. `[Index(Include = [...])]` emits a true SQL Server `INCLUDE` list. Indexes are matched by **name**: when an existing index keeps its name but its definition differs from the model (key columns or their order, `UNIQUE`, `INCLUDE`), sync logs a drift warning at every level. `Production` (Safe) never rebuilds it and flags the table `DriftPending`; `Developer` and `Migration` drop and recreate it. An index on a column renamed with `PreviousName` follows the rename and is not drift. Foreign keys support cascade, set-null, set-default, and no-action behavior. Comments use `MS_Description` extended properties.
 
 ## Synchronization modes
 
