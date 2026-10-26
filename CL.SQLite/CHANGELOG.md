@@ -3,6 +3,32 @@
 All notable changes to **CodeLogic.SQLite** are documented here. Versions follow
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Added
+
+- **Typed `QueryBuilder.UpdateAsync(setter)`** — `t => new T { Status = "done", Counter = t.Counter + 1 }`.
+  Only the assigned properties are written. Values that read the row become SQL expressions,
+  including `Math.Min` / `Math.Max` (SQLite's scalar `min` / `max`); every captured value except
+  `NULL` and primitive numbers is bound as a parameter.
+- **`QueryBuilder.UpdateAndGetAsync(setter)`** updates matching rows and returns them as they are
+  afterwards, in one `UPDATE … RETURNING *` statement (SQLite 3.35+; the bundled engine is 3.50.4).
+  `OrderBy`, `Take` and `Skip` pick the rows by `rowid`; the order of the returned rows is not
+  guaranteed.
+- **`QueryBuilder.AnyAsync()` / `AnyAsync(predicate)`** — `SELECT 1 … LIMIT 1`.
+- **`Repository.UpsertAsync(entity, (current, incoming) => new T { … }, conflictTarget)`** — insert,
+  or update the existing row from its current values, in one `INSERT … ON CONFLICT (…) DO UPDATE`.
+  The conflict target is inferred when the entity has exactly one candidate unique key. The plain
+  `UpsertAsync(entity)` (`INSERT OR REPLACE`) is unchanged.
+- **Database and table administration** on `SQLiteLibrary.Admin` (`DatabaseAdmin`) and as library
+  methods: `CreateDatabaseAsync(path)`, `DropDatabaseAsync(path)` (also deletes the `-wal`, `-shm`
+  and `-journal` files and drains pooled connections to the file), `DatabaseExistsAsync(path)`,
+  `CreateTableAsync<T>`, `DropTableAsync<T>`, `TruncateTableAsync<T>` (`DELETE` plus
+  `sqlite_sequence` reset), `TableExistsAsync<T>` / `TableExistsAsync(name)`.
+- `QueryBuilder.ForUpdate` / `ForShare` and the `LockWait` enum, for API parity with the server
+  libraries. They always throw `NotSupportedException` — SQLite has no row locks and CL.SQLite has
+  no transactions; use `UpdateAndGetAsync` for an atomic read-modify-write.
+
 ## 2026-10-24
 
 ### Added

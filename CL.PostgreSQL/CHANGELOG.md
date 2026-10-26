@@ -3,6 +3,45 @@
 All notable changes to **CodeLogic.PostgreSQL** are documented here. Versions follow
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Security
+
+- **Captured values in column expressions are now parameters.** A typed `UpdateAsync` setter
+  that reads the row (`t => new T { A = t.A + x }`), grouped `Select` projections and `GroupBy`
+  keys used to write captured values into the SQL text, doubling only `'`. Every captured value
+  except `NULL` and primitive numbers is now bound as a parameter. This also keeps the fractional
+  seconds of `DateTime` values (previously cut to whole seconds) and binds enums by value
+  (previously written as their member name).
+
+### Added
+
+- **`Math.Min` / `Math.Max`** in setter, projection and grouping expressions (`LEAST` / `GREATEST`).
+- **Row locking**: `QueryBuilder.ForUpdate(LockWait)` / `ForShare(LockWait)` with
+  `LockWait.Wait | NoWait | SkipLocked` (`FOR UPDATE` / `FOR SHARE` `[NOWAIT | SKIP LOCKED]`), for
+  queries created from a `TransactionScope`.
+- **`QueryBuilder.UpdateAndGetAsync(setter)`** updates matching rows and returns them as they are
+  afterwards, in one `UPDATE … RETURNING *` statement (honours `Where`, `OrderBy`, `Take` and the
+  `ForUpdate` wait mode).
+- **`QueryBuilder.AnyAsync()` / `AnyAsync(predicate)`** — `SELECT 1 … LIMIT 1`.
+- **`Repository.UpsertAsync(entity, (current, incoming) => new T { … }, conflictTarget)`** — insert,
+  or update the existing row from its current values, in one `INSERT … ON CONFLICT (…) DO UPDATE`.
+- **Database and table administration** on `PostgreSQLLibrary.Admin` (`DatabaseAdmin`) and as
+  library methods: `CreateDatabaseAsync`, `DropDatabaseAsync`, `DatabaseExistsAsync`,
+  `CreateTableAsync<T>`, `DropTableAsync<T>`, `TruncateTableAsync<T>`, `TableExistsAsync<T>` /
+  `TableExistsAsync(name)`.
+- `PostgreSqlDatabaseConfig.CreateDatabaseIfMissing` (default `false`) creates the database during
+  initialization, and `PostgreSqlDatabaseConfig.MaintenanceDatabase` (default `postgres`) names the
+  database used for `CREATE` / `DROP DATABASE`.
+- `ConnectionManager.ExecuteOnServerAsync` runs work on a connection to the maintenance database
+  (unpooled).
+
+### Fixed
+
+- Schema sync no longer treats a table with a mixed-case name (`[Table(Name = "UserEvents")]`) as
+  missing. The existence check passed the name to `to_regclass` unquoted, which folded it to lower
+  case.
+
 ## 2026-10-24
 
 ### Added

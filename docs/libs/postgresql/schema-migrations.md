@@ -233,3 +233,60 @@ columns via `format_type`, constraints via `pg_get_constraintdef`, indexes via
 
 These are **schema-only** backups. Restore drops and recreates the table, so its data is
 lost. Use `pg_dump` for data.
+
+## Database and table administration
+
+`pg.Admin` (also available as methods directly on the library) creates, drops and checks
+databases and entity tables. It is meant for first-run setup, demos, per-test databases and
+resets; day-to-day schema changes stay with sync and migrations.
+
+```csharp
+await pg.CreateDatabaseAsync("shop_test");                         // server defaults (template1)
+await pg.CreateDatabaseAsync("shop_ci", encoding: "UTF8", collation: "en_US.UTF-8");
+bool exists = (await pg.DatabaseExistsAsync("shop_test")).Value;
+await pg.DropDatabaseAsync("shop_test");                           // WITH (FORCE) — PostgreSQL 13+
+
+await pg.CreateTableAsync<Order>();          // create only; never alters an existing table
+bool has = (await pg.TableExistsAsync<Order>()).Value;
+bool raw = (await pg.TableExistsAsync("sales.orders")).Value;      // bare name = defaultSchema
+await pg.TruncateTableAsync<Order>();        // TRUNCATE TABLE … RESTART IDENTITY
+await pg.TruncateTableAsync<Order>(restartIdentity: false, cascade: true);
+await pg.DropTableAsync<Order>(cascade: true);   // also forgets its __schema_state row
+```
+
+- All methods return `Result<bool>`. `Create*` returns `false` when the object already existed
+  (with `ifNotExists: true`, the default) and `Drop*` returns `false` when there was nothing to
+  drop (with `ifExists: true`). With the flag off, those cases are failures.
+- PostgreSQL cannot create or drop the database a session is connected to, so database
+  operations run on an unpooled connection to the connection's `maintenanceDatabase` (default
+  `postgres`) with the same host and credentials. The user needs `CREATEDB` (or ownership, to
+  drop).
+- `CreateDatabaseAsync` without `encoding` / `collation` takes the server's defaults. With
+  either, the database is copied from `template0` (`TEMPLATE template0`), which PostgreSQL
+  requires to pick an encoding or locale different from the template's; `collation` sets both
+  `LC_COLLATE` and `LC_CTYPE`. Encoding and locale names may only contain letters, digits and
+  `_ . - @`, and database names are limited to 63 bytes (PostgreSQL would silently truncate a
+  longer one); anything else throws `ArgumentException` before reaching the server.
+- `DropDatabaseAsync` may drop any database, including the one the connection is configured
+  for. Idle pooled connections to it are cleared first, and `DROP DATABASE … WITH (FORCE)`
+  terminates other sessions still connected to it, so it needs PostgreSQL 13 or later.
+- Table operations use the entity's `[Table(Schema = …)]`, or else the connection's
+  `defaultSchema`. `CreateTableAsync<T>` runs the same DDL as a first sync (including
+  `CREATE SCHEMA IF NOT EXISTS`), records the table in `__schema_state` under `schema.table`, so
+  the next sync skips it, and registers the entity like `SyncTableAsync<T>` does.
+- `DropTableAsync<T>(cascade: true)` also drops the foreign-key constraints and views that depend
+  on the table (`DROP TABLE … CASCADE`); without it, such dependents make the drop fail.
+  `TruncateTableAsync<T>` resets identity / serial sequences by default (`restartIdentity: true`);
+  `cascade: true` truncates the tables whose foreign keys reference it as well, where it would
+  otherwise be refused.
+
+### Creating the database on startup
+
+Set `createDatabaseIfMissing` on a database in `config.postgresql.json` and the library creates
+it (server default encoding and locale) during initialization, before it first connects. The
+check and the `CREATE DATABASE` run on `maintenanceDatabase`. It is off by default; a failure to
+create the database is logged as a warning.
+
+```json
+"Default": { "host": "localhost", "database": "shop", "createDatabaseIfMissing": true }
+```
