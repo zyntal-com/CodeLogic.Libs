@@ -69,6 +69,37 @@ public sealed class LiveConfigReloadTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Steam_sign_in_is_on_with_steam_and_switches_live()
+    {
+        Assert.True(_social.HasSteamOpenId);
+        var openId = _social.OpenId;
+
+        var config = Config();
+        config["steam"]!["openIdEnabled"] = false;
+        Assert.True((await UpdateAsync(config)).Applied);
+        Assert.False(_social.HasSteamOpenId);
+        Assert.Throws<InvalidOperationException>(() => _social.OpenId);
+        Assert.True(_social.HasSteam);
+
+        config["steam"]!["openIdEnabled"] = true;
+        config["steam"]!["timeoutSeconds"] = 20;
+        Assert.True((await UpdateAsync(config)).Applied);
+        Assert.True(_social.HasSteamOpenId);
+        Assert.NotSame(openId, _social.OpenId);
+    }
+
+    [Fact]
+    public async Task Steam_sign_in_needs_the_api_key_like_the_rest_of_steam()
+    {
+        var config = Config();
+        config["steam"]!["apiKey"] = "";
+        var result = await UpdateAsync(config);
+
+        Assert.False(result.Applied);
+        Assert.True(_social.HasSteamOpenId);
+    }
+
+    [Fact]
     public async Task Discord_change_rebuilds_discord_and_leaves_steam()
     {
         var discord = _social.Discord;
@@ -94,6 +125,7 @@ public sealed class LiveConfigReloadTests : IAsyncLifetime
         config["enabled"] = false;
         Assert.True((await UpdateAsync(config)).Applied);
         Assert.False(_social.HasSteam);
+        Assert.False(_social.HasSteamOpenId);
 
         config["enabled"] = true;
         config["discord"]!["enabled"] = true;

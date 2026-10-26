@@ -1,8 +1,8 @@
 # CL.SocialConnect
 
-> Discord webhooks and Steam Web API integration — send rich Discord notifications and read Steam player profiles, bans, and game libraries.
+> Discord webhooks and Steam integration — send rich Discord notifications, read Steam player profiles, bans, and game libraries, and add "Sign in through Steam" to a website.
 
-`CL.SocialConnect` adds two third-party integrations to a CodeLogic 4 application: outbound **Discord webhooks** and read access to the **Steam Web API**, plus **Steam ticket authentication** for game-server scenarios. The library exposes a single `SocialConnectLibrary` surface with three services — `Discord`, `Steam`, and `Auth` — each independently toggled by configuration. It has no external NuGet dependencies; HTTP is handled with `System.Net.Http.Json`.
+`CL.SocialConnect` adds two third-party integrations to a CodeLogic 4 application: outbound **Discord webhooks** and read access to the **Steam Web API**, plus **Steam ticket authentication** for game-server scenarios and **Steam sign-in** (OpenID 2.0) for websites. The library exposes a single `SocialConnectLibrary` surface with four services — `Discord`, `Steam`, `Auth`, and `OpenId` — each independently toggled by configuration. It has no external NuGet dependencies; HTTP is handled with `System.Net.Http.Json`.
 
 | | |
 |---|---|
@@ -328,6 +328,58 @@ public sealed class SteamAuthResult
 }
 ```
 
+## Steam sign-in (OpenID)
+
+`SteamOpenIdService` (`social.OpenId`) implements "Sign in through Steam" for websites with Steam's OpenID 2.0 provider. It is available whenever Steam is enabled and `Steam.OpenIdEnabled` is `true` (the default). OpenID itself needs no API key. Steam only returns the player's 64-bit Steam ID; use `social.Steam.GetPlayerAsync` afterwards for the name and avatar.
+
+The flow has two steps:
+
+1. **Redirect.** `BuildLoginUrl(returnTo, realm?)` returns the `https://steamcommunity.com/openid/login?…` URL. `returnTo` must be an absolute http(s) URL without a fragment. `realm` (what Steam shows the user) defaults to the scheme and host of `returnTo`, and `returnTo` must start with it.
+2. **Callback.** Steam sends the browser back to `returnTo` with a signed assertion. `VerifyAsync(query, expectedReturnTo)` takes the raw query string or the decoded parameters, and returns `Result<SteamOpenIdResult>`.
+
+```csharp
+// Start: bind the attempt to this browser with a random state kept in a cookie.
+var state = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
+var returnTo = $"https://example.com/auth/steam/callback?state={state}";
+// …store state in an HttpOnly cookie, then redirect:
+string loginUrl = social.OpenId.BuildLoginUrl(returnTo);
+
+// Callback: rebuild the exact return_to from the cookie's state, then verify.
+Result<SteamOpenIdResult> result = await social.OpenId.VerifyAsync(request.QueryString, returnTo);
+if (result.IsSuccess)
+    SignIn(result.Value.SteamId);
+```
+
+`VerifyAsync` checks the assertion locally first, then asks Steam to confirm it (`check_authentication`, only an exact `is_valid:true` line counts). The local checks are:
+
+- `openid.mode` is `id_res` (`cancel` gives `social.steam.openid_cancelled`).
+- The namespace and `op_endpoint` are Steam's.
+- `return_to` equals `expectedReturnTo` exactly.
+- `claimed_id` equals `identity` and is `https://steamcommunity.com/openid/id/7656119…` (a SteamID64).
+- `op_endpoint`, `claimed_id`, `identity`, `return_to` and `response_nonce` are among the signed fields, and a signature is present.
+- No `openid.*` parameter appears twice.
+
+Because Steam signs `return_to`, putting a per-attempt state in it and checking it against a cookie stops a callback taken from someone else's login from being replayed into another browser.
+
+| Error code | Meaning |
+|------------|---------|
+| `social.steam.openid_cancelled` | The user cancelled at Steam. |
+| `social.steam.openid_return_to` | `return_to` does not match this sign-in. |
+| `social.steam.openid_identity` | Missing or malformed Steam identity. |
+| `social.steam.openid_invalid` | Not a valid Steam assertion (mode, endpoint, signed fields, repeated parameters). |
+| `social.steam.openid_rejected` | Steam did not confirm the assertion. |
+| `social.steam.openid_unavailable` / `social.steam.openid_timeout` | Steam could not be reached. |
+
+Each verification publishes a `SteamOpenIdVerifiedEvent`.
+
+```csharp
+public sealed class SteamOpenIdResult
+{
+    public string SteamId { get; }    // "76561197960435530"
+    public string ClaimedId { get; }  // "https://steamcommunity.com/openid/id/76561197960435530"
+}
+```
+
 ## Caching
 
 `SteamProfileService` caches the results of `GetPlayerAsync`, `GetPlayerBansAsync`, and `GetOwnedGamesAsync` for `CacheTtlSeconds` (default 300). Cached reads publish `SteamProfileFetchedEvent` with `FromCache = true`. Call `Steam.ClearCache()` to drop all cached entries — useful after you know a profile has changed, or in tests.
@@ -355,6 +407,7 @@ The library writes `config.socialconnect.json` (section `socialconnect`) with de
     "ApiKey": "your-steam-web-api-key",
     "AuthEnabled": false,
     "AppId": "",
+    "OpenIdEnabled": true,
     "CacheTtlSeconds": 300,
     "TimeoutSeconds": 15,
     "ApiBaseUrl": "https://api.steampowered.com"
@@ -374,6 +427,7 @@ The library writes `config.socialconnect.json` (section `socialconnect`) with de
 | `Steam.ApiKey` | `string` | `""` | Steam Web API key (secret). Get one at [steamcommunity.com/dev/apikey](https://steamcommunity.com/dev/apikey). |
 | `Steam.AuthEnabled` | `bool` | `false` | Create the Steam auth service. Requires `AppId`. |
 | `Steam.AppId` | `string` | `""` | Your game's Steam App ID (used by ticket auth). |
+| `Steam.OpenIdEnabled` | `bool` | `true` | Create the Steam sign-in (OpenID) service while Steam is enabled. OpenID itself needs no key. |
 | `Steam.CacheTtlSeconds` | `int` | `300` | Profile cache lifetime in seconds. Must be > 0. |
 | `Steam.TimeoutSeconds` | `int` | `15` | HTTP timeout for Steam requests (1–120). |
 | `Steam.ApiBaseUrl` | `string` | `https://api.steampowered.com` | Steam Web API base URL. |
@@ -385,10 +439,10 @@ The library writes `config.socialconnect.json` (section `socialconnect`) with de
 With CodeLogic 4.9+, `config.socialconnect.json` applies live when changed through `Libraries.UpdateConfigAsync`, `Libraries.ReloadConfigAsync`, or the config file watcher. Only the service whose settings changed is rebuilt:
 
 - **Discord settings**: `social.Discord` is replaced.
-- **Steam settings**: `social.Steam` and `social.Auth` are replaced; the profile cache starts empty.
+- **Steam settings**: `social.Steam`, `social.Auth` and `social.OpenId` are replaced; the profile cache starts empty.
 - **Enabled flags**: each service, and the whole library, can be switched on or off.
 
-A replaced service is disposed only after its request timeout, so requests already running on it finish. Read `social.Discord` / `social.Steam` / `social.Auth` when you use them rather than keeping an old instance.
+A replaced service is disposed only after its request timeout, so requests already running on it finish. Read `social.Discord` / `social.Steam` / `social.Auth` / `social.OpenId` when you use them rather than keeping an old instance.
 
 ## Events
 
@@ -399,6 +453,7 @@ All events implement `IEvent` and are published to the CodeLogic event bus.
 | `WebhookSentEvent` | A Discord webhook request completes. | `WebhookUrl`, `Success`, `SentAt`, `StatusCode?`, `ErrorMessage?` |
 | `SteamProfileFetchedEvent` | A Steam profile/bans/games read completes. | `SteamId`, `FetchedAt`, `FromCache` (default `false`) |
 | `SteamAuthenticatedEvent` | A ticket authentication completes. | `SteamId`, `Success`, `AuthenticatedAt`, `AppId?`, `ErrorMessage?` |
+| `SteamOpenIdVerifiedEvent` | A Steam sign-in callback is verified or refused. | `SteamId`, `Success`, `VerifiedAt`, `ErrorMessage?` |
 
 ## Health check
 

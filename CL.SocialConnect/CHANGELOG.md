@@ -3,6 +3,20 @@
 All notable changes to **CodeLogic.SocialConnect** are documented here. Versions follow
 [Semantic Versioning](https://semver.org/).
 
+## 2026-10-26
+
+### Added
+
+- **Steam sign-in (OpenID 2.0)** for websites: `SteamOpenIdService`, exposed as `social.OpenId` with
+  `HasSteamOpenId`. `BuildLoginUrl(returnTo, realm?)` builds the "Sign in through Steam" redirect;
+  `VerifyAsync(query, expectedReturnTo)` checks the signed assertion locally (Steam's endpoint and
+  namespace, exact `return_to`, `claimed_id` = `identity` as a SteamID64, required signed fields, no
+  repeated parameters), then asks Steam to confirm it (`check_authentication`), and returns the
+  player's 64-bit Steam ID as `Result<SteamOpenIdResult>`. Publishes `SteamOpenIdVerifiedEvent`.
+- `Steam.OpenIdEnabled` (default `true`): sign-in is available whenever Steam is enabled (which
+  requires `Steam.ApiKey`). It follows live config changes like the other Steam services: a Steam
+  settings change replaces `social.OpenId`, and it can be switched on or off without a restart.
+
 ## 2026-10-24
 
 ### Added
