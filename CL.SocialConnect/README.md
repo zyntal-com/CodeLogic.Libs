@@ -3,9 +3,9 @@
 [![NuGet](https://img.shields.io/nuget/v/CodeLogic.SocialConnect)](https://www.nuget.org/packages/CodeLogic.SocialConnect)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/zyntal-com/CodeLogic.Libs/blob/main/LICENSE)
 
-> Discord webhooks and Steam Web API integration for [CodeLogic 4](https://github.com/zyntal-com/CodeLogic) — send rich Discord notifications and read Steam player profiles, bans, and game libraries.
+> Discord webhooks and Steam integration for [CodeLogic 4](https://github.com/zyntal-com/CodeLogic) — send rich Discord notifications, read Steam player profiles, bans, and game libraries, and add "Sign in through Steam" to a website.
 
-Three services behind one library: a **Discord webhook** sender (text, rich embeds, full payloads), a **Steam profile** reader (players, bans, owned games — cached), and **Steam authentication** for validating game-session tickets. No external NuGet dependencies — built on `System.Net.Http.Json`.
+Four services behind one library: a **Discord webhook** sender (text, rich embeds, full payloads), a **Steam profile** reader (players, bans, owned games — cached), **Steam authentication** for validating game-session tickets, and **Steam sign-in** (OpenID 2.0) for websites. No external NuGet dependencies — built on `System.Net.Http.Json`.
 
 ## Install
 
@@ -36,9 +36,22 @@ if (social.HasSteam)
     if (player.IsSuccess)
         Console.WriteLine($"{player.Value.PersonaName} — {player.Value.ProfileUrl}");
 }
+
+// Steam — "Sign in through Steam" on a website (OpenID 2.0; returns the Steam ID)
+if (social.HasSteamOpenId)
+{
+    // 1. Redirect the browser. Keep the per-attempt state in a cookie.
+    var returnTo = $"https://example.com/auth/steam/callback?state={state}";
+    string loginUrl = social.OpenId.BuildLoginUrl(returnTo);
+
+    // 2. On the callback, verify against the exact return_to you sent.
+    Result<SteamOpenIdResult> signIn = await social.OpenId.VerifyAsync(callbackQueryString, returnTo);
+    if (signIn.IsSuccess)
+        Console.WriteLine($"Signed in as {signIn.Value.SteamId}");
+}
 ```
 
-Accessing a disabled service throws `InvalidOperationException`. Guard with `HasDiscord` / `HasSteam` / `HasSteamAuth` when a service may be turned off — Steam is disabled by default.
+Accessing a disabled service throws `InvalidOperationException`. Guard with `HasDiscord` / `HasSteam` / `HasSteamAuth` / `HasSteamOpenId` when a service may be turned off — Steam is disabled by default.
 
 ## Features
 
@@ -48,7 +61,8 @@ Accessing a disabled service throws `InvalidOperationException`. Guard with `Has
 - **Steam profiles** — `GetPlayerAsync`, `GetPlayerBansAsync`, `GetOwnedGamesAsync` return `Result<T>` with computed helpers (`IsPublic`, `IsInGame`, `HasAnyBan`, `TotalPlaytime`, `LastPlayed`).
 - **Built-in cache** — Steam reads are cached for `CacheTtlSeconds` (default 300); clear on demand with `Steam.ClearCache()`.
 - **Steam authentication** — `Auth.AuthenticateAsync` validates a session ticket, with a per-call `appId` override.
-- **Events** — `WebhookSentEvent`, `SteamProfileFetchedEvent`, and `SteamAuthenticatedEvent` on the CodeLogic event bus.
+- **Steam sign-in** — `OpenId.BuildLoginUrl` / `OpenId.VerifyAsync` implement "Sign in through Steam" (OpenID 2.0): local checks of the signed assertion (endpoint, `return_to`, identity, signed fields), then confirmation by Steam (`check_authentication`). Returns the 64-bit Steam ID.
+- **Events** — `WebhookSentEvent`, `SteamProfileFetchedEvent`, `SteamAuthenticatedEvent`, and `SteamOpenIdVerifiedEvent` on the CodeLogic event bus.
 
 ## Configuration
 
@@ -69,6 +83,7 @@ Auto-generated on first run as `config.socialconnect.json`:
     "ApiKey": "your-steam-web-api-key",
     "AuthEnabled": false,
     "AppId": "",
+    "OpenIdEnabled": true,
     "CacheTtlSeconds": 300,
     "TimeoutSeconds": 15,
     "ApiBaseUrl": "https://api.steampowered.com"
@@ -88,6 +103,7 @@ Auto-generated on first run as `config.socialconnect.json`:
 | `Steam.ApiKey` | `""` | Steam Web API key (secret) — get one at [steamcommunity.com/dev/apikey](https://steamcommunity.com/dev/apikey). |
 | `Steam.AuthEnabled` | `false` | Enable ticket authentication; **requires `AppId`**. |
 | `Steam.AppId` | `""` | Your game's Steam App ID (used by auth). |
+| `Steam.OpenIdEnabled` | `true` | Enable "Sign in through Steam" (OpenID) while Steam is enabled. OpenID itself needs no key. |
 | `Steam.CacheTtlSeconds` | `300` | Profile cache lifetime in seconds (must be > 0). |
 | `Steam.TimeoutSeconds` | `15` | HTTP timeout for Steam calls (1–120). |
 | `Steam.ApiBaseUrl` | `https://api.steampowered.com` | Steam Web API base URL. |
@@ -97,10 +113,10 @@ Auto-generated on first run as `config.socialconnect.json`:
 With CodeLogic 4.9+, `config.socialconnect.json` applies live when changed through `Libraries.UpdateConfigAsync`, `Libraries.ReloadConfigAsync`, or the config file watcher. Only the service whose settings changed is rebuilt:
 
 - **Discord settings**: `social.Discord` is replaced.
-- **Steam settings**: `social.Steam` and `social.Auth` are replaced; the profile cache starts empty.
+- **Steam settings**: `social.Steam`, `social.Auth` and `social.OpenId` are replaced; the profile cache starts empty.
 - **Enabled flags**: each service, and the whole library, can be switched on or off.
 
-A replaced service is disposed only after its request timeout, so requests already running on it finish. Read `social.Discord` / `social.Steam` / `social.Auth` when you use them rather than keeping an old instance.
+A replaced service is disposed only after its request timeout, so requests already running on it finish. Read `social.Discord` / `social.Steam` / `social.Auth` / `social.OpenId` when you use them rather than keeping an old instance.
 
 ## Documentation
 
