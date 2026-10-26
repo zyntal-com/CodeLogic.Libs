@@ -401,8 +401,8 @@ internal sealed class SchemaAnalyzer
         if (colAttr?.AutoIncrement == true)
             sb.Append(" AUTO_INCREMENT");
 
-        if (!string.IsNullOrEmpty(colAttr?.DefaultValue))
-            sb.Append($" DEFAULT {colAttr.DefaultValue}");
+        if (ModelDefaultSql(prop, colAttr) is { } defaultSql)
+            sb.Append($" DEFAULT {defaultSql}");
 
         if (colAttr?.OnUpdateCurrentTimestamp == true)
             sb.Append(" ON UPDATE CURRENT_TIMESTAMP");
@@ -551,7 +551,7 @@ internal sealed class SchemaAnalyzer
         }
 
         // 4. Default value — normalized
-        var modelDefault = NormalizeDefault(colAttr?.DefaultValue, expectNullable);
+        var modelDefault = NormalizeDefault(ModelDefaultSql(prop, colAttr), expectNullable);
         var dbDefault = NormalizeDefault(existing.DefaultValue, existing.IsNullable);
         // Treat CURRENT_TIMESTAMP variants as equivalent
         var bothCurrentTs =
@@ -602,16 +602,41 @@ internal sealed class SchemaAnalyzer
         return TypeConverter.GetMySqlType(effective, effective.StorageType, prop.PropertyType);
     }
 
-    private static string NormalizeDefault(string? value, bool isNullable)
+    /// <summary>
+    /// The SQL default clause value for a column, or null for none. <see cref="ColumnAttribute.DefaultValue"/>
+    /// is raw SQL (<c>0</c>, <c>CURRENT_TIMESTAMP</c>, <c>'abc'</c>); an empty string means an
+    /// empty-string default on CHAR/VARCHAR columns (written <c>''</c>) and is ignored on other
+    /// types, where MySQL allows no literal empty default (TEXT/BLOB/JSON) or it has no meaning.
+    /// </summary>
+    internal static string? ModelDefaultSql(PropertyInfo prop, ColumnAttribute? colAttr)
+    {
+        var value = colAttr?.DefaultValue;
+        if (value is null)
+            return null;
+        if (value.Length > 0)
+            return value;
+        var type = colAttr!.DataType == DataType.Unspecified && prop.PropertyType == typeof(string)
+            ? DataType.VarChar
+            : colAttr.DataType;
+        return type is DataType.VarChar or DataType.Char ? "''" : null;
+    }
+
+    /// <summary>
+    /// Normalizes a default for comparison. A NOT NULL column without a default is kept apart
+    /// from one whose default is the empty string, so sync adds or drops <c>DEFAULT ''</c>.
+    /// </summary>
+    internal static string NormalizeDefault(string? value, bool isNullable)
     {
         if (value is null)
-            return isNullable ? "NULL" : "";
+            return isNullable ? "NULL" : NoDefault;
         var trimmed = value.Trim();
         // Strip surrounding quotes that MySQL sometimes returns for string defaults
         if (trimmed.Length >= 2 && trimmed.StartsWith('\'') && trimmed.EndsWith('\''))
             trimmed = trimmed[1..^1];
         return trimmed.ToUpperInvariant();
     }
+
+    private const string NoDefault = "\u0000no-default";
 
     private static bool IsStringType(DataType? type) =>
         type is DataType.VarChar or DataType.Char or DataType.Text or

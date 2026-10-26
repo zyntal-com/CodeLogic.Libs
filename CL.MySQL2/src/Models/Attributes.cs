@@ -67,7 +67,10 @@ public sealed class ColumnAttribute : Attribute
     /// <summary>Whether this column has a plain INDEX.</summary>
     public bool Index { get; set; } = false;
 
-    /// <summary>Default value expression (e.g., "0", "'active'", "CURRENT_TIMESTAMP").</summary>
+    /// <summary>
+    /// Default value as raw SQL (e.g., "0", "'active'", "CURRENT_TIMESTAMP"). An empty string means
+    /// an empty-string default (<c>DEFAULT ''</c>) on CHAR/VARCHAR columns and is ignored on other types.
+    /// </summary>
     public string? DefaultValue { get; set; }
 
     /// <summary>Column-level character set override (for string types). Optional.</summary>

@@ -141,6 +141,112 @@ public sealed class SimpleTemplateEngineTests
 
 // ── MailBuilder (offline, direct instantiation) ──────────────────────────────────
 
+// ── SimpleTemplateEngine: HTML encoding, raw values, single-pass substitution, layouts ──
+public sealed class SimpleTemplateEngineEncodingTests
+{
+    private static async Task<RenderedTemplate> Render(SimpleTemplateEngine engine, MailTemplate template, Dictionary<string, object?> variables)
+    {
+        var result = await engine.RenderAsync(template, variables, CancellationToken.None);
+        Assert.True(result.IsSuccess, result.ErrorMessage);
+        return result.Value!;
+    }
+
+    private static Task<RenderedTemplate> Render(MailTemplate template, Dictionary<string, object?> variables) =>
+        Render(new SimpleTemplateEngine(), template, variables);
+
+    [Fact]
+    public async Task Html_body_encodes_values_in_every_syntax()
+    {
+        var template = MailTemplate.Create("enc", "s", htmlBody: "<p>{{a}}|${a}|{a}</p>");
+        var rendered = await Render(template, new() { ["a"] = "<script>x</script>&\"" });
+        Assert.Equal("<p>&lt;script&gt;x&lt;/script&gt;&amp;&quot;|&lt;script&gt;x&lt;/script&gt;&amp;&quot;|&lt;script&gt;x&lt;/script&gt;&amp;&quot;</p>", rendered.HtmlBody);
+    }
+
+    [Fact]
+    public async Task Subject_and_text_body_are_not_encoded()
+    {
+        var template = MailTemplate.Create("plain", "Re: {{a}}", textBody: "Hi {{a}}");
+        var rendered = await Render(template, new() { ["a"] = "Tom & <Jerry>" });
+        Assert.Equal("Re: Tom & <Jerry>", rendered.Subject);
+        Assert.Equal("Hi Tom & <Jerry>", rendered.TextBody);
+    }
+
+    [Fact]
+    public async Task Triple_braces_insert_trusted_html_raw()
+    {
+        var template = MailTemplate.Create("raw", "s", htmlBody: "<div>{{{block}}}</div>");
+        var rendered = await Render(template, new() { ["block"] = "<b>bold</b>" });
+        Assert.Equal("<div><b>bold</b></div>", rendered.HtmlBody);
+    }
+
+    [Fact]
+    public async Task Placeholders_inside_values_are_not_expanded()
+    {
+        var template = MailTemplate.Create("once", "{{a}}", textBody: "{{a}} / {{b}}", htmlBody: "{{a}}");
+        var rendered = await Render(template, new() { ["a"] = "${b} {b} {{b}} {{{b}}}", ["b"] = "SECRET" });
+        Assert.Equal("${b} {b} {{b}} {{{b}}}", rendered.Subject);
+        Assert.Equal("${b} {b} {{b}} {{{b}}} / SECRET", rendered.TextBody);
+        Assert.DoesNotContain("SECRET", rendered.HtmlBody);
+    }
+
+    [Fact]
+    public async Task Loop_values_are_encoded_and_not_expanded_again()
+    {
+        var template = MailTemplate.Create("loop", "s", htmlBody: "{{#each items}}<li>{{name}}</li>{{/each}}");
+        var items = new List<Dictionary<string, object?>> { new() { ["name"] = "<i>x</i>" }, new() { ["name"] = "{token}" } };
+        var rendered = await Render(template, new() { ["items"] = items, ["token"] = "SECRET" });
+        Assert.Equal("<li>&lt;i&gt;x&lt;/i&gt;</li><li>{token}</li>", rendered.HtmlBody);
+    }
+
+    [Fact]
+    public async Task Unknown_placeholders_are_left_as_they_are()
+    {
+        var template = MailTemplate.Create("unknown", "s", textBody: "{{missing}} {{{missing}}} {nope}");
+        var rendered = await Render(template, new());
+        Assert.Equal("{{missing}} {{{missing}}} {nope}", rendered.TextBody);
+    }
+
+    [Fact]
+    public async Task Layout_gets_the_child_sections_raw_and_its_own_values_encoded()
+    {
+        var layout = new MailTemplate
+        {
+            Id = "shell",
+            Subject = "",
+            TextBody = "TEXT[{{body}}] {{site}}",
+            HtmlBody = "<html><h1>{{site}}</h1>{{body}}<footer>{{footer}}</footer></html>"
+        };
+        var engine = new SimpleTemplateEngine(new MemoryTemplates(layout));
+        var child = new MailTemplate
+        {
+            Id = "child",
+            Subject = "s",
+            Layout = "shell",
+            TextBody = "Hello {{name}}",
+            HtmlBody = "<p>Hello {{name}}</p>{{#section footer}}<small>bye</small>{{/section}}"
+        };
+
+        var rendered = await Render(engine, child, new() { ["name"] = "<Ann>", ["site"] = "A&B" });
+
+        Assert.Equal("<html><h1>A&amp;B</h1><p>Hello &lt;Ann&gt;</p><footer><small>bye</small></footer></html>", rendered.HtmlBody);
+        Assert.Equal("TEXT[Hello <Ann>] A&B", rendered.TextBody);
+    }
+
+    private sealed class MemoryTemplates(params MailTemplate[] templates) : IMailTemplateProvider
+    {
+        public Task<MailResult<MailTemplate>> LoadTemplateAsync(string templateId, CancellationToken cancellationToken = default) =>
+            Task.FromResult(templates.FirstOrDefault(t => t.Id == templateId) is { } template
+                ? MailResult<MailTemplate>.Success(template)
+                : MailResult<MailTemplate>.Failure(MailError.TemplateNotFound));
+
+        public Task<MailResult<IReadOnlyList<string>>> ListTemplatesAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult(MailResult<IReadOnlyList<string>>.Success(templates.Select(t => t.Id).ToList()));
+
+        public Task<MailResult> SaveTemplateAsync(MailTemplate template, CancellationToken cancellationToken = default) =>
+            Task.FromResult(MailResult.Failure(MailError.TemplateNotFound, "read-only"));
+    }
+}
+
 public sealed class MailBuilderTests
 {
     [Fact]

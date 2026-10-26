@@ -4,6 +4,19 @@ All notable changes to **CodeLogic.MySQL2** are documented here. Versions follow
 [Semantic Versioning](https://semver.org/). The version listed here matches the
 NuGet package version of `CodeLogic.MySQL2`.
 
+## 2026-10-27
+
+### Fixed
+
+- **Empty-string column defaults.** `[Column(DefaultValue = "")]` was silently dropped, so the
+  column got no default; on CHAR/VARCHAR columns it now creates `DEFAULT ''` (other types, where
+  MySQL allows no literal empty default, still ignore it). `DefaultValue = "''"` keeps working.
+- **Schema sync tells "no default" from `''`.** On a NOT NULL column both compared equal, so a
+  column created without a default was never given the model's `''` (and a stray `''` was never
+  removed). Inserts that leave such a column out then failed, for example from an older app
+  version during a rollback. Sync now adds or drops the default. Tables whose models declare an
+  empty default get a new schema CRC, so they are compared once on the next sync.
+
 ## 2026-10-26
 
 ### Security

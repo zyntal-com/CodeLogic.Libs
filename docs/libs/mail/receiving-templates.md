@@ -204,7 +204,8 @@ Templates are JSON files (`{templateId}.json`) in the configured `TemplateDirect
 
 | Syntax | Meaning |
 |--------|---------|
-| `{{var}}`, `${var}`, `{var}` | Variable substitution (case-insensitive lookup). |
+| `{{var}}`, `${var}`, `{var}` | Variable substitution (case-insensitive lookup). HTML-encoded in `HtmlBody` and HTML layouts. |
+| `{{{var}}}` | Substitution without encoding, for values that are trusted HTML. |
 | `{{#if var}}…{{/if}}` | Conditional block, rendered when `var` is truthy. |
 | `{{#if var}}…{{#else}}…{{/if}}` | Conditional with an else branch. |
 | `{{#each items}}…{{/each}}` | Loop over a collection; item properties become variables inside the block. |
@@ -212,7 +213,9 @@ Templates are JSON files (`{templateId}.json`) in the configured `TemplateDirect
 
 Unknown placeholders are left untouched. A value is **falsy** when it is `false`, `null`, `0`, an empty string, or the string `"false"`; everything else is truthy.
 
-Loop items work for dictionaries and for plain objects (properties are read via reflection). A template may reference another template's id as its `Layout`; the layout receives the child body as `{{body}}` and each named `{{#section name}}…{{/section}}` as `{{name}}`.
+Loop items work for dictionaries and for plain objects (properties are read via reflection). A template may reference another template's id as its `Layout`; the layout receives the child body as `{{body}}` and each named `{{#section name}}…{{/section}}` as `{{name}}` (inserted as rendered, not encoded again; the text layout gets the text body's sections, the HTML layout the HTML body's).
+
+Values are inserted once: placeholders inside a value are never expanded, so user text such as `${token}` stays literal. Subjects and text bodies are never encoded.
 
 `templates/welcome.json`:
 
