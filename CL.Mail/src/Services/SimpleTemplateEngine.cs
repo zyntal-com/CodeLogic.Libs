@@ -1,6 +1,8 @@
 using CL.Mail.Models;
 using CodeLogic.Core.Logging;
 using System.Collections;
+using System.Globalization;
+using System.Net;
 using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -16,11 +18,18 @@ namespace CL.Mail.Services;
 ///   <item><c>{{variable}}</c> — variable substitution</item>
 ///   <item><c>${variable}</c> — variable substitution (alternate syntax)</item>
 ///   <item><c>{variable}</c> — variable substitution (legacy syntax)</item>
+///   <item><c>{{{variable}}}</c> — raw substitution: not HTML-encoded in an HTML body (trusted HTML only)</item>
 ///   <item><c>{{#if var}}…{{/if}}</c> — conditional block</item>
 ///   <item><c>{{#if var}}…{{#else}}…{{/if}}</c> — conditional with else</item>
 ///   <item><c>{{#each items}}…{{/each}}</c> — loop over a collection</item>
 ///   <item><c>{{#section name}}…{{/section}}</c> — named section for layout composition</item>
 /// </list>
+/// </para>
+/// <para>
+/// In <see cref="MailTemplate.HtmlBody"/> (and an HTML layout) every substituted value is
+/// HTML-encoded, so user-supplied values cannot inject markup. Use <c>{{{variable}}}</c> for values
+/// that are trusted HTML. Subjects and text bodies are never encoded. A substituted value is
+/// inserted once: placeholders inside it are not expanded.
 /// </para>
 /// </summary>
 public sealed class SimpleTemplateEngine : IMailTemplateEngine
@@ -57,9 +66,9 @@ public sealed class SimpleTemplateEngine : IMailTemplateEngine
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            var subject = RenderText(template.Subject, variables);
-            var textBody = template.TextBody is not null ? RenderText(template.TextBody, variables) : null;
-            var htmlBody = template.HtmlBody is not null ? RenderText(template.HtmlBody, variables) : null;
+            var subject = RenderText(template.Subject, variables, html: false);
+            var textBody = template.TextBody is not null ? RenderText(template.TextBody, variables, html: false) : null;
+            var htmlBody = template.HtmlBody is not null ? RenderText(template.HtmlBody, variables, html: true) : null;
 
             // Apply layout if specified and a provider is available
             if (!string.IsNullOrWhiteSpace(template.Layout) && _templateProvider is not null)
@@ -72,20 +81,12 @@ public sealed class SimpleTemplateEngine : IMailTemplateEngine
                 {
                     var layout = layoutResult.Value;
 
-                    // Extract named sections from rendered child bodies
-                    var textSections = textBody is not null ? ExtractSections(textBody) : [];
-                    var htmlSections = htmlBody is not null ? ExtractSections(htmlBody) : [];
-
-                    textSections.TryAdd("body", StripSections(textBody ?? ""));
-                    htmlSections.TryAdd("body", StripSections(htmlBody ?? ""));
-
-                    // Merge section values into a copy of the variable dictionary for layout rendering
-                    var layoutVars = new Dictionary<string, object?>(variables, StringComparer.OrdinalIgnoreCase);
-                    foreach (var section in htmlSections)
-                        layoutVars.TryAdd(section.Key, section.Value);
-
-                    if (layout.TextBody is not null) textBody = RenderText(layout.TextBody, layoutVars);
-                    if (layout.HtmlBody is not null) htmlBody = RenderText(layout.HtmlBody, layoutVars);
+                    // The child's rendered sections (already encoded where needed) go into the
+                    // layout as raw values: text sections into the text layout, HTML into the HTML one.
+                    if (layout.TextBody is not null)
+                        textBody = RenderLayout(layout.TextBody, textBody, variables, html: false);
+                    if (layout.HtmlBody is not null)
+                        htmlBody = RenderLayout(layout.HtmlBody, htmlBody, variables, html: true);
                 }
                 else
                 {
@@ -113,14 +114,50 @@ public sealed class SimpleTemplateEngine : IMailTemplateEngine
 
     // ── Rendering pipeline ────────────────────────────────────────────────────
 
-    private string RenderText(string text, Dictionary<string, object?> variables)
+    private string RenderText(string text, Dictionary<string, object?> variables, bool html, ISet<string>? rawKeys = null)
     {
         if (string.IsNullOrEmpty(text)) return text;
 
+        var state = new RenderState(html, rawKeys);
         var result = ProcessConditionals(text, variables);
-        result = ProcessLoops(result, variables);
-        result = SubstituteVariables(result, variables);
-        return result;
+        result = ProcessLoops(result, variables, state);
+        result = SubstituteVariables(result, variables, state);
+        return state.Resolve(result);
+    }
+
+    private string RenderLayout(string layoutBody, string? childBody, Dictionary<string, object?> variables, bool html)
+    {
+        var sections = childBody is not null ? ExtractSections(childBody) : [];
+        sections["body"] = StripSections(childBody ?? "");
+
+        var layoutVars = new Dictionary<string, object?>(variables, StringComparer.OrdinalIgnoreCase);
+        foreach (var section in sections)
+            layoutVars[section.Key] = section.Value;
+        return RenderText(layoutBody, layoutVars, html, new HashSet<string>(sections.Keys, StringComparer.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// One render pass: substituted values are parked behind private-use markers and put back by
+    /// <see cref="Resolve"/> at the end, so nothing inside a value is ever processed as template syntax.
+    /// </summary>
+    private sealed class RenderState(bool html, ISet<string>? rawKeys)
+    {
+        private const string Open = "\uE000";
+        private const string Close = "\uE001";
+        private static readonly Regex Marker = new("\uE000(\\d+)\uE001", RegexOptions.Compiled);
+        private readonly List<string> _values = [];
+
+        public string Insert(string key, object? value, bool raw)
+        {
+            var text = value?.ToString() ?? "";
+            if (html && !raw && rawKeys?.Contains(key) != true)
+                text = WebUtility.HtmlEncode(text);
+            _values.Add(text);
+            return Open + (_values.Count - 1).ToString(CultureInfo.InvariantCulture) + Close;
+        }
+
+        public string Resolve(string text) =>
+            _values.Count == 0 ? text : Marker.Replace(text, m => _values[int.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture)]);
     }
 
     /// <summary>
@@ -155,7 +192,7 @@ public sealed class SimpleTemplateEngine : IMailTemplateEngine
     /// Processes <c>{{#each items}}…{{/each}}</c> blocks.
     /// Items can be <c>Dictionary&lt;string, object?&gt;</c> or any type (via reflection).
     /// </summary>
-    private string ProcessLoops(string text, Dictionary<string, object?> variables)
+    private string ProcessLoops(string text, Dictionary<string, object?> variables, RenderState state)
     {
         const int MaxIterations = 100;
         for (var i = 0; i < MaxIterations; i++)
@@ -188,8 +225,8 @@ public sealed class SimpleTemplateEngine : IMailTemplateEngine
                         }
 
                     var rendered = ProcessConditionals(itemTemplate, iterVars);
-                    rendered = ProcessLoops(rendered, iterVars);
-                    rendered = SubstituteVariables(rendered, iterVars);
+                    rendered = ProcessLoops(rendered, iterVars, state);
+                    rendered = SubstituteVariables(rendered, iterVars, state);
                     sb.Append(rendered);
                 }
             }
@@ -200,23 +237,27 @@ public sealed class SimpleTemplateEngine : IMailTemplateEngine
     }
 
     /// <summary>
-    /// Replaces <c>{{var}}</c>, <c>${var}</c>, and <c>{var}</c> placeholders with their values.
+    /// Replaces <c>{{{var}}}</c>, <c>{{var}}</c>, <c>${var}</c> and <c>{var}</c> placeholders in one pass.
+    /// Unknown names are left as they are.
     /// </summary>
-    private static string SubstituteVariables(string text, Dictionary<string, object?> variables)
+    private static string SubstituteVariables(string text, Dictionary<string, object?> variables, RenderState state)
     {
         if (string.IsNullOrEmpty(text)) return text;
 
-        text = Regex.Replace(text, @"\{\{(\w+)\}\}", m =>
-            TryGetVariable(variables, m.Groups[1].Value, out var v) ? v?.ToString() ?? "" : m.Value);
-
-        text = Regex.Replace(text, @"\$\{(\w+)\}", m =>
-            TryGetVariable(variables, m.Groups[1].Value, out var v) ? v?.ToString() ?? "" : m.Value);
-
-        text = Regex.Replace(text, @"(?<!\{)\{(\w+)\}(?!\})", m =>
-            TryGetVariable(variables, m.Groups[1].Value, out var v) ? v?.ToString() ?? "" : m.Value);
-
-        return text;
+        return Placeholder.Replace(text, m =>
+        {
+            var raw = m.Groups["raw"].Success;
+            var key = raw ? m.Groups["raw"].Value
+                : m.Groups["double"].Success ? m.Groups["double"].Value
+                : m.Groups["dollar"].Success ? m.Groups["dollar"].Value
+                : m.Groups["single"].Value;
+            return TryGetVariable(variables, key, out var value) ? state.Insert(key, value, raw) : m.Value;
+        });
     }
+
+    private static readonly Regex Placeholder = new(
+        @"\{\{\{(?<raw>\w+)\}\}\}|\{\{(?<double>\w+)\}\}|\$\{(?<dollar>\w+)\}|(?<!\{)\{(?<single>\w+)\}(?!\})",
+        RegexOptions.Compiled);
 
     // ── Utilities ─────────────────────────────────────────────────────────────
 

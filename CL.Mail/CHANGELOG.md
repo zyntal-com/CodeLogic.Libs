@@ -3,6 +3,33 @@
 All notable changes to **CodeLogic.Mail** are documented here. Versions follow
 [Semantic Versioning](https://semver.org/).
 
+## 2026-10-27
+
+### Security
+
+- **HTML bodies encode substituted values.** `SimpleTemplateEngine` inserted every value into
+  `HtmlBody` as-is, so a user-supplied value (a user name, a browser description) could inject
+  markup or links into an e-mail. In `HtmlBody` and HTML layouts, `{{var}}`, `${var}` and `{var}`
+  are now HTML-encoded. Subjects and text bodies are unchanged.
+- **Values are inserted once.** Substitution ran the three placeholder syntaxes one after another,
+  and loop output was substituted again by the outer pass, so a value containing `${other}` or
+  `{other}` was expanded: user text could pull other variables (links, tokens) into the message.
+  All syntaxes are now replaced in a single pass and nothing inside a value is expanded.
+
+### Added
+
+- **`{{{var}}}`** inserts a value without encoding, for values that are trusted HTML.
+
+### Fixed
+
+- **Text layouts get the text sections.** With a layout, the text layout was rendered with the
+  child's *HTML* sections (including `body`). Text and HTML layouts now each receive their own
+  sections, and a child's section wins over a variable of the same name.
+
+### Upgrade notes
+
+- Templates that pass ready-made HTML in a variable must switch that placeholder to `{{{var}}}`.
+
 ## 2026-10-24
 
 ### Added

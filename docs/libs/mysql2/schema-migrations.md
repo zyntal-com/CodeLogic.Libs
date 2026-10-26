@@ -48,7 +48,7 @@ public DateTime UpdatedUtc { get; set; }
 | `NotNull` | `false` | `NOT NULL`. |
 | `Unique` | `false` | Unique constraint. |
 | `Index` | `false` | Single-column index. |
-| `DefaultValue` | — | Column default (SQL literal or expression). |
+| `DefaultValue` | — | Column default as raw SQL (`0`, `'active'`, `CURRENT_TIMESTAMP`). `""` means `DEFAULT ''` on CHAR/VARCHAR and is ignored on other types. |
 | `Charset` | — | Per-column charset. |
 | `Comment` | — | Column comment. |
 | `Unsigned` | `false` | Unsigned integer. |
