@@ -240,6 +240,14 @@ Result<int> deleted = await mysql.Query<Order>()
 ```
 
 These operations issue one server-side statement and do not materialize matching rows.
+Setter values may read the row (`Tokens = Math.Min(cap, t.Tokens + refill)`); captured values
+are always sent as parameters. `UpdateAndGetAsync` runs the same update and returns the rows
+as they are afterwards, and `AnyAsync` checks for a match with `SELECT 1 … LIMIT 1`.
+
+Inside a transaction, `ForUpdate()` / `ForShare()` lock the rows a read returns
+(`LockWait.NoWait` / `LockWait.SkipLocked` for job queues), and
+`Repository.UpsertAsync(entity, (current, incoming) => new T { … })` inserts or updates from
+the current row in one statement.
 
 ## Raw SQL, transactions, and multiple databases
 
@@ -297,6 +305,11 @@ Result<MigrationRunResult> applied = await mysql.MigrateAsync();
 Migrations run in version/order sequence, are tracked in `__migrations`, verify checksums, and execute under the same cross-node lock as schema sync. `RollbackAsync(target)` preflights the complete range before running `DownAsync` newest-first.
 
 Before destructive schema reconciliation, the backup manager writes DDL snapshots. `RestoreSchemaAsync` can replay the latest or a named snapshot and then clears the CRC state so the next sync performs a full comparison. These are schema backups only; they do not preserve table rows.
+
+`mysql.Admin` creates, drops and checks databases and tables (`CreateDatabaseAsync`,
+`DropDatabaseAsync`, `DatabaseExistsAsync`, `CreateTableAsync<T>`, `DropTableAsync<T>`,
+`TruncateTableAsync<T>`, `TableExistsAsync<T>`), and `CreateDatabaseIfMissing` in config
+creates the database at startup.
 
 For row lifecycle management, `[SoftDelete]` changes repository deletion into a timestamp update and filters ordinary reads by default. `.IncludeDeleted()` opts a query back into those rows. `[RetainDays]` registers an entity for background batch purging based on its timestamp column; the worker's entry list is live, so an entity reconciled by `SyncTableAsync` / `SyncSchemaAsync` after `CodeLogic.StartAsync()` is still picked up. `RunRetentionOnceAsync()` triggers a pass on demand.
 

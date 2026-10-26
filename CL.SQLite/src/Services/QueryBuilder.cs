@@ -188,6 +188,32 @@ public sealed class QueryBuilder<T> where T : class, new()
         return this;
     }
 
+    /// <summary>
+    /// Not supported on SQLite: always throws <see cref="NotSupportedException"/>. SQLite has
+    /// no row-level locks (a writer locks the whole database) and CL.SQLite has no
+    /// transactions to hold a lock in. For an atomic read-modify-write use
+    /// <see cref="UpdateAndGetAsync"/>, which updates and returns the rows in one statement.
+    /// Present for API parity with CL.MySQL2, CL.MSSQL and CL.PostgreSQL.
+    /// </summary>
+    /// <param name="wait">Ignored.</param>
+    /// <exception cref="NotSupportedException">Always.</exception>
+    public QueryBuilder<T> ForUpdate(LockWait wait = LockWait.Wait) =>
+        throw new NotSupportedException(LockingNotSupportedMessage(nameof(ForUpdate)));
+
+    /// <summary>
+    /// Not supported on SQLite: always throws <see cref="NotSupportedException"/>. See
+    /// <see cref="ForUpdate"/>.
+    /// </summary>
+    /// <param name="wait">Ignored.</param>
+    /// <exception cref="NotSupportedException">Always.</exception>
+    public QueryBuilder<T> ForShare(LockWait wait = LockWait.Wait) =>
+        throw new NotSupportedException(LockingNotSupportedMessage(nameof(ForShare)));
+
+    private static string LockingNotSupportedMessage(string method) =>
+        $"{method} is not supported by CL.SQLite: SQLite has no row-level locks and this library has no " +
+        "transactions to hold one. For an atomic read-modify-write use UpdateAndGetAsync, which updates " +
+        "the rows and returns them in a single UPDATE … RETURNING statement.";
+
     // ── Terminal methods ──────────────────────────────────────────────────────
 
     /// <summary>
@@ -360,6 +386,54 @@ public sealed class QueryBuilder<T> where T : class, new()
     }
 
     /// <summary>
+    /// Returns whether any row matches the current WHERE conditions —
+    /// <c>SELECT 1 … LIMIT 1</c>, so SQLite stops at the first hit instead of counting.
+    /// </summary>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>A <see cref="Result{T}"/> containing <c>true</c> when at least one row matches.</returns>
+    public async Task<Result<bool>> AnyAsync(CancellationToken ct = default)
+    {
+        try
+        {
+            var tableName = GetTableName();
+            var (whereClause, parms) = BuildWhereSql();
+            var sql = $"SELECT 1 FROM \"{tableName}\"{whereClause} LIMIT 1";
+
+            LogQuery(sql);
+            var sw = Stopwatch.StartNew();
+            var any = await _connectionManager.ExecuteAsync<bool>(async conn =>
+            {
+                await using var cmd = BuildCommand(conn, sql, parms);
+                var raw = await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
+                return raw is not null and not DBNull;
+            }, _connectionId, ct).ConfigureAwait(false);
+
+            sw.Stop();
+            LogSlowQuery(sql, sw.ElapsedMilliseconds);
+            return Result<bool>.Success(any);
+        }
+        catch (Exception ex)
+        {
+            _logger?.Error($"[SQLite] QueryBuilder.AnyAsync failed: {ex.Message}", ex);
+            return Result<bool>.Failure(Error.FromException(ex, "sqlite.query_failed"));
+        }
+    }
+
+    /// <summary>
+    /// Returns whether any row matches the current WHERE conditions and
+    /// <paramref name="predicate"/>. Same as <c>.Where(predicate).AnyAsync()</c>; the predicate
+    /// stays on the builder.
+    /// </summary>
+    /// <param name="predicate">An additional condition, combined with AND.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>A <see cref="Result{T}"/> containing <c>true</c> when at least one row matches.</returns>
+    public Task<Result<bool>> AnyAsync(Expression<Func<T, bool>> predicate, CancellationToken ct = default)
+    {
+        Where(predicate);
+        return AnyAsync(ct);
+    }
+
+    /// <summary>
     /// Executes a SUM aggregate over the column identified by <paramref name="selector"/>.
     /// </summary>
     /// <param name="selector">Expression identifying the numeric column to sum.</param>
@@ -478,6 +552,189 @@ public sealed class QueryBuilder<T> where T : class, new()
             _logger?.Error($"[SQLite] QueryBuilder.UpdateAsync failed: {ex.Message}", ex);
             return Result<int>.Failure(Error.FromException(ex, "sqlite.update_failed"));
         }
+    }
+
+    /// <summary>
+    /// Updates all rows matching the current WHERE conditions with a typed setter:
+    /// <c>.UpdateAsync(t =&gt; new T { Status = "done", Counter = t.Counter + 1 })</c>.
+    /// </summary>
+    /// <remarks>
+    /// Only the properties assigned in the setter are written. A value that reads no column
+    /// (a constant or captured variable) binds as one parameter, converted the way the
+    /// repository writes that type. A value that reads the row
+    /// (<c>Counter = Math.Min(cap, t.Counter + step)</c>) is translated to a SQL expression
+    /// whose captured values are parameters too; only primitive numbers are written into the
+    /// SQL text. SQLite evaluates every SET expression against the row as it was before the
+    /// update, so the order of the assignments does not matter. Assigning an unmapped or an
+    /// auto-increment primary key property is rejected.
+    /// </remarks>
+    /// <param name="setExpression">A member-init expression <c>t =&gt; new T { Prop = value, … }</c>.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>A <see cref="Result{T}"/> containing the number of rows updated.</returns>
+    public async Task<Result<int>> UpdateAsync(
+        Expression<Func<T, T>> setExpression,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            ArgumentNullException.ThrowIfNull(setExpression);
+            if (setExpression.Body is not MemberInitExpression mi)
+                throw new ArgumentException(
+                    "UpdateAsync setter must be a member-init expression like x => new T { Prop = value }.",
+                    nameof(setExpression));
+
+            var tableName = GetTableName();
+            var (whereClause, whereParms) = BuildWhereSql();
+            var allParms = new Dictionary<string, object?>(whereParms);
+            var sets = BuildSetClauses(mi, setExpression.Parameters[0], allParms);
+            if (sets.Count == 0)
+                return Result<int>.Success(0);
+
+            var sql = $"UPDATE \"{tableName}\" SET {string.Join(", ", sets)}{whereClause}";
+
+            LogQuery(sql);
+            var sw = Stopwatch.StartNew();
+            var affected = await _connectionManager.ExecuteAsync<int>(async conn =>
+            {
+                await using var cmd = BuildCommand(conn, sql, allParms);
+                return await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+            }, _connectionId, ct).ConfigureAwait(false);
+
+            sw.Stop();
+            LogSlowQuery(sql, sw.ElapsedMilliseconds);
+            return Result<int>.Success(affected);
+        }
+        catch (Exception ex)
+        {
+            _logger?.Error($"[SQLite] QueryBuilder.UpdateAsync (typed) failed: {ex.Message}", ex);
+            return Result<int>.Failure(Error.FromException(ex, "sqlite.update_failed"));
+        }
+    }
+
+    /// <summary>
+    /// Updates the matching rows and returns them as they are after the update, in one
+    /// atomic statement (<c>UPDATE … RETURNING *</c>, SQLite 3.35+).
+    /// <para>
+    /// Example — refill a token bucket and read the new balance in one call:
+    /// <code>
+    /// var r = await sqlite.GetQueryBuilder&lt;Bucket&gt;()
+    ///     .Where(b =&gt; b.Key == key)
+    ///     .UpdateAndGetAsync(b =&gt; new Bucket { Tokens = Math.Min(cap, b.Tokens + refill) });
+    /// </code>
+    /// </para>
+    /// </summary>
+    /// <remarks>
+    /// The setter follows the rules of <see cref="UpdateAsync(Expression{Func{T, T}}, CancellationToken)"/>.
+    /// <c>OrderBy</c>, <c>Take</c> and <c>Skip</c> choose which rows are updated
+    /// (<c>WHERE rowid IN (SELECT rowid … ORDER BY … LIMIT n)</c>), so
+    /// <c>.OrderBy(j =&gt; j.Id).Take(1).UpdateAndGetAsync(…)</c> claims one job from a queue.
+    /// SQLite does not define the order of <c>RETURNING</c> rows, so the returned list is not
+    /// guaranteed to follow the <c>OrderBy</c>. Not available with <c>GroupBy</c>.
+    /// </remarks>
+    /// <param name="setExpression">A member-init expression <c>t =&gt; new T { Prop = value, … }</c>.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>A <see cref="Result{T}"/> containing the updated rows.</returns>
+    public async Task<Result<List<T>>> UpdateAndGetAsync(
+        Expression<Func<T, T>> setExpression,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            ArgumentNullException.ThrowIfNull(setExpression);
+            if (setExpression.Body is not MemberInitExpression mi)
+                throw new ArgumentException(
+                    "UpdateAndGetAsync setter must be a member-init expression like x => new T { Prop = value }.",
+                    nameof(setExpression));
+            if (_groupBys.Count > 0)
+                throw new NotSupportedException("UpdateAndGetAsync supports Where, OrderBy, Take and Skip only.");
+
+            var tableName = GetTableName();
+            var (whereClause, whereParms) = BuildWhereSql();
+            var allParms = new Dictionary<string, object?>(whereParms);
+            var sets = BuildSetClauses(mi, setExpression.Parameters[0], allParms);
+            if (sets.Count == 0)
+                throw new ArgumentException("UpdateAndGetAsync setter assigns no columns.", nameof(setExpression));
+
+            string targetSql;
+            if (_orderBys.Count == 0 && !_limit.HasValue && !_offset.HasValue)
+            {
+                targetSql = whereClause;
+            }
+            else
+            {
+                // UPDATE … ORDER BY / LIMIT only exists in builds compiled with
+                // SQLITE_ENABLE_UPDATE_DELETE_LIMIT, so the rows are picked by rowid instead.
+                var orderBySql = _orderBys.Count > 0 ? $" ORDER BY {string.Join(", ", _orderBys)}" : string.Empty;
+                var limitSql = _limit.HasValue
+                    ? $" LIMIT {_limit.Value}"
+                    : _offset.HasValue ? " LIMIT -1" : string.Empty;
+                var offsetSql = _offset.HasValue ? $" OFFSET {_offset.Value}" : string.Empty;
+                targetSql = $" WHERE rowid IN (SELECT rowid FROM \"{tableName}\"{whereClause}{orderBySql}{limitSql}{offsetSql})";
+            }
+
+            var sql = $"UPDATE \"{tableName}\" SET {string.Join(", ", sets)}{targetSql} RETURNING *";
+
+            LogQuery(sql);
+            var sw = Stopwatch.StartNew();
+            var list = await _connectionManager.ExecuteAsync<List<T>>(async conn =>
+            {
+                await using var cmd = BuildCommand(conn, sql, allParms);
+                await using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+                var items = new List<T>();
+                while (await reader.ReadAsync(ct).ConfigureAwait(false))
+                    items.Add(MapReader(reader));
+                return items;
+            }, _connectionId, ct).ConfigureAwait(false);
+
+            sw.Stop();
+            LogSlowQuery(sql, sw.ElapsedMilliseconds);
+            return Result<List<T>>.Success(list);
+        }
+        catch (Exception ex)
+        {
+            _logger?.Error($"[SQLite] QueryBuilder.UpdateAndGetAsync failed: {ex.Message}", ex);
+            return Result<List<T>>.Failure(Error.FromException(ex, "sqlite.update_failed"));
+        }
+    }
+
+    /// <summary>
+    /// Turns the bindings of a <c>new T { … }</c> setter into <c>"col" = value</c> clauses and
+    /// adds every value they need to <paramref name="parms"/>. A value that depends only on
+    /// captured state binds as one parameter; one that reads the row translates as a column
+    /// expression (<c>Counter = t.Counter + 1</c> → <c>"counter" = ("counter" + 1)</c>) whose
+    /// captured values are parameters too.
+    /// </summary>
+    internal static List<string> BuildSetClauses(
+        MemberInitExpression mi, ParameterExpression rowParam, Dictionary<string, object?> parms)
+    {
+        var sets = new List<string>();
+        var sink = new SQLiteParameterSink("@upd_");
+        foreach (var binding in mi.Bindings)
+        {
+            if (binding is not MemberAssignment ma)
+                throw new ArgumentException("The setter supports plain property assignments only.");
+
+            var attr = ma.Member.GetCustomAttribute<SQLiteColumnAttribute>()
+                       ?? throw new ArgumentException(
+                           $"Property '{ma.Member.Name}' is not a mapped column on '{typeof(T).Name}'.");
+            if (attr.IsAutoIncrement)
+                throw new ArgumentException(
+                    $"Property '{ma.Member.Name}' is an auto-increment key and cannot be updated.");
+            var colName = SQLiteColumnExpressionTranslator.Quote(SQLiteColumnExpressionTranslator.GetColumnName(ma.Member));
+
+            if (SQLiteColumnExpressionTranslator.References(ma.Expression, rowParam))
+            {
+                var (sql, _) = SQLiteColumnExpressionTranslator.Translate(ma.Expression, rowParam, sink);
+                sets.Add($"{colName} = {sql}");
+            }
+            else
+            {
+                var value = SQLiteColumnExpressionTranslator.Evaluate(ma.Expression);
+                sets.Add($"{colName} = {(value is null ? "NULL" : sink.Add(value))}");
+            }
+        }
+        sink.CopyTo(parms);
+        return sets;
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────

@@ -213,6 +213,7 @@ in `CAST(CASE WHEN … THEN 1 ELSE 0 END AS bit)` to be legal in a key or projec
 | `ToPagedListAsync(page, pageSize, ct)` | `Result<PagedResult<T>>` | data page + `COUNT(*)` |
 | `ToCursorPagedListAsync(pageSize, ct)` | `Result<CursorPagedResult<T>>` | keyset page + one lookahead row |
 | `CountAsync(ct)` | `Result<long>` | `SELECT COUNT(*)` (soft-delete filtered unless `IncludeDeleted()`) |
+| `AnyAsync(ct)` / `AnyAsync(predicate, ct)` | `Result<bool>` | `SELECT TOP (1) 1 …` |
 | `MaxAsync<TResult>(selector, ct)` | `Result<TResult>` | `SELECT MAX(col)` |
 | `MinAsync<TResult>(selector, ct)` | `Result<TResult>` | `SELECT MIN(col)` |
 | `SumAsync<TResult>(selector, ct)` | `Result<TResult>` | `SELECT SUM(col)` |
@@ -250,6 +251,76 @@ Result<int> purged = await mssql.Query<Order>()
     .Where(o => o.CreatedUtc < DateTime.UtcNow.AddYears(-3))
     .DeleteAsync();
 ```
+
+A setter value can read the row it updates, including through `Math.Min` / `Math.Max`, so
+clamps and counters stay in SQL:
+
+```csharp
+await mssql.Query<Bucket>()
+    .Where(b => b.Key == key)
+    .UpdateAsync(b => new Bucket { Tokens = Math.Min(cap, b.Tokens + refill) });
+```
+
+Captured values (`cap`, `refill`, strings, dates, enums) are always sent as parameters, also
+inside such column expressions; only primitive numbers are written into the SQL text. SQL
+Server evaluates every `SET` assignment against the row as it was before the update, so a
+value that reads a column assigned in the same setter sees its old value, whatever the order.
+`LEAST` / `GREATEST` need SQL Server 2022, so `Math.Min` / `Math.Max` are written as
+`CASE WHEN a <= b THEN a ELSE b END`; unlike the .NET methods, a NULL first argument yields the
+second.
+
+### Update and return the rows — `UpdateAndGetAsync`
+
+`UpdateAndGetAsync` runs the same setter and returns the updated rows as they are after the
+update, with no other writer in between:
+
+```csharp
+Result<List<Bucket>> r = await mssql.Query<Bucket>()
+    .Where(b => b.Key == key)
+    .UpdateAndGetAsync(b => new Bucket { Tokens = Math.Min(cap, b.Tokens + refill) });
+
+// Claim one job from a queue; concurrent workers skip rows another worker holds.
+Result<List<Job>> claimed = await mssql.Query<Job>()
+    .Where(j => j.Status == "queued")
+    .OrderBy(j => j.Id).Take(1)
+    .ForUpdate(LockWait.SkipLocked)
+    .UpdateAndGetAsync(j => new Job { Status = "running", StartedUtc = now });
+```
+
+It is a single statement, `UPDATE … SET … OUTPUT INSERTED.* WHERE …`, so it is atomic by
+itself and runs on the query's `TransactionScope` when there is one. With `Take` it updates
+through a CTE: `WITH [__target] AS (SELECT TOP (n) * FROM … WITH (UPDLOCK, ROWLOCK) WHERE …
+ORDER BY …) UPDATE [__target] SET … OUTPUT INSERTED.*`. `OUTPUT` carries no order, so the
+returned rows are sorted in memory by the `OrderBy` keys. No primary key is needed; `Where`,
+`OrderBy`, `Take` and a `ForUpdate` wait mode (`NOWAIT` / `READPAST`) are honoured, and the
+lock is always exclusive, even after `ForShare()`.
+
+> SQL Server rejects `OUTPUT` without `INTO` on a table that has an enabled trigger, so
+> `UpdateAndGetAsync` fails on such tables.
+
+### Insert or update from the current row — expression `UpsertAsync`
+
+`Repository.UpsertAsync(entity, onConflict)` inserts the entity, or — when it collides with an
+existing row on the primary key or a UNIQUE column / index — updates that row with a setter
+that receives the existing row (`current`) and the row that failed to insert (`incoming`):
+
+```csharp
+Result<int> r = await mssql.GetRepository<LoginThrottle>().UpsertAsync(
+    new LoginThrottle { Ip = ip, Failures = 1, LastUtc = now },
+    (current, incoming) => new LoginThrottle
+    {
+        Failures = current.Failures + 1,
+        LastUtc  = incoming.LastUtc,
+    });
+```
+
+It runs the same locked batch as `UpsertAsync(entity)` (a table-variable source matched with
+`WITH (UPDLOCK, HOLDLOCK)` under `SERIALIZABLE`, no `MERGE`), with `current.Col` written as the
+target row's column and `incoming.Col` as the source row's. Columns the setter does not assign
+keep their current value; captured values are parameters. `incoming` only carries inserted
+columns, so `incoming.Id` on an IDENTITY (or `rowversion`) column throws `ArgumentException` —
+use `current.Id`. As with bulk updates, every assignment sees the row as it was before the
+update. The result is 1 for an insert and 1 for an update.
 
 > The query builder's bulk `UpdateAsync` / `DeleteAsync` stay raw — they do **not** apply soft-delete auto-filtering, so you can target or restore deleted rows. `QueryBuilder.DeleteAsync` is always a hard delete. Soft-delete behaviour applies only to single-table reads and `Repository.DeleteAsync`; see [Schema & Migrations](schema-migrations.md).
 
@@ -296,6 +367,41 @@ await tx.CommitAsync();      // without this, disposal rolls back
 > the query builder, both of which accept the scope. A raw statement that must be
 > transactional belongs in an `IMigration`, whose `IMigrationContext` exposes the runner's
 > `Connection` and `Transaction` directly.
+
+### Row locking — `ForUpdate` / `ForShare`
+
+Inside a transaction, `ForUpdate()` locks the rows a read returns until the transaction ends,
+so a read-modify-write needs no retry loop. `ForShare()` takes a shared lock: others can still
+read the rows but not change them. SQL Server has no `FOR UPDATE` clause on a `SELECT`; the
+lock is a table hint placed right after the table.
+
+```csharp
+await using TransactionScope tx = await mssql.BeginTransactionAsync();
+
+var account = (await mssql.Query<Account>(tx)
+    .Where(a => a.Id == id)
+    .ForUpdate()
+    .FirstOrDefaultAsync()).Value;
+
+account!.Balance -= 100m;
+await mssql.GetRepository<Account>(tx).UpdateAsync(account);
+await tx.CommitAsync();
+```
+
+| Call | Table hint |
+|------|-----|
+| `ForUpdate()` | `WITH (UPDLOCK, ROWLOCK)` |
+| `ForUpdate(LockWait.NoWait)` | `WITH (UPDLOCK, ROWLOCK, NOWAIT)` — fail at once (error 1222) instead of waiting |
+| `ForUpdate(LockWait.SkipLocked)` | `WITH (UPDLOCK, ROWLOCK, READPAST)` — leave locked rows out (job queues) |
+| `ForShare()` | `WITH (HOLDLOCK, ROWLOCK)` — serializable: key ranges are locked too, so no new matching row can appear |
+| `ForShare(LockWait.NoWait)` | `WITH (HOLDLOCK, ROWLOCK, NOWAIT)` |
+| `ForShare(LockWait.SkipLocked)` | `WITH (REPEATABLEREAD, ROWLOCK, READPAST)` — `READPAST` is not allowed with `HOLDLOCK`, so only the rows read stay locked, not the ranges between them |
+
+A locking read only makes sense inside a transaction, so it fails when the query was not
+created from a `TransactionScope`. It is honoured by `ToListAsync`, `FirstOrDefaultAsync`,
+`AnyAsync` and `Select`; the other terminals (counts, aggregates, paging, `GroupBy`, typed
+joins, bulk `UpdateAsync` / `DeleteAsync`) refuse it. `UpdateAndGetAsync` is a single
+statement, so it takes the wait mode with or without a transaction.
 
 > Statements inside an explicit transaction scope are **never** transient-retried — the whole transaction is the caller's to retry. The result cache and smart-cache pools are also disabled inside a transaction. See [Performance & Caching](performance.md).
 

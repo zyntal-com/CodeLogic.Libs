@@ -13,9 +13,9 @@
 
 It is a deliberately smaller and older design than `CL.MySQL2` / `CL.MSSQL` / `CL.PostgreSQL`: the entry points are `GetRepository<T>()` and `GetQueryBuilder<T>()` (not `Query<T>()`), the attributes are `[SQLiteTable]` / `[SQLiteColumn]` (not `[Table]` / `[Column]`), and there is **no** result cache, `SqlFn` helper, typed join, cursor paging, transaction scope, migration *runner*, or soft-delete support here. See [Not included](#not-included).
 
-This overview covers loading, schema sync, the repository, configuration, the migration ledger, the health check, and events. The deep query material lives on its own sub-page:
+This overview covers loading, schema sync, database and table administration, the repository, configuration, the migration ledger, the health check, and events. The deep query material lives on its own sub-page:
 
-- **[Query Builder](queries.md)** — `Where` / ordering with `ThenBy` / projections / `GroupBy` aggregates / paging / terminals / bulk update & delete / raw SQL.
+- **[Query Builder](queries.md)** — `Where` / ordering with `ThenBy` / projections / `GroupBy` aggregates / paging / terminals / bulk update & delete / `UpdateAndGetAsync` / expression upsert / raw SQL.
 
 ## Install & load
 
@@ -145,6 +145,30 @@ A database configured with `skipTableSync: true` short-circuits all three entry 
 
 > Schema sync is **additive** — it creates tables, adds columns, and builds indexes. It never drops or retypes existing columns. For changes that aren't additive, use a migration (below) and run your own DDL.
 
+## Database and table administration
+
+`db.Admin` (also available as methods directly on the library) creates, deletes and checks database files and entity tables. It is meant for first-run setup, demos, per-test databases and resets; day-to-day schema changes stay with schema sync and the migration ledger.
+
+```csharp
+await db.CreateDatabaseAsync("archive.db");                 // relative → library data directory
+bool exists = (await db.DatabaseExistsAsync("archive.db")).Value;
+await db.DropDatabaseAsync("archive.db");                   // also deletes -wal / -shm / -journal
+
+await db.CreateTableAsync<NoteRecord>();      // create only; never alters an existing table
+bool has = (await db.TableExistsAsync<NoteRecord>()).Value;
+bool raw = (await db.TableExistsAsync("notes")).Value;
+await db.TruncateTableAsync<NoteRecord>();    // DELETE + AUTOINCREMENT counter reset
+await db.DropTableAsync<NoteRecord>();
+```
+
+- All methods return `Result<bool>`. `Create*` returns `false` when the file or table already existed (with `ifNotExists: true`, the default) and `Drop*` returns `false` when there was nothing to drop (with `ifExists: true`). With the flag off, those cases are failures.
+- A SQLite database is a file, so the database methods take a **path**, not a name, and no `connectionId`. A relative path resolves against the library's data directory, exactly as a configured `databasePath` does. A `:memory:` path throws `ArgumentException`.
+- `CreateDatabaseAsync` creates the parent directory and an empty, valid database file. SQLite also creates a configured database file the first time a connection opens it, so this is only needed for files the library is not (yet) configured for — which is also why there is no `createDatabaseIfMissing` setting.
+- `DropDatabaseAsync` deletes the file together with its `-wal`, `-shm` and `-journal` siblings, after closing idle pooled connections to it (the library's own and Microsoft.Data.Sqlite's). Dropping a configured database is allowed: its connection ID stays registered and the next query recreates an empty file. A connection that is in use while the drop runs keeps the file open; on Windows the delete then fails and the call returns a failure.
+- `CreateTableAsync<T>` runs the same `CREATE TABLE` and index DDL as a first `SyncTableAsync<T>`, even on a connection configured with `skipTableSync`, and records `create_table_<name>` in the migration ledger.
+- SQLite has no `TRUNCATE`: `TruncateTableAsync<T>` runs `DELETE FROM "t"` (which SQLite optimizes to a truncation when no trigger or foreign key needs the rows one by one) and removes the table's row from `sqlite_sequence`, in one transaction, so the `AUTOINCREMENT` counter restarts.
+- With foreign keys enabled, SQLite fails `DropTableAsync<T>` when rows in another table still reference the table.
+
 ## Repository CRUD
 
 `GetRepository<T>()` returns a `Repository<T>` covering the common CRUD, paging, count, and raw-SQL operations. All return `Result`.
@@ -173,7 +197,7 @@ Result deleted = await repo.DeleteAsync(1L);
 
 `PagedResult<T>` carries `Items`, `PageNumber`, `PageSize`, `TotalItems`, and `TotalPages`.
 
-> `UpsertAsync` is implemented with `INSERT OR REPLACE`, which SQLite performs as a **delete followed by an insert** of the conflicting row. If other tables reference the row with `ON DELETE CASCADE`, replacing it will delete those child rows. When that matters, do an explicit `GetByIdAsync` + `UpdateAsync` instead.
+> `UpsertAsync` is implemented with `INSERT OR REPLACE`, which SQLite performs as a **delete followed by an insert** of the conflicting row. If other tables reference the row with `ON DELETE CASCADE`, replacing it will delete those child rows. When that matters, use the expression overload `UpsertAsync(entity, (current, incoming) => new T { … })`, which updates the existing row in place with `ON CONFLICT … DO UPDATE` — see [Query Builder](queries.md#insert-or-update-from-the-current-row--expression-upsertasync).
 
 ### Composite keys
 
@@ -202,6 +226,7 @@ Schema sync declares a multi-column key as a single table-level constraint — `
 |--------|---------|-------|
 | `InsertAsync(entity)` | `Result<long>` | New rowid; auto-increment PK written back to the entity. |
 | `UpsertAsync(entity)` | `Result` | `INSERT OR REPLACE`. |
+| `UpsertAsync(entity, onConflict, conflictTarget?)` | `Result<int>` | `INSERT … ON CONFLICT (target) DO UPDATE`; setter reads `current` / `incoming`. |
 | `GetByIdAsync(id)` | `Result<T?>` | Single-column primary key. |
 | `GetByKeysAsync(ct, params keys)` | `Result<T?>` | Composite primary key. |
 | `GetAllAsync(limit = 1000)` | `Result<List<T>>` | Capped row scan. |

@@ -96,6 +96,37 @@ public sealed class ConnectionManager
         await MySqlConnection.ClearPoolAsync(connection).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Runs <paramref name="action"/> on a server-level connection: the connection ID's
+    /// host and credentials with no default database selected, so the database itself can
+    /// be created or dropped. The connection is unpooled and closed afterwards.
+    /// </summary>
+    public async Task<TResult> ExecuteOnServerAsync<TResult>(
+        Func<MySqlConnection, Task<TResult>> action,
+        string connectionId = "Default",
+        CancellationToken ct = default)
+    {
+        var builder = new MySqlConnectionStringBuilder(RequireConfig(connectionId).BuildConnectionString())
+        {
+            Database = string.Empty,
+            Pooling = false
+        };
+        await using var connection = new MySqlConnection(builder.ConnectionString);
+        await connection.OpenAsync(ct).ConfigureAwait(false);
+        return await action(connection).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Clears the idle pooled connections of every registered configuration that points at
+    /// <paramref name="database"/>, so a following DROP DATABASE does not leave them stale.
+    /// </summary>
+    internal async Task ClearPoolsForDatabaseAsync(string database)
+    {
+        foreach (var config in _configs.Values)
+            if (string.Equals(config.Database, database, StringComparison.OrdinalIgnoreCase))
+                await ClearPoolAsync(config).ConfigureAwait(false);
+    }
+
     /// <summary>Returns the configuration for the given connection ID, or null if not found.</summary>
     public MySqlDatabaseConfig? GetConfiguration(string connectionId = "Default")
         => _configs.TryGetValue(connectionId, out var cfg) ? cfg : null;

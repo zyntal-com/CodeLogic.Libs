@@ -60,6 +60,20 @@ public enum JoinType
 }
 
 /// <summary>
+/// What a locking read (<c>ForUpdate</c> / <c>ForShare</c>) does when a row it wants is
+/// already locked by another transaction.
+/// </summary>
+public enum LockWait
+{
+    /// <summary>Block until the other transaction releases the row (or the lock timeout expires).</summary>
+    Wait,
+    /// <summary>Fail immediately with a lock error (<c>NOWAIT</c>, error 1222) instead of waiting.</summary>
+    NoWait,
+    /// <summary>Leave locked rows out of the result (<c>READPAST</c>). The usual choice for job queues.</summary>
+    SkipLocked
+}
+
+/// <summary>
 /// The result of a table synchronization operation.
 /// </summary>
 public sealed class SyncResult

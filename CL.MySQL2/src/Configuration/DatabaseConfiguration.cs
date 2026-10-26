@@ -125,11 +125,22 @@ public sealed class MySqlDatabaseConfig
     public string CharacterSet { get; set; } = "utf8mb4";
 
     /// <summary>
-    /// Default collation. Default: "utf8mb4_unicode_ci". Informational only — it is not written
-    /// into the connection string; table collation comes from <c>[Table(Collation = ...)]</c>.
+    /// Default collation. Default: "utf8mb4_unicode_ci". Not written into the connection string;
+    /// table collation comes from <c>[Table(Collation = ...)]</c>. Used, with
+    /// <see cref="CharacterSet"/>, as the default when the library creates the database.
     /// </summary>
     [ConfigField(Label = "Collation", RequiresRestart = true, Group = "Advanced", Order = 51, Collapsed = true)]
     public string Collation { get; set; } = "utf8mb4_unicode_ci";
+
+    /// <summary>
+    /// When true, the library creates <see cref="Database"/> (with <see cref="CharacterSet"/> and
+    /// <see cref="Collation"/>) during initialization if the server does not have it yet. Needs
+    /// a user allowed to run CREATE DATABASE. Default: false.
+    /// </summary>
+    [ConfigField(Label = "Create Database If Missing",
+        Description = "Create the database at startup when it does not exist. Requires CREATE privilege.",
+        RequiresRestart = true, Group = "Advanced", Order = 52, Collapsed = true)]
+    public bool CreateDatabaseIfMissing { get; set; } = false;
 
     /// <summary>
     /// Primary schema sync knob. See <see cref="Models.SyncMode"/>.

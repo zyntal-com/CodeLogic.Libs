@@ -1,5 +1,39 @@
 # Changelog
 
+## 2026-10-26
+
+### Security
+
+- **Captured values in column expressions are now parameters.** A typed `UpdateAsync` setter
+  that reads the row (`t => new T { A = t.A + x }`), grouped `Select` projections and `GroupBy`
+  keys used to write captured values into the SQL text, doubling only `'`. Every captured value
+  except `NULL` and primitive numbers is now bound as a parameter. This also keeps the fractional
+  seconds of `DateTime` values (previously cut to whole seconds), binds enums by value (previously
+  written as their member name) and keeps non-Latin characters in strings (the old literal had no
+  `N` prefix, so it was a `varchar` in the database's code page).
+
+### Added
+
+- **`Math.Min` / `Math.Max`** in setter, projection and grouping expressions, written as `CASE`
+  (`LEAST` / `GREATEST` need SQL Server 2022).
+- **Row locking**: `QueryBuilder.ForUpdate(LockWait)` / `ForShare(LockWait)` with
+  `LockWait.Wait | NoWait | SkipLocked`, for queries created from a `TransactionScope`. Rendered as
+  table hints (`UPDLOCK` / `HOLDLOCK`, `ROWLOCK`, `NOWAIT`, `READPAST`).
+- **`QueryBuilder.UpdateAndGetAsync(setter)`** updates matching rows and returns them as they are
+  afterwards, in one `UPDATE … OUTPUT INSERTED.*` statement (honours `Where`, `OrderBy`, `Take` and
+  the `ForUpdate` wait mode; no primary key needed).
+- **`QueryBuilder.AnyAsync()` / `AnyAsync(predicate)`** — `SELECT TOP (1) 1 …`.
+- **`Repository.UpsertAsync(entity, (current, incoming) => new T { … })`** — insert, or update the
+  existing row from its current values, through the same serializable upsert batch as
+  `UpsertAsync(entity)`.
+- **Database and table administration** on `MSSQLLibrary.Admin` (`DatabaseAdmin`) and as library
+  methods: `CreateDatabaseAsync`, `DropDatabaseAsync`, `DatabaseExistsAsync`, `CreateTableAsync<T>`,
+  `DropTableAsync<T>`, `TruncateTableAsync<T>`, `TableExistsAsync<T>` / `TableExistsAsync(name)`.
+- `SqlServerDatabaseConfig.CreateDatabaseIfMissing` (default `false`) creates the database during
+  initialization.
+- `ConnectionManager.ExecuteOnServerAsync` runs work on a server-level connection (`master`,
+  unpooled).
+
 ## 2026-10-24
 
 ### Added

@@ -46,6 +46,7 @@ public sealed class MSSQLLibrary : ILibrary, IConfigReloadable
     private DatabaseConfiguration? _config;
     private ConnectionManager? _connectionManager;
     private TableSyncService? _tableSyncService;
+    private DatabaseAdmin? _admin;
     private MigrationRunner? _migrationRunner;
     private MSSQLStrings? _strings;
     private bool _isEnabled;
@@ -121,6 +122,23 @@ public sealed class MSSQLLibrary : ILibrary, IConfigReloadable
             context.Logger,
             context.Events,
             ResolveDatabaseConfig);
+        _admin = new DatabaseAdmin(_connectionManager, _tableSyncService, context.Logger);
+
+        // Opt-in first-run setup: create the database before anything connects to it.
+        foreach (var kvp in enabledDbs.Where(k => k.Value.CreateDatabaseIfMissing))
+        {
+            var database = kvp.Value.EffectiveDatabase;
+            if (string.IsNullOrWhiteSpace(database))
+            {
+                context.Logger.Warning($"[MSSQL] [{kvp.Key}] CreateDatabaseIfMissing is set but the connection names no database.");
+                continue;
+            }
+            var created = await _admin.CreateDatabaseAsync(database, connectionId: kvp.Key).ConfigureAwait(false);
+            if (created.IsFailure)
+                context.Logger.Warning($"[MSSQL] [{kvp.Key}] Could not create database [{database}]: {created.Error?.Message}");
+            else if (created.Value)
+                context.Logger.Info($"[MSSQL] [{kvp.Key}] Created missing database [{database}]");
+        }
 
         foreach (var kvp in enabledDbs)
         {
@@ -239,6 +257,7 @@ public sealed class MSSQLLibrary : ILibrary, IConfigReloadable
 
         _migrationRunner = null;
         _tableSyncService = null;
+        _admin = null;
         _connectionManager = null;
         _config = null;
 
@@ -379,6 +398,14 @@ public sealed class MSSQLLibrary : ILibrary, IConfigReloadable
     /// <summary>Returns the <see cref="SchemaStateStore"/> (the <c>__schema_state</c> sentinel).</summary>
     public SchemaStateStore SchemaState =>
         _tableSyncService?.GetSchemaStateStore() ?? throw new InvalidOperationException(
+            $"{Manifest.Name} has not been initialized or is disabled.");
+
+    /// <summary>
+    /// Returns the <see cref="DatabaseAdmin"/>: create / drop / check databases and create /
+    /// drop / truncate / check entity tables.
+    /// </summary>
+    public DatabaseAdmin Admin =>
+        _admin ?? throw new InvalidOperationException(
             $"{Manifest.Name} has not been initialized or is disabled.");
 
     /// <summary>Returns the <see cref="MigrationRunner"/> for explicit/imperative migrations.</summary>
@@ -615,6 +642,50 @@ public sealed class MSSQLLibrary : ILibrary, IConfigReloadable
         foreach (var t in types) RegisterEntity(t, connectionId);
         return TableSync.SyncTablesAsync(types, createBackup, connectionId, ct);
     }
+
+    /// <summary>Creates a database on the connection's server. See <see cref="DatabaseAdmin.CreateDatabaseAsync"/>.</summary>
+    public Task<Result<bool>> CreateDatabaseAsync(
+        string name, string? collation = null, bool ifNotExists = true,
+        string connectionId = "Default", CancellationToken ct = default) =>
+        Admin.CreateDatabaseAsync(name, collation, ifNotExists, connectionId, ct);
+
+    /// <summary>Drops a database on the connection's server. See <see cref="DatabaseAdmin.DropDatabaseAsync"/>.</summary>
+    public Task<Result<bool>> DropDatabaseAsync(
+        string name, bool ifExists = true, string connectionId = "Default", CancellationToken ct = default) =>
+        Admin.DropDatabaseAsync(name, ifExists, connectionId, ct);
+
+    /// <summary>Returns whether a database exists on the connection's server.</summary>
+    public Task<Result<bool>> DatabaseExistsAsync(
+        string name, string connectionId = "Default", CancellationToken ct = default) =>
+        Admin.DatabaseExistsAsync(name, connectionId, ct);
+
+    /// <summary>Creates the table for <typeparamref name="T"/> without altering an existing one. See <see cref="DatabaseAdmin.CreateTableAsync{T}"/>.</summary>
+    public Task<Result<bool>> CreateTableAsync<T>(
+        bool ifNotExists = true, string connectionId = "Default", CancellationToken ct = default) where T : class
+    {
+        RegisterEntity(typeof(T), connectionId);
+        return Admin.CreateTableAsync<T>(ifNotExists, connectionId, ct);
+    }
+
+    /// <summary>Drops the table for <typeparamref name="T"/>. See <see cref="DatabaseAdmin.DropTableAsync{T}"/>.</summary>
+    public Task<Result<bool>> DropTableAsync<T>(
+        bool ifExists = true, string connectionId = "Default", CancellationToken ct = default) where T : class =>
+        Admin.DropTableAsync<T>(ifExists, connectionId, ct);
+
+    /// <summary>Removes every row from the table for <typeparamref name="T"/>. See <see cref="DatabaseAdmin.TruncateTableAsync{T}"/>.</summary>
+    public Task<Result<bool>> TruncateTableAsync<T>(
+        string connectionId = "Default", CancellationToken ct = default) where T : class =>
+        Admin.TruncateTableAsync<T>(connectionId, ct);
+
+    /// <summary>Returns whether the table for <typeparamref name="T"/> exists.</summary>
+    public Task<Result<bool>> TableExistsAsync<T>(
+        string connectionId = "Default", CancellationToken ct = default) where T : class =>
+        Admin.TableExistsAsync<T>(connectionId, ct);
+
+    /// <summary>Returns whether table <paramref name="tableName"/> (<c>schema.table</c>, or a bare <c>dbo</c> name) exists.</summary>
+    public Task<Result<bool>> TableExistsAsync(
+        string tableName, string connectionId = "Default", CancellationToken ct = default) =>
+        Admin.TableExistsAsync(tableName, connectionId, ct);
 
     /// <summary>
     /// Records an entity type as registered with the library and, when it carries
@@ -915,6 +986,7 @@ public sealed class MSSQLLibrary : ILibrary, IConfigReloadable
     public void Dispose()
     {
         _tableSyncService = null;
+        _admin = null;
         _connectionManager = null;
     }
 }

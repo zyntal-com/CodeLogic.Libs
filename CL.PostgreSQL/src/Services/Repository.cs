@@ -291,7 +291,7 @@ public sealed class Repository<T> where T : class, new()
     /// so for a conflict-free batch this equals <c>entities.Count</c>.
     /// </summary>
     /// <param name="entities">Rows to insert or merge.</param>
-    /// <param name="conflictTarget">Unique key to match on; see <see cref="UpsertAsync"/>.</param>
+    /// <param name="conflictTarget">Unique key to match on; see <see cref="UpsertAsync(T, IReadOnlyList{string}?, CancellationToken)"/>.</param>
     /// <param name="ct">Cancellation token.</param>
     public async Task<Result<int>> UpsertManyAsync(
         IEnumerable<T> entities,
@@ -377,7 +377,7 @@ public sealed class Repository<T> where T : class, new()
     /// <c>col = col + new.col</c> on conflict.</param>
     /// <param name="setProperties">C# property names whose columns should
     /// <c>col = EXCLUDED.col</c> on conflict. Defaults to empty.</param>
-    /// <param name="conflictTarget">Unique key to arbitrate on; see <see cref="UpsertAsync"/>.</param>
+    /// <param name="conflictTarget">Unique key to arbitrate on; see <see cref="UpsertAsync(T, IReadOnlyList{string}?, CancellationToken)"/>.</param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>Rows affected. PostgreSQL counts an <c>ON CONFLICT … DO UPDATE</c> row once,
     /// so this is 1 whether the row was inserted or updated.</returns>
@@ -457,6 +457,157 @@ public sealed class Repository<T> where T : class, new()
         {
             _logger?.Error($"[PostgreSQL] UpsertWithIncrementsAsync failed: {ex.Message}", ex);
             return Result<int>.Failure(Error.FromException(ex, "postgresql.upsert_increment_failed"));
+        }
+    }
+
+    /// <summary>
+    /// Inserts <paramref name="entity"/>, or — when it collides with an existing row on the
+    /// conflict target — updates that row with <paramref name="onConflict"/>, in one
+    /// statement. The setter receives the existing row and the row that failed to insert, so
+    /// the update can build on current values:
+    /// <code>
+    /// await repo.UpsertAsync(
+    ///     new LoginThrottle { Ip = ip, Failures = 1, LastUtc = now },
+    ///     (current, incoming) =&gt; new LoginThrottle
+    ///     {
+    ///         Failures = current.Failures + 1,
+    ///         LastUtc  = incoming.LastUtc,
+    ///     });
+    /// </code>
+    /// Columns the setter does not assign keep their current value on conflict. Captured
+    /// values are sent as parameters. Emits
+    /// <c>INSERT … ON CONFLICT (target) DO UPDATE SET col = expr</c>, with <c>current.Col</c>
+    /// written as the table-qualified column and <c>incoming.Col</c> as <c>EXCLUDED.col</c>.
+    /// <para>PostgreSQL evaluates every assignment against the row as it was before the
+    /// update: <c>current.X</c> is the old value even when <c>X</c> is assigned earlier in the
+    /// same setter, so the order of the assignments does not matter.</para>
+    /// </summary>
+    /// <param name="entity">Row to insert when there is no conflict.</param>
+    /// <param name="onConflict">Member-init setter <c>(current, incoming) =&gt; new T { … }</c>
+    /// applied to the existing row on conflict.</param>
+    /// <param name="conflictTarget">Unique key to arbitrate on; see
+    /// <see cref="UpsertAsync(T, IReadOnlyList{string}?, CancellationToken)"/>.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>Rows affected. PostgreSQL counts an <c>ON CONFLICT … DO UPDATE</c> row once,
+    /// so this is 1 whether the row was inserted or updated.</returns>
+    public async Task<Result<int>> UpsertAsync(
+        T entity,
+        Expression<Func<T, T, T>> onConflict,
+        IReadOnlyList<string>? conflictTarget = null,
+        CancellationToken ct = default)
+    {
+        if (entity is null) throw new ArgumentNullException(nameof(entity));
+        if (onConflict is null) throw new ArgumentNullException(nameof(onConflict));
+
+        var (sql, insertCols, sink) = BuildExpressionUpsertSql(onConflict, conflictTarget, _connectionId);
+
+        try
+        {
+            LogQuery(sql);
+            var sw = Stopwatch.StartNew();
+
+            var affected = await ExecuteAsync(async conn =>
+            {
+                await using var cmd = conn.CreateCommand(_connectionId);
+                if (_transactionScope is not null) cmd.Transaction = _transactionScope.Transaction;
+                cmd.CommandText = sql;
+                foreach (var col in insertCols)
+                    cmd.Parameters.Add(TypeConverter.CreateParameter($"@{col.ColumnName}", TypeConverter.ToDbValue(col.Get(entity), col.EffectiveStorageType), col.Attribute, col.Property.PropertyType));
+                foreach (var kv in sink.Parameters)
+                    cmd.Parameters.AddWithValue(kv.Key, kv.Value ?? DBNull.Value);
+                return await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+            }, ct).ConfigureAwait(false);
+
+            sw.Stop();
+            LogSlowQuery(sql, sw.ElapsedMilliseconds);
+            QueryCache.Invalidate(EntityMetadata<T>.TableName);
+            return Result<int>.Success(affected);
+        }
+        catch (Exception ex)
+        {
+            _logger?.Error($"[PostgreSQL] UpsertAsync (expression) failed: {ex.Message}", ex);
+            return Result<int>.Failure(Error.FromException(ex, "postgresql.upsert_failed"));
+        }
+    }
+
+    /// <summary>
+    /// Builds the statement for <see cref="UpsertAsync(T, Expression{Func{T, T, T}}, IReadOnlyList{string}?, CancellationToken)"/>:
+    /// the SQL, the columns bound as <c>@column</c> insert parameters, and the sink holding
+    /// the setter's captured values. Throws <see cref="ArgumentException"/> for an unusable
+    /// setter and <see cref="InvalidOperationException"/> when no conflict target resolves.
+    /// </summary>
+    internal static (string Sql, ColumnMetadata[] InsertColumns, SqlParameterSink Sink) BuildExpressionUpsertSql(
+        Expression<Func<T, T, T>> onConflict,
+        IReadOnlyList<string>? conflictTarget,
+        string connectionId)
+    {
+        if (onConflict.Body is not MemberInitExpression mi || mi.Bindings.Count == 0)
+            throw new ArgumentException(
+                "onConflict must be a member-init expression like (current, incoming) => new T { Prop = value }.",
+                nameof(onConflict));
+
+        var qualified = EntityMetadata<T>.QualifiedTableNameFor(connectionId);
+        var insertCols = EntityMetadata<T>.Columns.Where(c => !c.IsAutoIncrement).ToArray();
+
+        // The insert binds @<column>; keep the setter's parameters in a namespace no column
+        // name can reach, so a column called e.g. "ups_0" cannot collide with them.
+        var prefix = "@ups_";
+        while (insertCols.Any(c => ("@" + c.ColumnName).StartsWith(prefix, StringComparison.OrdinalIgnoreCase)))
+            prefix += "_";
+
+        var current = onConflict.Parameters[0];
+        var incoming = onConflict.Parameters[1];
+        // Same spelling UpsertWithIncrementsAsync uses for the existing row: the
+        // schema-qualified table column. EXCLUDED is the row proposed for insertion.
+        var renderers = new Dictionary<ParameterExpression, Func<string, string>>
+        {
+            [current] = c => $"{qualified}.{PostgreSqlDialect.Quote(c)}",
+            [incoming] = c => $"EXCLUDED.{PostgreSqlDialect.Quote(c)}",
+        };
+
+        var sink = new SqlParameterSink(prefix);
+        var updateClauses = new List<string>();
+        foreach (var binding in mi.Bindings)
+        {
+            if (binding is not MemberAssignment ma)
+                throw new ArgumentException("onConflict supports plain property assignments only.", nameof(onConflict));
+            var col = ResolveUpsertColumns([ma.Member.Name], nameof(onConflict))[0];
+            var target = PostgreSqlDialect.Quote(col.ColumnName);
+
+            if (ReferencesAny(ma.Expression, current, incoming))
+            {
+                var (exprSql, _) = SqlExpressionTranslator.Translate(ma.Expression, renderers, sink, col.EffectiveStorageType);
+                updateClauses.Add($"{target} = {exprSql}");
+            }
+            else
+            {
+                var value = ClosureEvaluator.Evaluate(ma.Expression);
+                updateClauses.Add($"{target} = {(value is null ? "NULL" : sink.Add(value, col.EffectiveStorageType))}");
+            }
+        }
+
+        var targetCols = ResolveConflictTarget(conflictTarget);
+        var targetList = string.Join(", ", targetCols.Select(c => PostgreSqlDialect.Quote(c.ColumnName)));
+        var columnList = string.Join(", ", insertCols.Select(c => PostgreSqlDialect.Quote(c.ColumnName)));
+        var paramList  = string.Join(", ", insertCols.Select(c => $"@{c.ColumnName}"));
+        var sql = $"INSERT INTO {qualified} ({columnList}) VALUES ({paramList}) ON CONFLICT ({targetList}) DO UPDATE SET {string.Join(", ", updateClauses)};";
+        return (sql, insertCols, sink);
+    }
+
+    private static bool ReferencesAny(Expression expr, params ParameterExpression[] parameters)
+    {
+        var walker = new ParameterFinder(parameters);
+        walker.Visit(expr);
+        return walker.Found;
+    }
+
+    private sealed class ParameterFinder(ParameterExpression[] parameters) : ExpressionVisitor
+    {
+        public bool Found { get; private set; }
+        protected override Expression VisitParameter(ParameterExpression node)
+        {
+            if (Array.IndexOf(parameters, node) >= 0) Found = true;
+            return base.VisitParameter(node);
         }
     }
 

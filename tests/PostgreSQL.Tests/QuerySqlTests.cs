@@ -110,7 +110,7 @@ public sealed class SqlFunctionTranslationTests
     private static string Sql(Expression<Func<PlainRow, object>> selector)
     {
         var body = selector.Body is UnaryExpression u ? u.Operand : selector.Body;
-        return SqlExpressionTranslator.Translate(body, selector.Parameters[0], null, null).Sql;
+        return SqlExpressionTranslator.Translate(body, selector.Parameters[0], null, null, new SqlParameterSink()).Sql;
     }
 
     [Fact]

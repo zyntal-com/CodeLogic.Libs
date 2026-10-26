@@ -68,6 +68,10 @@ Config changes apply live (CodeLogic 4.9+): updating `config.mssql.json` through
 
 Highlights include `OUTPUT INSERTED` identity handling, dynamically parameter-capped batches, non-`MERGE` serializable upserts, `TOP`/`OFFSET … FETCH`, SQL Server-native type inference and JSON checks, `sys.*` catalog schema management, `sp_getapplock`, catalog DDL snapshots, transient Azure retry, rolling-window N+1 detection, and cached estimated ShowPlan XML capture.
 
+Bulk `UpdateAsync` setters may read the row (`Tokens = Math.Min(cap, t.Tokens + refill)`); captured values are always sent as parameters. `UpdateAndGetAsync` runs the same update and returns the rows as they are afterwards (`UPDATE … OUTPUT INSERTED.*`), and `AnyAsync` checks for a match with `SELECT TOP (1) 1`. Inside a transaction, `ForUpdate()` / `ForShare()` lock the rows a read returns through `UPDLOCK` / `HOLDLOCK` table hints (`LockWait.NoWait` / `LockWait.SkipLocked` for job queues), and `Repository.UpsertAsync(entity, (current, incoming) => new T { … })` inserts or updates from the current row.
+
+`mssql.Admin` creates, drops and checks databases and tables (`CreateDatabaseAsync`, `DropDatabaseAsync`, `DatabaseExistsAsync`, `CreateTableAsync<T>`, `DropTableAsync<T>`, `TruncateTableAsync<T>`, `TableExistsAsync<T>`), and `createDatabaseIfMissing` in config creates the database at startup.
+
 See the [full documentation](../docs/libs/mssql/index.md) and [capability parity matrix](../docs/libs/mssql/parity.md).
 
 ## Requirements

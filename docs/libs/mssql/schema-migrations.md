@@ -151,3 +151,53 @@ Migration IDs, descriptions, checksums, and application times are stored in `[db
 Schema snapshots are generated from SQL Server catalogs for library-managed columns, identity/default/check constraints, keys, indexes/includes, foreign keys, collations, and comments. Restore validates the presence of a matching `CREATE TABLE`, drops the target, and recreates objects in dependency order. It is schema-only and destructive to table data.
 
 Triggers, temporal history, partitioning, replication, and other externally managed advanced objects are outside snapshot fidelity.
+
+## Database and table administration
+
+`mssql.Admin` (also available as methods directly on the library) creates, drops and checks
+databases and entity tables. It is meant for first-run setup, demos, per-test databases and
+resets; day-to-day schema changes stay with sync and migrations.
+
+```csharp
+await mssql.CreateDatabaseAsync("shop_test");                 // server default collation
+await mssql.CreateDatabaseAsync("shop_ci", collation: "Latin1_General_100_CI_AS_SC_UTF8");
+bool exists = (await mssql.DatabaseExistsAsync("shop_test")).Value;
+await mssql.DropDatabaseAsync("shop_test");
+
+await mssql.CreateTableAsync<Order>();      // create only; never alters an existing table
+bool has = (await mssql.TableExistsAsync<Order>()).Value;
+bool raw = (await mssql.TableExistsAsync("app.orders")).Value;  // schema.table; a bare name means dbo
+await mssql.TruncateTableAsync<Order>();    // TRUNCATE TABLE — also reseeds the IDENTITY column
+await mssql.DropTableAsync<Order>();        // also forgets its __schema_state row
+```
+
+- All methods return `Result<bool>`. `Create*` returns `false` when the object already existed
+  (with `ifNotExists: true`, the default) and `Drop*` returns `false` when there was nothing to
+  drop (with `ifExists: true`). With the flag off, those cases are failures.
+- Database operations run on an unpooled server-level connection (same server and login, with
+  `master` as the current database), so the login needs `CREATE DATABASE` / `DROP` permission.
+  SQL Server has no per-database character set, so `CreateDatabaseAsync` takes only a collation
+  (use a `_UTF8` collation or `nvarchar` columns for Unicode text). The collation name must be a
+  plain identifier (`[A-Za-z0-9_]`) and the database name at most 128 characters; anything else
+  throws `ArgumentException` before reaching the server.
+- `DropDatabaseAsync` may drop any database, including the one the connection is configured
+  for. Idle pooled connections to it are cleared first, and other sessions still using it are
+  disconnected (`ALTER DATABASE … SET SINGLE_USER WITH ROLLBACK IMMEDIATE`), which rolls back
+  their open transactions.
+- Table operations use the entity's `[Table(Schema = …)]` schema (default `dbo`), which must
+  already exist. `CreateTableAsync<T>` records the table in `__schema_state` under
+  `schema.table`, so the next sync skips it, and registers the entity like `SyncTableAsync<T>`
+  does. SQL Server refuses to truncate or drop a table that another table's foreign key
+  references.
+
+### Creating the database on startup
+
+Set `createDatabaseIfMissing` on a database in `config.mssql.json` and the library creates it
+during initialization, before it first connects. The name is the `Initial Catalog` of the
+built connection string, so a raw `connectionString` works too, and the database gets the
+server's default collation. It is off by default; a failure to create it is logged as a
+warning.
+
+```json
+"Default": { "host": "localhost", "database": "shop", "createDatabaseIfMissing": true }
+```

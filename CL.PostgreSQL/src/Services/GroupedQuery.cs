@@ -70,7 +70,10 @@ public sealed class GroupedQuery<TKey, TSource> where TSource : class, new()
 
         // Build the GROUP BY expression from the key selector. For composite anonymous
         // keys each member becomes its own GROUP BY term.
-        var (groupBySql, _) = BuildGroupBy();
+        // Captured values in the key and projection bind through one sink, so a value
+        // used in both renders as the same parameter and GROUP BY still matches.
+        var sink = new SqlParameterSink();
+        var (groupBySql, _) = BuildGroupBy(sink);
 
         var projectionBody = projection.Body;
         var groupingParam = projection.Parameters[0];
@@ -87,7 +90,7 @@ public sealed class GroupedQuery<TKey, TSource> where TSource : class, new()
                 for (var i = 0; i < ne.Arguments.Count; i++)
                 {
                     var (sql, clrType) = SqlExpressionTranslator.Translate(
-                        ne.Arguments[i], rowParam, groupingParam, keyExpr);
+                        ne.Arguments[i], rowParam, groupingParam, keyExpr, sink);
                     var alias = ne.Members is { } m && i < m.Count ? m[i].Name : $"col{i}";
                     columns.Add((sql, alias, clrType));
                 }
@@ -99,7 +102,7 @@ public sealed class GroupedQuery<TKey, TSource> where TSource : class, new()
                 for (var i = 0; i < innerNew.Arguments.Count; i++)
                 {
                     var (sql, clrType) = SqlExpressionTranslator.Translate(
-                        innerNew.Arguments[i], rowParam, groupingParam, keyExpr);
+                        innerNew.Arguments[i], rowParam, groupingParam, keyExpr, sink);
                     var alias = innerNew.Members is { } m && i < m.Count ? m[i].Name : $"col{i}";
                     columns.Add((sql, alias, clrType));
                 }
@@ -108,7 +111,7 @@ public sealed class GroupedQuery<TKey, TSource> where TSource : class, new()
                     if (binding is MemberAssignment ma)
                     {
                         var (sql, clrType) = SqlExpressionTranslator.Translate(
-                            ma.Expression, rowParam, groupingParam, keyExpr);
+                            ma.Expression, rowParam, groupingParam, keyExpr, sink);
                         columns.Add((sql, ma.Member.Name, clrType));
                     }
                 }
@@ -118,7 +121,7 @@ public sealed class GroupedQuery<TKey, TSource> where TSource : class, new()
             default:
             {
                 var (sql, clrType) = SqlExpressionTranslator.Translate(
-                    projectionBody, rowParam, groupingParam, keyExpr);
+                    projectionBody, rowParam, groupingParam, keyExpr, sink);
                 columns.Add((sql, "value", clrType));
                 break;
             }
@@ -132,9 +135,14 @@ public sealed class GroupedQuery<TKey, TSource> where TSource : class, new()
 
         var sql_out = $"SELECT {compiled.SelectList} FROM {EntityMetadata<TSource>.QualifiedTableNameFor(_connectionId)}{_whereClause} GROUP BY {groupBySql}{orderBySql}{limitSql}{offsetSql}";
 
+        var parameters = new Dictionary<string, object?>(_parameters);
+
+        sink.CopyTo(parameters);
+
+
         return new ProjectedQuery<TSource, TResult>(
             _connectionManager, _logger, _connectionId, _transactionScope,
-            _slowQueryThresholdMs, sql_out, _parameters, compiled, _cacheTtl,
+            _slowQueryThresholdMs, sql_out, parameters, compiled, _cacheTtl,
             smartCachePool: null, cacheDisallowed: _cacheDisallowed);
     }
 
@@ -142,7 +150,7 @@ public sealed class GroupedQuery<TKey, TSource> where TSource : class, new()
     /// Build the GROUP BY list from the key selector. For composite anonymous-type keys
     /// (<c>x =&gt; new { x.A, x.B }</c>) each member becomes a separate group expression.
     /// </summary>
-    private (string GroupBySql, List<(string Alias, string Sql, Type ClrType)> KeyMembers) BuildGroupBy()
+    private (string GroupBySql, List<(string Alias, string Sql, Type ClrType)> KeyMembers) BuildGroupBy(SqlParameterSink sink)
     {
         var rowParam = _keySelector.Parameters[0];
         var body = _keySelector.Body;
@@ -153,7 +161,7 @@ public sealed class GroupedQuery<TKey, TSource> where TSource : class, new()
             var members = new List<(string Alias, string Sql, Type ClrType)>();
             for (var i = 0; i < ne.Arguments.Count; i++)
             {
-                var (colSql, clrType) = SqlExpressionTranslator.Translate(ne.Arguments[i], rowParam, null, null);
+                var (colSql, clrType) = SqlExpressionTranslator.Translate(ne.Arguments[i], rowParam, null, null, sink);
                 var alias = ne.Members is { } m && i < m.Count ? m[i].Name : $"key{i}";
                 members.Add((alias, colSql, clrType));
             }
@@ -161,7 +169,7 @@ public sealed class GroupedQuery<TKey, TSource> where TSource : class, new()
         }
 
         // Scalar key: x => x.Col
-        var (sql, type) = SqlExpressionTranslator.Translate(body, rowParam, null, null);
+        var (sql, type) = SqlExpressionTranslator.Translate(body, rowParam, null, null, sink);
         return (sql, new List<(string, string, Type)> { ("Key", sql, type) });
     }
 
