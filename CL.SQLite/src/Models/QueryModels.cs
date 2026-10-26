@@ -23,6 +23,21 @@ public enum TransactionIsolation
     Exclusive
 }
 
+/// <summary>
+/// What a locking read (<c>ForUpdate</c> / <c>ForShare</c>) does when a row it wants is
+/// already locked. Kept for API parity with the server libraries: SQLite has no row locks,
+/// and CL.SQLite's <c>ForUpdate</c> / <c>ForShare</c> throw <see cref="NotSupportedException"/>.
+/// </summary>
+public enum LockWait
+{
+    /// <summary>Block until the other transaction releases the row.</summary>
+    Wait,
+    /// <summary>Fail immediately instead of waiting.</summary>
+    NoWait,
+    /// <summary>Leave locked rows out of the result.</summary>
+    SkipLocked
+}
+
 public class WhereCondition
 {
     public required string Column { get; init; }

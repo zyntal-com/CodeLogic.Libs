@@ -247,13 +247,56 @@ public sealed class ConnectionManager : IDisposable
             $"No SQLite configuration registered for connection ID '{connectionId}'.");
     }
 
-    private string ResolveDatabasePath(SQLiteDatabaseConfig config)
-    {
-        if (_dataDirectory is not null && !Path.IsPathRooted(config.DatabasePath))
-            return Path.Combine(_dataDirectory, config.DatabasePath);
+    private string ResolveDatabasePath(SQLiteDatabaseConfig config) => ResolvePath(config.DatabasePath);
 
-        return config.DatabasePath;
+    /// <summary>
+    /// Resolves a database file path the way a configured <c>DatabasePath</c> is resolved:
+    /// a relative path is taken relative to the library's data directory (when one is set),
+    /// a rooted path is used as given.
+    /// </summary>
+    internal string ResolvePath(string path)
+    {
+        if (_dataDirectory is not null && !Path.IsPathRooted(path))
+            return Path.Combine(_dataDirectory, path);
+
+        return path;
     }
+
+    /// <summary>
+    /// Closes every idle pooled connection, under any connection ID, whose database file is
+    /// <paramref name="databasePath"/> (compared as full paths), and clears
+    /// Microsoft.Data.Sqlite's own pool so no handle keeps the file open. The connection IDs
+    /// stay registered and usable: the next acquisition opens (and so recreates) the file.
+    /// Connections in use at the time are not touched.
+    /// </summary>
+    /// <returns>The number of library-pooled connections that were closed.</returns>
+    internal int ReleaseConnectionsForPath(string databasePath)
+    {
+        var target = NormalizePath(databasePath);
+        var closed = 0;
+
+        foreach (var (connectionId, state) in _states)
+        {
+            if (!string.Equals(NormalizePath(state.DatabasePath), target, PathComparison))
+                continue;
+
+            closed += state.DrainIdle();
+            _logger?.Debug($"[SQLite] [{connectionId}] Idle connections released for {state.DatabasePath}");
+        }
+
+        // Handles opened outside the library's pool (other connection strings for the same
+        // file) live in Microsoft.Data.Sqlite's pool, which can only be cleared wholesale.
+        SqliteConnection.ClearAllPools();
+        return closed;
+    }
+
+    private static readonly StringComparison PathComparison =
+        OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+
+    private static string NormalizePath(string path) =>
+        Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
 
     private static void EnsureDirectoryExists(string databasePath)
     {
@@ -356,6 +399,21 @@ public sealed class ConnectionManager : IDisposable
             _retired = true;
             DrainPool();
             Gate.Dispose();
+        }
+
+        // Closes idle connections without retiring: later releases are pooled again.
+        public int DrainIdle()
+        {
+            var closed = 0;
+            while (Pool.TryPop(out var pooled))
+            {
+                pooled.Connection.Dispose();
+                closed++;
+            }
+
+            using var probe = new SqliteConnection(ConnectionString);
+            SqliteConnection.ClearPool(probe);
+            return closed;
         }
 
         private void DrainPool()
