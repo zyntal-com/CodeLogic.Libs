@@ -2,6 +2,7 @@ using CL.SQLite.Localization;
 using CL.SQLite.Models;
 using CL.SQLite.Services;
 using CodeLogic.Core.Configuration;
+using CodeLogic.Core.Results;
 using CodeLogic.Framework.Libraries;
 
 namespace CL.SQLite;
@@ -28,6 +29,7 @@ public sealed class SQLiteLibrary : ILibrary, IConfigReloadable
     private LibraryContext? _context;
     private ConnectionManager? _connectionManager;
     private TableSyncService? _tableSyncService;
+    private DatabaseAdmin? _admin;
     private SQLiteStrings? _strings;
     private SQLiteConfig? _config;
     private bool _isEnabled;
@@ -88,6 +90,7 @@ public sealed class SQLiteLibrary : ILibrary, IConfigReloadable
             context.DataDirectory,
             context.Logger,
             context.Events);
+        _admin = new DatabaseAdmin(_connectionManager, _tableSyncService, context.Logger);
 
         context.Logger.Info(string.Format(
             _strings?.LibraryInitialized ?? "SQLite library initialized with {0} database(s)",
@@ -126,6 +129,7 @@ public sealed class SQLiteLibrary : ILibrary, IConfigReloadable
         _connectionManager?.Dispose();
         _connectionManager = null;
         _tableSyncService = null;
+        _admin = null;
 
         _context?.Logger.Info(_strings?.LibraryStopped ?? "SQLite library stopped");
         return Task.CompletedTask;
@@ -202,6 +206,53 @@ public sealed class SQLiteLibrary : ILibrary, IConfigReloadable
     public MigrationTracker MigrationTracker =>
         _tableSyncService?.MigrationTracker ?? throw new InvalidOperationException(
             $"{Manifest.Name} has not been initialized or is disabled.");
+
+    /// <summary>
+    /// Returns the <see cref="DatabaseAdmin"/>: create / drop / check database files and
+    /// create / drop / truncate / check entity tables.
+    /// </summary>
+    public DatabaseAdmin Admin =>
+        _admin ?? throw new InvalidOperationException(
+            $"{Manifest.Name} has not been initialized or is disabled.");
+
+    /// <summary>Creates a database file. See <see cref="DatabaseAdmin.CreateDatabaseAsync"/>.</summary>
+    public Task<Result<bool>> CreateDatabaseAsync(
+        string path, bool ifNotExists = true, CancellationToken ct = default) =>
+        Admin.CreateDatabaseAsync(path, ifNotExists, ct);
+
+    /// <summary>Deletes a database file and its siblings. See <see cref="DatabaseAdmin.DropDatabaseAsync"/>.</summary>
+    public Task<Result<bool>> DropDatabaseAsync(
+        string path, bool ifExists = true, CancellationToken ct = default) =>
+        Admin.DropDatabaseAsync(path, ifExists, ct);
+
+    /// <summary>Returns whether a database file exists. See <see cref="DatabaseAdmin.DatabaseExistsAsync"/>.</summary>
+    public Task<Result<bool>> DatabaseExistsAsync(string path, CancellationToken ct = default) =>
+        Admin.DatabaseExistsAsync(path, ct);
+
+    /// <summary>Creates the table for <typeparamref name="T"/> without altering an existing one. See <see cref="DatabaseAdmin.CreateTableAsync{T}"/>.</summary>
+    public Task<Result<bool>> CreateTableAsync<T>(
+        bool ifNotExists = true, string connectionId = "Default", CancellationToken ct = default) where T : class =>
+        Admin.CreateTableAsync<T>(ifNotExists, connectionId, ct);
+
+    /// <summary>Drops the table for <typeparamref name="T"/>. See <see cref="DatabaseAdmin.DropTableAsync{T}"/>.</summary>
+    public Task<Result<bool>> DropTableAsync<T>(
+        bool ifExists = true, string connectionId = "Default", CancellationToken ct = default) where T : class =>
+        Admin.DropTableAsync<T>(ifExists, connectionId, ct);
+
+    /// <summary>Removes every row from the table for <typeparamref name="T"/> and restarts its AUTOINCREMENT counter. See <see cref="DatabaseAdmin.TruncateTableAsync{T}"/>.</summary>
+    public Task<Result<bool>> TruncateTableAsync<T>(
+        string connectionId = "Default", CancellationToken ct = default) where T : class =>
+        Admin.TruncateTableAsync<T>(connectionId, ct);
+
+    /// <summary>Returns whether the table for <typeparamref name="T"/> exists.</summary>
+    public Task<Result<bool>> TableExistsAsync<T>(
+        string connectionId = "Default", CancellationToken ct = default) where T : class =>
+        Admin.TableExistsAsync<T>(connectionId, ct);
+
+    /// <summary>Returns whether table <paramref name="tableName"/> exists.</summary>
+    public Task<Result<bool>> TableExistsAsync(
+        string tableName, string connectionId = "Default", CancellationToken ct = default) =>
+        Admin.TableExistsAsync(tableName, connectionId, ct);
 
     public Repository<T> GetRepository<T>(string connectionId = "Default") where T : class, new()
     {
@@ -308,5 +359,6 @@ public sealed class SQLiteLibrary : ILibrary, IConfigReloadable
         _connectionManager?.Dispose();
         _connectionManager = null;
         _tableSyncService = null;
+        _admin = null;
     }
 }

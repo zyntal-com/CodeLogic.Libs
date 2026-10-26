@@ -128,9 +128,10 @@ var perDay = await pg.Query<Order>()
     .ToListAsync();
 ```
 
-Scalar terminals on the query builder: `CountAsync`, `SumAsync`, `MinAsync`, `MaxAsync`,
-`AverageAsync`. (`Count` / `Any` are available *inside* a grouped projection as `g.Count()`
-and `g.Any()`; there is no `AnyAsync` terminal.)
+Scalar terminals on the query builder: `CountAsync`, `AnyAsync`, `SumAsync`, `MinAsync`,
+`MaxAsync`, `AverageAsync`. `AnyAsync()` / `AnyAsync(predicate)` return `Result<bool>` from
+`SELECT 1 … LIMIT 1`, so the server stops at the first match instead of counting. (`Count` /
+`Any` are also available *inside* a grouped projection as `g.Count()` and `g.Any()`.)
 
 ```csharp
 // Nullable selectors return null for SQL NULL (e.g. no matching rows) instead of default(T)
@@ -171,6 +172,73 @@ await pg.Query<User>().Where(u => u.CreatedUtc < cutoff).DeleteAsync();
 Both overloads reject database-generated columns rather than emitting SQL the server refuses.
 Bulk update deliberately bypasses the soft-delete read filter so it can target or restore
 deleted rows.
+
+A setter value can read the row it updates, including through `Math.Min` / `Math.Max`
+(`LEAST` / `GREATEST`), so clamps and counters stay in SQL:
+
+```csharp
+await pg.Query<Bucket>()
+    .Where(b => b.Key == key)
+    .UpdateAsync(b => new Bucket { Tokens = Math.Min(cap, b.Tokens + refill) });
+```
+
+Captured values (`cap`, `refill`, strings, dates, enums) are always sent as parameters, also
+inside such column expressions; only primitive numbers are written into the SQL text.
+PostgreSQL evaluates every `SET` assignment against the row as it was before the update, so a
+value that reads a column assigned in the same setter sees its old value, whatever the order.
+Unlike MySQL, `LEAST` / `GREATEST` ignore a NULL argument (`LEAST(NULL, 3)` is 3) and return
+NULL only when both arguments are NULL.
+
+### Update and return the rows — `UpdateAndGetAsync`
+
+`UpdateAndGetAsync` runs the same setter and returns the updated rows as they are after the
+update, with no other writer in between:
+
+```csharp
+Result<List<Bucket>> r = await pg.Query<Bucket>()
+    .Where(b => b.Key == key)
+    .UpdateAndGetAsync(b => new Bucket { Tokens = Math.Min(cap, b.Tokens + refill) });
+
+// Claim one job from a queue; concurrent workers skip rows another worker holds.
+Result<List<Job>> claimed = await pg.Query<Job>()
+    .Where(j => j.Status == "queued")
+    .OrderBy(j => j.Id).Take(1)
+    .ForUpdate(LockWait.SkipLocked)
+    .UpdateAndGetAsync(j => new Job { Status = "running", StartedUtc = now });
+```
+
+It is a single statement, `UPDATE … SET … WHERE … RETURNING *`, so it is atomic by itself and
+runs in the query's `TransactionScope` when there is one. PostgreSQL's `UPDATE` has no
+`ORDER BY` / `LIMIT`, so with `OrderBy`, `Take` or a `NoWait` / `SkipLocked` wait mode the rows
+are picked by primary key in a locking subquery —
+`WHERE (pk) IN (SELECT pk … ORDER BY … LIMIT n FOR UPDATE [NOWAIT | SKIP LOCKED])` — which needs
+a primary key on the entity. `RETURNING` has no order of its own, so with `OrderBy` the result
+is re-sorted through a CTE (`WITH updated AS (…) SELECT * FROM updated ORDER BY …`). The lock is
+always `FOR UPDATE`, even after `ForShare()`.
+
+### Insert or update from the current row — expression `UpsertAsync`
+
+`Repository.UpsertAsync(entity, onConflict, conflictTarget)` inserts the entity, or — when it
+collides on the conflict target — updates the existing row with a setter that receives that
+row (`current`) and the row that failed to insert (`incoming`):
+
+```csharp
+Result<int> r = await pg.GetRepository<LoginThrottle>().UpsertAsync(
+    new LoginThrottle { Ip = ip, Failures = 1, LastUtc = now },
+    (current, incoming) => new LoginThrottle
+    {
+        Failures = current.Failures + 1,
+        LastUtc  = incoming.LastUtc,
+    });
+```
+
+It emits `INSERT … ON CONFLICT (target) DO UPDATE SET col = expr`, with `current.Col` written as
+the table-qualified column and `incoming.Col` as `EXCLUDED.col`. The conflict target resolves
+like `UpsertAsync(entity)`: inferred when the entity has exactly one candidate key, otherwise
+pass `conflictTarget: [nameof(LoginThrottle.Ip)]`. Columns the setter does not assign keep
+their current value, captured values are parameters, and every assignment sees the row as it
+was before the update. PostgreSQL counts an `ON CONFLICT … DO UPDATE` row once, so the result
+is 1 whether the row was inserted or updated.
 
 ## Caching
 
@@ -230,3 +298,37 @@ do not — see the note above.
 
 The scope rolls back if it is disposed without a commit, so an early `return` or a thrown
 exception cannot silently leave a half-applied transaction.
+
+### Row locking — `ForUpdate` / `ForShare`
+
+Inside a transaction, `ForUpdate()` locks the rows a read returns until the transaction ends,
+so a read-modify-write needs no retry loop. `ForShare()` takes a shared lock: others can still
+read and share-lock the rows but not change them.
+
+```csharp
+await using var tx = await pg.BeginTransactionAsync();
+
+var account = (await pg.Query<Account>(tx)
+    .Where(a => a.Id == id)
+    .ForUpdate()
+    .FirstOrDefaultAsync()).Value;
+
+account!.Balance -= 100m;
+await pg.GetRepository<Account>(tx).UpdateAsync(account);
+await tx.CommitAsync();
+```
+
+| Call | SQL |
+|------|-----|
+| `ForUpdate()` | `FOR UPDATE` |
+| `ForUpdate(LockWait.NoWait)` | `FOR UPDATE NOWAIT` — fail at once (SQLSTATE `55P03`) instead of waiting |
+| `ForUpdate(LockWait.SkipLocked)` | `FOR UPDATE SKIP LOCKED` — leave locked rows out (job queues) |
+| `ForShare()` | `FOR SHARE` |
+| `ForShare(LockWait.NoWait / SkipLocked)` | `FOR SHARE NOWAIT / SKIP LOCKED` |
+
+The clause goes after `LIMIT` / `OFFSET`. A locking read only makes sense inside a
+transaction, so it fails when the query was not created from a `TransactionScope`. It is
+honoured by `ToListAsync`, `FirstOrDefaultAsync`, `AnyAsync` and `Select`; the other terminals
+(counts, aggregates, paging, `GroupBy`, typed joins, bulk `UpdateAsync` / `DeleteAsync`) refuse
+it. `UpdateAndGetAsync` is a single statement, so it takes the wait mode with or without a
+transaction.

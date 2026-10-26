@@ -264,7 +264,12 @@ public sealed class TableSyncService
 
     // ── Private helpers ────────────────────────────────────────────────────────
 
-    private async Task SyncIndexesAsync(SqliteConnection conn, Type entityType, string tableName, CancellationToken ct)
+    /// <summary>
+    /// Creates the indexes declared on <paramref name="entityType"/> (<see cref="SQLiteIndexAttribute"/>
+    /// and indexed or unique <see cref="SQLiteColumnAttribute"/> properties) with
+    /// <c>CREATE INDEX IF NOT EXISTS</c>. Shared with <see cref="DatabaseAdmin"/>.
+    /// </summary>
+    internal static async Task SyncIndexesAsync(SqliteConnection conn, Type entityType, string tableName, CancellationToken ct)
     {
         // Class-level indexes via [SQLiteIndex]
         var classIndexes = entityType.GetCustomAttributes<SQLiteIndexAttribute>();

@@ -56,6 +56,13 @@ public sealed class TableSyncService
         _appVersion = CodeLogicEnvironment.AppVersion;
     }
 
+    // Shared with DatabaseAdmin, which creates tables the same way a sync does.
+    internal SchemaAnalyzer Analyzer => _analyzer;
+    internal string AppVersion => _appVersion;
+    internal SyncMode ResolveMode(string connectionId) =>
+        _configLookup?.Invoke(connectionId)?.SyncMode ?? SyncMode.Production;
+    internal int StringSizeFor(string connectionId) => ResolveStringSize(connectionId);
+
     private SchemaSyncLevel ResolveLevel(string connectionId) =>
         _configLookup?.Invoke(connectionId)?.EffectiveSyncLevel ?? SchemaSyncLevel.Safe;
 
@@ -384,7 +391,7 @@ public sealed class TableSyncService
 
     // ── Private helpers ────────────────────────────────────────────────────────
 
-    private async Task<bool> TableExistsAsync(
+    internal async Task<bool> TableExistsAsync(
         string schemaName,
         string tableName,
         string connectionId,

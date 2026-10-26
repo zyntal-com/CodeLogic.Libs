@@ -65,6 +65,9 @@ var recent = await pg.Query<User>()
 - **Multi-database** — manage connections to several PostgreSQL instances from one config; pick the target per call with a `connectionId` (default `"Default"`), or add one at runtime with `pg.ConnectionManager.RegisterConfiguration(config, id)`.
 - **Repository** — full CRUD plus batched bulk insert, `ON CONFLICT` upserts, paging, find, raw SQL, soft delete, and atomic increment/decrement.
 - **Fluent query builder** — `Where`, `OrderBy`, `Limit`/`Offset` (aliases `Take`/`Skip`), `Join`, typed `Select` projections, `GroupBy`, aggregates, `WhereIn`/`WhereExists`, bulk update/delete.
+- **Read-modify-write in SQL** — bulk `UpdateAsync` setters may read the row (`Tokens = Math.Min(cap, t.Tokens + refill)`), with captured values always sent as parameters; `UpdateAndGetAsync` runs the same update and returns the rows as they are afterwards (`UPDATE … RETURNING *`); `AnyAsync` checks for a match with `SELECT 1 … LIMIT 1`; `Repository.UpsertAsync(entity, (current, incoming) => new T { … })` inserts or updates from the current row in one `ON CONFLICT … DO UPDATE`.
+- **Row locking** — inside a transaction, `ForUpdate()` / `ForShare()` add `FOR UPDATE` / `FOR SHARE` to a read (`LockWait.NoWait` / `LockWait.SkipLocked` for job queues).
+- **Database and table admin** — `pg.Admin` creates, drops and checks databases and tables (`CreateDatabaseAsync`, `DropDatabaseAsync`, `DatabaseExistsAsync`, `CreateTableAsync<T>`, `DropTableAsync<T>`, `TruncateTableAsync<T>`, `TableExistsAsync<T>`); `createDatabaseIfMissing` creates the database at startup.
 - **Cursor paging** — `After(cursor).ToCursorPagedListAsync()` for stable keyset pagination that does not drift as rows are inserted. Tokens are validated against the issuing query's entity and ordering, but are not signed — treat a cursor as a position, not as an authorisation.
 - **Caching** — per-query `WithCache(ttl)`, named smart-cache pools with background refresh, table-version invalidation, and a pluggable store/coordinator for multi-node setups.
 - **Migrations** — `IMigration` classes with up/down, ordered by app version, tracked in a database table (not a local file) and applied under an advisory lock so only one node runs them.
@@ -106,6 +109,8 @@ Auto-generated on first run as `config.postgresql.json` (section `postgresql`). 
 | `sslMode` | `Prefer` | `Disable`, `Allow`, `Prefer`, `Require`, `VerifyCA`, `VerifyFull`. **`Prefer` encrypts but does not verify the certificate; use `VerifyFull` in production.** |
 | `sslCertificatePath` / `sslKeyPath` / `sslRootCertificatePath` | `null` | Client certificate, its key, and the CA bundle used by `VerifyCA`/`VerifyFull`. |
 | `defaultSchema` | `public` | The schema unqualified entities live in, and the connection's `search_path`. A `[Table]` without a `Schema` is created in — and every statement for it qualified with — this schema; `[Table(Schema = "…")]` still wins. Created if missing. **Changing it moves where your tables are read and written.** |
+| `maintenanceDatabase` | `postgres` | Database the library connects to (same host and credentials) for `CREATE` / `DROP DATABASE` and existence checks, since PostgreSQL cannot create or drop the database a session is connected to. |
+| `createDatabaseIfMissing` | `false` | Create `database` (server default encoding and locale) during initialization when it does not exist. Needs the `CREATEDB` attribute. |
 | `applicationName` | `null` | Reported to the server; shows up in `pg_stat_activity`. |
 | `minPoolSize` / `maxPoolSize` | `1` / `100` | Connection-pool bounds. |
 | `connectionLifetime` | `300` | Seconds a pooled connection may sit idle before being closed. |

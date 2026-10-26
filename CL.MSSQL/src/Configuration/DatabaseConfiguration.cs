@@ -194,6 +194,24 @@ public sealed class SqlServerDatabaseConfig
         Group = "Schema")]
     public int DefaultStringSize { get; set; } = 255;
 
+    /// <summary>
+    /// When true, the library creates the configured database (the <c>Initial Catalog</c> of
+    /// the built connection string, so a raw <see cref="ConnectionString"/> works too) during
+    /// initialization if the server does not have it yet. The database gets the server's
+    /// default collation. Needs a login allowed to run CREATE DATABASE. Default: false.
+    /// </summary>
+    [ConfigField(Label = "Create Database If Missing",
+        Description = "Create the database at startup when it does not exist. Requires CREATE DATABASE permission.",
+        RequiresRestart = true, Group = "Advanced", Collapsed = true)]
+    public bool CreateDatabaseIfMissing { get; set; } = false;
+
+    /// <summary>
+    /// The database this configuration connects to: the <c>Initial Catalog</c> of
+    /// <see cref="BuildConnectionString"/>, which a raw <see cref="ConnectionString"/> may set
+    /// independently of <see cref="Database"/>.
+    /// </summary>
+    internal string EffectiveDatabase => new SqlConnectionStringBuilder(BuildConnectionString()).InitialCatalog;
+
     public string BuildConnectionString()
     {
         if (!string.IsNullOrWhiteSpace(ConnectionString)) return ConnectionString;

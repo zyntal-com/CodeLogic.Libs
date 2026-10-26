@@ -167,6 +167,191 @@ public sealed class Repository<T> where T : class, new()
     }
 
     /// <summary>
+    /// Inserts <paramref name="entity"/>, or — when it collides with an existing row on the
+    /// conflict target — updates that row with <paramref name="onConflict"/>, in one statement.
+    /// The setter receives the existing row and the row that failed to insert, so the update
+    /// can build on current values:
+    /// <code>
+    /// await repo.UpsertAsync(
+    ///     new LoginThrottle { Ip = ip, Failures = 1, LastUtc = now },
+    ///     (current, incoming) =&gt; new LoginThrottle
+    ///     {
+    ///         Failures = current.Failures + 1,
+    ///         LastUtc  = incoming.LastUtc,
+    ///     });
+    /// </code>
+    /// </summary>
+    /// <remarks>
+    /// Emits <c>INSERT INTO "t" (…) VALUES (…) ON CONFLICT (target) DO UPDATE SET col = expr</c>
+    /// (SQLite 3.24+), with <c>current.Col</c> written as the existing row's column and
+    /// <c>incoming.Col</c> as <c>excluded."col"</c>. Columns the setter does not assign keep
+    /// their current value on conflict; SQLite evaluates every assignment against the existing
+    /// row as it was before the update. Captured values are sent as parameters.
+    /// <para>
+    /// SQLite only accepts a conflict target that matches a PRIMARY KEY or UNIQUE index
+    /// exactly. When <paramref name="conflictTarget"/> is omitted it is inferred: the primary
+    /// key (unless it is auto-increment, which an incoming row never collides on), a
+    /// <c>[SQLiteColumn(IsUnique = true)]</c> column, or a unique <see cref="SQLiteIndexAttribute"/>
+    /// — and it must be exactly one of them. The plain
+    /// <see cref="UpsertAsync(T, CancellationToken)"/> (INSERT OR REPLACE) is unchanged.
+    /// </para>
+    /// </remarks>
+    /// <param name="entity">The entity to insert.</param>
+    /// <param name="onConflict">A member-init expression <c>(current, incoming) =&gt; new T { Prop = value, … }</c>.</param>
+    /// <param name="conflictTarget">Property or column names of the unique key to arbitrate on, or <c>null</c> to infer it.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>A <see cref="Result{T}"/> containing the rows affected: 1 for an insert or an update.</returns>
+    public async Task<Result<int>> UpsertAsync(
+        T entity,
+        Expression<Func<T, T, T>> onConflict,
+        IReadOnlyList<string>? conflictTarget = null,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(entity);
+        ArgumentNullException.ThrowIfNull(onConflict);
+        if (onConflict.Body is not MemberInitExpression mi || mi.Bindings.Count == 0)
+            throw new ArgumentException(
+                "onConflict must be a member-init expression like (current, incoming) => new T { Prop = value }.",
+                nameof(onConflict));
+
+        try
+        {
+            var target = ResolveConflictTarget(conflictTarget);
+
+            var current = onConflict.Parameters[0];
+            var incoming = onConflict.Parameters[1];
+            var renderers = new Dictionary<ParameterExpression, Func<string, string>>
+            {
+                [current] = SQLiteColumnExpressionTranslator.Quote,
+                [incoming] = c => $"excluded.{SQLiteColumnExpressionTranslator.Quote(c)}",
+            };
+
+            var sink = new SQLiteParameterSink("@ups_");
+            var updateClauses = new List<string>();
+            foreach (var binding in mi.Bindings)
+            {
+                if (binding is not MemberAssignment ma)
+                    throw new ArgumentException("onConflict supports plain property assignments only.", nameof(onConflict));
+                var attr = ma.Member.GetCustomAttribute<SQLiteColumnAttribute>()
+                           ?? throw new ArgumentException(
+                               $"Property '{ma.Member.Name}' is not a mapped column on '{typeof(T).Name}'.", nameof(onConflict));
+                if (attr.IsAutoIncrement)
+                    throw new ArgumentException(
+                        $"Property '{ma.Member.Name}' is an auto-increment key and cannot be updated.", nameof(onConflict));
+                var column = SQLiteColumnExpressionTranslator.Quote(SQLiteColumnExpressionTranslator.GetColumnName(ma.Member));
+
+                if (SQLiteColumnExpressionTranslator.References(ma.Expression, current, incoming))
+                {
+                    var (exprSql, _) = SQLiteColumnExpressionTranslator.Translate(ma.Expression, renderers, sink);
+                    updateClauses.Add($"{column} = {exprSql}");
+                }
+                else
+                {
+                    var value = SQLiteColumnExpressionTranslator.Evaluate(ma.Expression);
+                    updateClauses.Add($"{column} = {(value is null ? "NULL" : sink.Add(value))}");
+                }
+            }
+
+            var cols = new List<string>();
+            var paramNames = new List<string>();
+            var values = new Dictionary<string, object?>();
+            foreach (var prop in GetCachedProperties())
+            {
+                var colAttr = prop.GetCustomAttribute<SQLiteColumnAttribute>();
+                if (colAttr?.IsAutoIncrement == true) continue;
+                var paramName = $"@p{values.Count}";
+                cols.Add($"\"{colAttr?.ColumnName ?? prop.Name}\"");
+                paramNames.Add(paramName);
+                values[paramName] = SQLiteValueConverter.ToDbValue(prop.GetValue(entity), prop.PropertyType);
+            }
+            sink.CopyTo(values);
+
+            var targetList = string.Join(", ", target.Select(SQLiteColumnExpressionTranslator.Quote));
+            var sql = $"INSERT INTO \"{_tableName}\" ({string.Join(", ", cols)}) VALUES ({string.Join(", ", paramNames)}) " +
+                      $"ON CONFLICT ({targetList}) DO UPDATE SET {string.Join(", ", updateClauses)};";
+            LogQuery(sql);
+            var sw = Stopwatch.StartNew();
+
+            var affected = await _connectionManager.ExecuteAsync<int>(async conn =>
+            {
+                await using var cmd = conn.CreateCommand();
+                cmd.CommandText = sql;
+                foreach (var kv in values)
+                    cmd.Parameters.AddWithValue(kv.Key, kv.Value ?? DBNull.Value);
+                return await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+            }, _connectionId, ct).ConfigureAwait(false);
+
+            sw.Stop();
+            LogSlowQuery(sql, sw.ElapsedMilliseconds);
+            return Result<int>.Success(affected);
+        }
+        catch (Exception ex)
+        {
+            _logger?.Error($"[SQLite] UpsertAsync (expression) failed: {ex.Message}", ex);
+            return Result<int>.Failure(Error.FromException(ex, "sqlite.upsert_failed"));
+        }
+    }
+
+    /// <summary>
+    /// Determines the <c>ON CONFLICT</c> target columns. SQLite requires the target to match
+    /// one unique index exactly, so when the entity has several candidate keys the caller must
+    /// name one rather than have one picked silently.
+    /// </summary>
+    /// <param name="explicitTarget">Caller-supplied property or column names, or null to infer.</param>
+    /// <returns>The column names of the conflict target.</returns>
+    /// <exception cref="ArgumentException">An explicit name is not a mapped column.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// The entity has no usable unique key, or has several and none was specified.
+    /// </exception>
+    private static IReadOnlyList<string> ResolveConflictTarget(IReadOnlyList<string>? explicitTarget)
+    {
+        var columns = GetCachedProperties()
+            .Select(p => (Property: p, Attr: p.GetCustomAttribute<SQLiteColumnAttribute>()!))
+            .Select(c => (c.Property, c.Attr, Name: string.IsNullOrWhiteSpace(c.Attr.ColumnName) ? c.Property.Name : c.Attr.ColumnName))
+            .ToList();
+
+        if (explicitTarget is { Count: > 0 })
+        {
+            return explicitTarget.Select(key =>
+            {
+                var match = columns.FirstOrDefault(c =>
+                    string.Equals(c.Name, key, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(c.Property.Name, key, StringComparison.OrdinalIgnoreCase));
+                return match.Property is null
+                    ? throw new ArgumentException($"'{key}' is not a mapped column on '{typeof(T).Name}'.", nameof(explicitTarget))
+                    : match.Name;
+            }).ToArray();
+        }
+
+        var candidates = new List<IReadOnlyList<string>>();
+
+        // An auto-increment key cannot arbitrate: the incoming row has no value for it, so it
+        // never collides and every call would insert.
+        var primary = columns.Where(c => c.Attr.IsPrimaryKey).ToList();
+        if (primary.Count > 0 && primary.All(c => !c.Attr.IsAutoIncrement))
+            candidates.Add(primary.Select(c => c.Name).ToArray());
+
+        candidates.AddRange(columns
+            .Where(c => c.Attr.IsUnique && !c.Attr.IsPrimaryKey)
+            .Select(c => (IReadOnlyList<string>)new[] { c.Name }));
+
+        foreach (var index in typeof(T).GetCustomAttributes<SQLiteIndexAttribute>().Where(i => i.IsUnique))
+            candidates.Add(index.Columns);
+
+        if (candidates.Count == 1) return candidates[0];
+
+        if (candidates.Count == 0)
+            throw new InvalidOperationException(
+                $"Entity '{typeof(T).Name}' needs a non-auto-increment primary key, a [SQLiteColumn(IsUnique = true)] " +
+                "property, or a unique [SQLiteIndex] to be upserted with ON CONFLICT.");
+
+        throw new InvalidOperationException(
+            $"Entity '{typeof(T).Name}' has {candidates.Count} candidate unique keys " +
+            $"({string.Join("; ", candidates.Select(g => string.Join(", ", g)))}). " +
+            "SQLite upserts arbitrate on exactly one, so pass the conflictTarget argument to say which.");
+    }
+
+    /// <summary>
     /// Retrieves a single entity by its primary key value.
     /// </summary>
     /// <param name="id">The primary key value to look up.</param>

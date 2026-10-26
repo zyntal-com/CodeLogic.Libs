@@ -96,6 +96,39 @@ public sealed class ConnectionManager
         SqlConnection.ClearPool(connection);
     }
 
+    /// <summary>
+    /// Runs <paramref name="action"/> on a server-level connection: the connection ID's
+    /// server and credentials with <c>master</c> as the current database, so the configured
+    /// database itself can be created or dropped. The connection is unpooled and closed
+    /// afterwards.
+    /// </summary>
+    public async Task<TResult> ExecuteOnServerAsync<TResult>(
+        Func<SqlConnection, Task<TResult>> action,
+        string connectionId = "Default",
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(action);
+        var builder = new SqlConnectionStringBuilder(RequireConfig(connectionId).BuildConnectionString())
+        {
+            InitialCatalog = "master",
+            Pooling = false
+        };
+        await using var connection = new SqlConnection(builder.ConnectionString);
+        await connection.OpenAsync(ct).ConfigureAwait(false);
+        return await action(connection).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Clears the idle pooled connections of every registered configuration that points at
+    /// <paramref name="database"/>, so a following DROP DATABASE does not leave them stale.
+    /// </summary>
+    internal void ClearPoolsForDatabase(string database)
+    {
+        foreach (var config in _configs.Values)
+            if (string.Equals(config.EffectiveDatabase, database, StringComparison.OrdinalIgnoreCase))
+                ClearPool(config);
+    }
+
     /// <summary>Returns the configuration for the given connection ID, or null if not found.</summary>
     public SqlServerDatabaseConfig? GetConfiguration(string connectionId = "Default")
         => _configs.TryGetValue(connectionId, out var cfg) ? cfg : null;

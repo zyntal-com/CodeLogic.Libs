@@ -406,6 +406,122 @@ public sealed class Repository<T> where T : class, new()
         }
     }
 
+    /// <summary>
+    /// Inserts <paramref name="entity"/>, or — when it collides with an existing row on the
+    /// primary key or a UNIQUE index — updates that row with <paramref name="onConflict"/>,
+    /// in one statement. The setter receives the existing row and the row that failed to
+    /// insert, so the update can build on current values:
+    /// <code>
+    /// await repo.UpsertAsync(
+    ///     new LoginThrottle { Ip = ip, Failures = 1, LastUtc = now },
+    ///     (current, incoming) =&gt; new LoginThrottle
+    ///     {
+    ///         Failures = current.Failures + 1,
+    ///         LastUtc  = incoming.LastUtc,
+    ///     });
+    /// </code>
+    /// Columns the setter does not assign keep their current value on conflict. Captured
+    /// values are sent as parameters. Emits
+    /// <c>INSERT … ON DUPLICATE KEY UPDATE col = expr</c>, with <c>incoming.Col</c> written
+    /// as <c>VALUES(col)</c> so it also runs on MariaDB.
+    /// <para>MySQL applies the assignments left to right: an assignment that reads
+    /// <c>current.X</c> after <c>X</c> was assigned sees the new value. Assign a column after
+    /// the ones that read it if you need its old value.</para>
+    /// </summary>
+    /// <returns>Rows affected (MySQL: 1 = insert, 2 = update with changes, 0 = update with
+    /// no change).</returns>
+    public async Task<Result<int>> UpsertAsync(
+        T entity,
+        Expression<Func<T, T, T>> onConflict,
+        CancellationToken ct = default)
+    {
+        if (entity is null) throw new ArgumentNullException(nameof(entity));
+        if (onConflict is null) throw new ArgumentNullException(nameof(onConflict));
+        if (onConflict.Body is not MemberInitExpression mi || mi.Bindings.Count == 0)
+            throw new ArgumentException(
+                "onConflict must be a member-init expression like (current, incoming) => new T { Prop = value }.",
+                nameof(onConflict));
+
+        var current = onConflict.Parameters[0];
+        var incoming = onConflict.Parameters[1];
+        var renderers = new Dictionary<ParameterExpression, Func<string, string>>
+        {
+            [current] = MySqlDialect.Quote,
+            [incoming] = c => $"VALUES({MySqlDialect.Quote(c)})",
+        };
+
+        var sink = new SqlParameterSink("@ups_");
+        var updateClauses = new List<string>();
+        foreach (var binding in mi.Bindings)
+        {
+            if (binding is not MemberAssignment ma)
+                throw new ArgumentException("onConflict supports plain property assignments only.", nameof(onConflict));
+            var col = ResolveUpsertColumns([ma.Member.Name], nameof(onConflict))[0];
+            var target = MySqlDialect.Quote(col.ColumnName);
+
+            if (ReferencesAny(ma.Expression, current, incoming))
+            {
+                var (sql, _) = SqlExpressionTranslator.Translate(ma.Expression, renderers, sink, col.EffectiveStorageType);
+                updateClauses.Add($"{target} = {sql}");
+            }
+            else
+            {
+                var value = ClosureEvaluator.Evaluate(ma.Expression);
+                updateClauses.Add($"{target} = {(value is null ? "NULL" : sink.Add(value, col.EffectiveStorageType))}");
+            }
+        }
+
+        try
+        {
+            var table = EntityMetadata<T>.TableName;
+            var insertCols = EntityMetadata<T>.Columns.Where(c => !c.IsAutoIncrement).ToArray();
+            var columnList = string.Join(", ", insertCols.Select(c => MySqlDialect.Quote(c.ColumnName)));
+            var paramList  = string.Join(", ", insertCols.Select(c => $"@{c.ColumnName}"));
+            var sql = $"INSERT INTO {MySqlDialect.Quote(table)} ({columnList}) VALUES ({paramList}) ON DUPLICATE KEY UPDATE {string.Join(", ", updateClauses)};";
+
+            LogQuery(sql);
+            var sw = Stopwatch.StartNew();
+
+            var affected = await ExecuteAsync(async conn =>
+            {
+                await using var cmd = NewCommand(conn);
+                cmd.CommandText = sql;
+                foreach (var col in insertCols)
+                    cmd.Parameters.Add(TypeConverter.CreateParameter($"@{col.ColumnName}", TypeConverter.ToDbValue(col.Get(entity), col.EffectiveStorageType), col.Attribute, col.Property.PropertyType));
+                foreach (var kv in sink.Parameters)
+                    cmd.Parameters.AddWithValue(kv.Key, kv.Value ?? DBNull.Value);
+                return await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+            }, ct).ConfigureAwait(false);
+
+            sw.Stop();
+            LogSlowQuery(sql, sw.ElapsedMilliseconds);
+            QueryCache.Invalidate(table);
+            return Result<int>.Success(affected);
+        }
+        catch (Exception ex)
+        {
+            _logger?.Error($"[MySQL2] UpsertAsync (expression) failed: {ex.Message}", ex);
+            return Result<int>.Failure(Error.FromException(ex, "mysql.upsert_failed"));
+        }
+    }
+
+    private static bool ReferencesAny(Expression expr, params ParameterExpression[] parameters)
+    {
+        var walker = new ParameterFinder(parameters);
+        walker.Visit(expr);
+        return walker.Found;
+    }
+
+    private sealed class ParameterFinder(ParameterExpression[] parameters) : ExpressionVisitor
+    {
+        public bool Found { get; private set; }
+        protected override Expression VisitParameter(ParameterExpression node)
+        {
+            if (Array.IndexOf(parameters, node) >= 0) Found = true;
+            return base.VisitParameter(node);
+        }
+    }
+
     private static ColumnMetadata[] ResolveUpsertColumns(IReadOnlyList<string> propertyNames, string paramName)
     {
         var cols = new ColumnMetadata[propertyNames.Count];

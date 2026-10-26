@@ -46,6 +46,8 @@ public sealed class QueryBuilder<T> where T : class, new()
     // When false (default), reads on a [SoftDelete] entity append `<col> IS NULL`.
     private bool _includeDeleted;
     private string? _afterCursor;
+    // Set by ForUpdate / ForShare: a locking read, only valid inside a transaction scope.
+    private (bool Exclusive, LockWait Wait)? _lock;
 
     // ── Constructors ──────────────────────────────────────────────────────────
 
@@ -286,6 +288,7 @@ public sealed class QueryBuilder<T> where T : class, new()
         where TRight : class, new()
     {
         EnsureCursorNotSet(nameof(Join));
+        EnsureNoLock(nameof(Join));
         if (_orderBys.Count > 0 || _limit.HasValue || _offset.HasValue)
             throw new InvalidOperationException(
                 "Apply OrderBy / Take / Skip after .Join, on the returned JoinedQuery — " +
@@ -332,6 +335,7 @@ public sealed class QueryBuilder<T> where T : class, new()
     public ProjectedQuery<T, TResult> Select<TResult>(Expression<Func<T, TResult>> selector)
     {
         EnsureCursorNotSet(nameof(Select));
+        EnsureLockUsable(nameof(Select));
         var compiled = ProjectionCompiler.Compile(selector);
 
         var tableName = GetTableName();
@@ -342,7 +346,7 @@ public sealed class QueryBuilder<T> where T : class, new()
         var limitSql = _limit.HasValue ? $" LIMIT {_limit.Value}" : string.Empty;
         var offsetSql = _offset.HasValue ? $" OFFSET {_offset.Value}" : string.Empty;
 
-        var sql = $"SELECT {compiled.SelectList} FROM {MySqlDialect.Quote(tableName)}{joinSql}{whereClause}{groupBySql}{orderBySql}{limitSql}{offsetSql}";
+        var sql = $"SELECT {compiled.SelectList} FROM {MySqlDialect.Quote(tableName)}{joinSql}{whereClause}{groupBySql}{orderBySql}{limitSql}{offsetSql}{LockSuffix()}";
 
         // A subquery-filtered query is not cacheable — the cache stamps an entry with a single
         // table's version, so a mutation on the EXISTS / IN inner table could not invalidate it.
@@ -364,11 +368,38 @@ public sealed class QueryBuilder<T> where T : class, new()
     public GroupedQuery<TKey, T> GroupBy<TKey>(Expression<Func<T, TKey>> keySelector)
     {
         EnsureCursorNotSet(nameof(GroupBy));
+        EnsureNoLock(nameof(GroupBy));
         var (whereClause, parms) = BuildWhereSql();
         return new GroupedQuery<TKey, T>(
             _connectionManager, _logger, _connectionId, _transactionScope,
             _slowQueryThresholdMs, whereClause, parms, keySelector,
             _cacheTtl, _orderBys, _limit, _offset);
+    }
+
+    /// <summary>
+    /// Makes the read lock the rows it returns until the transaction ends
+    /// (<c>SELECT … FOR UPDATE</c>), so a read-modify-write needs no retry loop. Only valid
+    /// on a query created from a <see cref="TransactionScope"/>; honoured by
+    /// <c>ToListAsync</c>, <c>FirstOrDefaultAsync</c>, <c>AnyAsync</c>, <c>Select</c> and
+    /// <c>UpdateAndGetAsync</c>. <see cref="LockWait.SkipLocked"/> (MySQL 8+, MariaDB 10.6+)
+    /// turns the query into a job-queue claim.
+    /// </summary>
+    public QueryBuilder<T> ForUpdate(LockWait wait = LockWait.Wait)
+    {
+        _lock = (true, wait);
+        return this;
+    }
+
+    /// <summary>
+    /// Makes the read take a shared lock on the rows it returns until the transaction ends:
+    /// others can read them but not change them. Same rules as <see cref="ForUpdate"/>.
+    /// With <see cref="LockWait.Wait"/> this emits <c>LOCK IN SHARE MODE</c>, which MySQL and
+    /// MariaDB both accept; the other modes need MySQL 8's <c>FOR SHARE</c>.
+    /// </summary>
+    public QueryBuilder<T> ForShare(LockWait wait = LockWait.Wait)
+    {
+        _lock = (false, wait);
+        return this;
     }
 
     public QueryBuilder<T> WithConnection(string connectionId)
@@ -442,6 +473,7 @@ public sealed class QueryBuilder<T> where T : class, new()
         try
         {
             EnsureCursorNotSet(nameof(ToListAsync));
+            EnsureLockUsable(nameof(ToListAsync));
             var (sql, parms) = BuildSelectSql();
             var tableName = GetTableName();
 
@@ -532,6 +564,7 @@ public sealed class QueryBuilder<T> where T : class, new()
         try
         {
             EnsureCursorNotSet(nameof(FirstOrDefaultAsync));
+            EnsureLockUsable(nameof(FirstOrDefaultAsync));
             Limit(1);
             var (sql, parms) = BuildSelectSql();
             var tableName = GetTableName();
@@ -604,6 +637,7 @@ public sealed class QueryBuilder<T> where T : class, new()
         try
         {
             EnsureCursorNotSet(nameof(ToPagedListAsync));
+            EnsureNoLock(nameof(ToPagedListAsync));
             var tblName = GetTableName();
             var (whereClause, parms) = BuildWhereSql();
             var joinSql = _joins.Count > 0 ? " " + string.Join(" ", _joins) : string.Empty;
@@ -673,6 +707,7 @@ public sealed class QueryBuilder<T> where T : class, new()
     {
         try
         {
+            EnsureNoLock(nameof(ToCursorPagedListAsync));
             if (pageSize <= 0 || pageSize == int.MaxValue)
                 throw new CursorPagingException("Cursor page size must be between 1 and Int32.MaxValue - 1.");
             if (_limit.HasValue || _offset.HasValue)
@@ -766,6 +801,7 @@ public sealed class QueryBuilder<T> where T : class, new()
         try
         {
             EnsureCursorNotSet(nameof(CountAsync));
+            EnsureNoLock(nameof(CountAsync));
             var tblName = GetTableName();
             var (whereClause, parms) = BuildWhereSql();
             var joinSql = _joins.Count > 0 ? " " + string.Join(" ", _joins) : string.Empty;
@@ -824,6 +860,62 @@ public sealed class QueryBuilder<T> where T : class, new()
         return Result<long>.Success(count);
     }
 
+    /// <summary>
+    /// Whether any row matches the query — <c>SELECT 1 … LIMIT 1</c>, so the server stops at
+    /// the first hit instead of counting. Honours <see cref="WithCache(TimeSpan)"/> and
+    /// <see cref="ForUpdate"/>.
+    /// </summary>
+    public async Task<Result<bool>> AnyAsync(CancellationToken ct = default)
+    {
+        try
+        {
+            EnsureCursorNotSet(nameof(AnyAsync));
+            EnsureLockUsable(nameof(AnyAsync));
+            var tblName = GetTableName();
+            var (whereClause, parms) = BuildWhereSql();
+            var joinSql = _joins.Count > 0 ? " " + string.Join(" ", _joins) : string.Empty;
+            var sql = $"SELECT 1 FROM {MySqlDialect.Quote(tblName)}{joinSql}{whereClause} LIMIT 1{LockSuffix()}";
+
+            if (ShouldCache)
+            {
+                var cacheKey = QueryCache.BuildCacheKey(_connectionId, tblName, sql, parms);
+                return await QueryCache.GetOrSetAsync(cacheKey, tblName, () => ExecuteAny(sql, parms, ct), _cacheTtl!.Value, _connectionId).ConfigureAwait(false);
+            }
+
+            return await ExecuteAny(sql, parms, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger?.Error($"[MySQL2] QueryBuilder.AnyAsync failed: {ex.Message} — query: {DescribeQueryForLog()}", ex);
+            return Result<bool>.Failure(Error.FromException(ex, "mysql.query_failed"));
+        }
+    }
+
+    /// <summary>
+    /// Whether any row matches the query and <paramref name="predicate"/>. Same as
+    /// <c>.Where(predicate).AnyAsync()</c>.
+    /// </summary>
+    public Task<Result<bool>> AnyAsync(Expression<Func<T, bool>> predicate, CancellationToken ct = default)
+    {
+        Where(predicate);
+        return AnyAsync(ct);
+    }
+
+    private async Task<Result<bool>> ExecuteAny(string sql, Dictionary<string, object?> parms, CancellationToken ct)
+    {
+        LogQuery(sql);
+        var sw = Stopwatch.StartNew();
+        var any = await ExecuteAsync(async conn =>
+        {
+            await using var cmd = BuildCommand(conn, sql, parms);
+            var raw = await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
+            return raw is not null and not DBNull;
+        }, ct).ConfigureAwait(false);
+        sw.Stop();
+        LogSlowQuery(sql, sw.ElapsedMilliseconds, parameters: parms);
+        return Result<bool>.Success(any);
+    }
+
     public Task<Result<TResult>> MaxAsync<TResult>(
         Expression<Func<T, TResult>> selector,
         CancellationToken ct = default)
@@ -846,6 +938,7 @@ public sealed class QueryBuilder<T> where T : class, new()
         try
         {
             EnsureCursorNotSet(nameof(AverageAsync));
+            EnsureNoLock(nameof(AverageAsync));
             var col = MySqlExpressionVisitor.TranslateSelector(selector);
             var tableName = GetTableName();
             var (whereClause, parms) = BuildWhereSql();
@@ -873,6 +966,7 @@ public sealed class QueryBuilder<T> where T : class, new()
         try
         {
             EnsureCursorNotSet(nameof(DeleteAsync));
+            EnsureNoLock(nameof(DeleteAsync));
             var tableName = GetTableName();
             // Hard delete — bypass the soft-delete read filter so it targets all matching rows.
             var (whereClause, parms) = BuildWhereSql(applySoftDelete: false);
@@ -907,8 +1001,11 @@ public sealed class QueryBuilder<T> where T : class, new()
     /// </code>
     /// </para>
     /// Each <c>new T { Prop = value }</c> binding maps to one <c>SET col = value</c>.
-    /// Values may reference captured variables (parameterized) or other columns of the
-    /// same row (<c>new T { Counter = t.Counter + 1 }</c>).
+    /// Values may reference captured variables or other columns of the same row
+    /// (<c>new T { Counter = Math.Min(cap, t.Counter + step) }</c>). Captured values are
+    /// always sent as parameters, including inside column expressions; only primitive
+    /// numbers are written into the SQL text. MySQL applies SET assignments left to right, so
+    /// a value that reads a column assigned earlier in the same setter sees its new value.
     /// </summary>
     public async Task<Result<int>> UpdateAsync(
         Expression<Func<T, T>> setExpression,
@@ -917,6 +1014,7 @@ public sealed class QueryBuilder<T> where T : class, new()
         try
         {
             EnsureCursorNotSet(nameof(UpdateAsync));
+            EnsureNoLock(nameof(UpdateAsync));
             if (setExpression.Body is not MemberInitExpression mi)
                 throw new ArgumentException(
                     "UpdateAsync setter must be a member-init expression like x => new T { Prop = value }.",
@@ -928,37 +1026,7 @@ public sealed class QueryBuilder<T> where T : class, new()
             var (whereClause, whereParms) = BuildWhereSql(applySoftDelete: false);
             var allParms = new Dictionary<string, object?>(whereParms);
 
-            var sets = new List<string>();
-            var idx = 0;
-            foreach (var binding in mi.Bindings)
-            {
-                if (binding is not MemberAssignment ma) continue;
-
-                var colMeta = EntityMetadata<T>.TryResolve(ma.Member.Name)
-                              ?? throw new ArgumentException(
-                                  $"Property '{ma.Member.Name}' is not mapped on '{typeof(T).Name}'.");
-                if (colMeta.IsAutoIncrement)
-                    throw new ArgumentException(
-                        $"Property '{ma.Member.Name}' is database-generated and cannot be updated.");
-                var colName = colMeta.ColumnName;
-
-                // If the value only depends on captured state (closure), bind as a parameter.
-                // Otherwise translate it as a column expression so `Counter = t.Counter + 1`
-                // becomes `counter = counter + 1`.
-                if (ReferencesRowParameter(ma.Expression, rowParam))
-                {
-                    var (sql, _) = SqlExpressionTranslator.Translate(ma.Expression, rowParam, null, null);
-                    sets.Add($"{MySqlDialect.Quote(colName)} = {sql}");
-                }
-                else
-                {
-                    var paramName = $"@upd_{idx++}";
-                    var value = ClosureEvaluator.Evaluate(ma.Expression);
-                    allParms[paramName] = TypeConverter.ToDbValue(value, colMeta.EffectiveStorageType);
-                    sets.Add($"{MySqlDialect.Quote(colName)} = {paramName}");
-                }
-            }
-
+            var sets = BuildSetClauses(mi, rowParam, allParms);
             if (sets.Count == 0)
                 return Result<int>.Success(0);
 
@@ -979,6 +1047,201 @@ public sealed class QueryBuilder<T> where T : class, new()
             _logger?.Error($"[MySQL2] QueryBuilder.UpdateAsync (typed) failed: {ex.Message} — query: {DescribeQueryForLog()}", ex);
             return Result<int>.Failure(Error.FromException(ex, "mysql.update_failed"));
         }
+    }
+
+    /// <summary>
+    /// Updates the matching rows and returns them as they are after the update, atomically:
+    /// no other writer can change them between the update and the read.
+    /// <para>
+    /// Example — refill a token bucket and read the new balance in one call:
+    /// <code>
+    /// var r = await mysql.Query&lt;Bucket&gt;()
+    ///     .Where(b =&gt; b.Key == key)
+    ///     .UpdateAndGetAsync(b =&gt; new Bucket { Tokens = Math.Min(cap, b.Tokens + refill) });
+    /// </code>
+    /// </para>
+    /// <para>
+    /// The setter follows the rules of <see cref="UpdateAsync(Expression{Func{T, T}}, CancellationToken)"/>.
+    /// <c>OrderBy</c> and <c>Take</c> limit which rows are updated, and a
+    /// <see cref="ForUpdate"/> wait mode is respected — <c>.OrderBy(j =&gt; j.Id).Take(1)
+    /// .ForUpdate(LockWait.SkipLocked).UpdateAndGetAsync(…)</c> claims one job from a queue.
+    /// </para>
+    /// <para>
+    /// MySQL has no <c>UPDATE … RETURNING</c>, so this locks the rows' primary keys with
+    /// <c>SELECT … FOR UPDATE</c>, then updates and re-reads them by key in one batch, all in
+    /// one transaction — the query's own <see cref="TransactionScope"/>, or a short one opened
+    /// for the call. The entity needs a primary key.
+    /// </para>
+    /// </summary>
+    public async Task<Result<List<T>>> UpdateAndGetAsync(
+        Expression<Func<T, T>> setExpression,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            EnsureCursorNotSet(nameof(UpdateAndGetAsync));
+            if (setExpression.Body is not MemberInitExpression mi)
+                throw new ArgumentException(
+                    "UpdateAndGetAsync setter must be a member-init expression like x => new T { Prop = value }.",
+                    nameof(setExpression));
+            if (_joins.Count > 0 || _groupBys.Count > 0 || _offset.HasValue)
+                throw new NotSupportedException("UpdateAndGetAsync supports Where, OrderBy, Take and ForUpdate only.");
+
+            var keys = EntityMetadata<T>.Columns.Where(c => c.IsPrimary).ToArray();
+            if (keys.Length == 0)
+                throw new InvalidOperationException(
+                    $"UpdateAndGetAsync needs a primary key on '{typeof(T).Name}' ([Column(Primary = true)]).");
+
+            var tableName = GetTableName();
+            var table = MySqlDialect.Quote(tableName);
+            // Same row targeting as UpdateAsync: soft-deleted rows are not filtered out.
+            var (whereClause, whereParms) = BuildWhereSql(applySoftDelete: false);
+            var setParms = new Dictionary<string, object?>();
+            var sets = BuildSetClauses(mi, setExpression.Parameters[0], setParms);
+            if (sets.Count == 0)
+                throw new ArgumentException("UpdateAndGetAsync setter assigns no columns.", nameof(setExpression));
+
+            var keyList = string.Join(", ", keys.Select(k => MySqlDialect.Quote(k.ColumnName)));
+            var orderBySql = _orderBys.Count > 0 ? $" ORDER BY {string.Join(", ", _orderBys)}" : string.Empty;
+            var limitSql = _limit.HasValue ? $" LIMIT {_limit.Value}" : string.Empty;
+            // A shared lock would deadlock two callers upgrading to the update; always lock
+            // exclusively, keeping only the caller's wait mode.
+            var lockSql = LockClause(exclusive: true, _lock?.Wait ?? LockWait.Wait);
+            var selectKeysSql = $"SELECT {keyList} FROM {table}{whereClause}{orderBySql}{limitSql} {lockSql}";
+
+            async Task<List<T>> Run(MySqlConnection conn, MySqlTransaction tx)
+            {
+                LogQuery(selectKeysSql);
+                var keyRows = new List<object?[]>();
+                await using (var cmd = BuildCommand(conn, selectKeysSql, whereParms))
+                {
+                    cmd.Transaction = tx;
+                    await using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+                    while (await reader.ReadAsync(ct).ConfigureAwait(false))
+                    {
+                        var row = new object?[keys.Length];
+                        for (var i = 0; i < keys.Length; i++)
+                            row[i] = reader.IsDBNull(i) ? null : reader.GetValue(i);
+                        keyRows.Add(row);
+                    }
+                }
+                if (keyRows.Count == 0) return [];
+
+                var parms = new Dictionary<string, object?>(setParms);
+                var keyPredicate = BuildKeyPredicate(keys, keyRows, parms);
+                var batchSql =
+                    $"UPDATE {table} SET {string.Join(", ", sets)} WHERE {keyPredicate}; " +
+                    $"SELECT * FROM {table} WHERE {keyPredicate}{orderBySql}";
+                LogQuery(batchSql);
+
+                await using var batch = BuildCommand(conn, batchSql, parms);
+                batch.Transaction = tx;
+                await using var rows = await batch.ExecuteReaderAsync(ct).ConfigureAwait(false);
+                // The UPDATE produces no result set; move on to the SELECT's.
+                while (rows.FieldCount == 0 && await rows.NextResultAsync(ct).ConfigureAwait(false)) { }
+                var map = EntityMetadata<T>.Materializer.CompileForReader(rows);
+                var items = new List<T>();
+                while (await rows.ReadAsync(ct).ConfigureAwait(false))
+                    items.Add(map(rows));
+                return items;
+            }
+
+            List<T> result;
+            if (_transactionScope is not null)
+            {
+                result = await Run(_transactionScope.Connection, _transactionScope.Transaction).ConfigureAwait(false);
+            }
+            else
+            {
+                result = await _connectionManager.ExecuteWithConnectionAsync(async conn =>
+                {
+                    await using var tx = await conn.BeginTransactionAsync(ct).ConfigureAwait(false);
+                    var items = await Run(conn, tx).ConfigureAwait(false);
+                    await tx.CommitAsync(ct).ConfigureAwait(false);
+                    return items;
+                }, _connectionId, ct).ConfigureAwait(false);
+            }
+
+            QueryCache.Invalidate(tableName);
+            return Result<List<T>>.Success(result);
+        }
+        catch (Exception ex)
+        {
+            _logger?.Error($"[MySQL2] QueryBuilder.UpdateAndGetAsync failed: {ex.Message} — query: {DescribeQueryForLog()}", ex);
+            return Result<List<T>>.Failure(Error.FromException(ex, "mysql.update_failed"));
+        }
+    }
+
+    // "pk IN (@k_0, @k_1)" for a single key; "((a = @k_0_0 AND b = @k_0_1) OR ...)" for a composite one.
+    private static string BuildKeyPredicate(
+        ColumnMetadata[] keys, List<object?[]> keyRows, Dictionary<string, object?> parms)
+    {
+        if (keys.Length == 1)
+        {
+            var names = new List<string>(keyRows.Count);
+            for (var r = 0; r < keyRows.Count; r++)
+            {
+                var name = $"@k_{r}";
+                parms[name] = keyRows[r][0] ?? DBNull.Value;
+                names.Add(name);
+            }
+            return $"{MySqlDialect.Quote(keys[0].ColumnName)} IN ({string.Join(", ", names)})";
+        }
+
+        var groups = new List<string>(keyRows.Count);
+        for (var r = 0; r < keyRows.Count; r++)
+        {
+            var terms = new string[keys.Length];
+            for (var i = 0; i < keys.Length; i++)
+            {
+                var name = $"@k_{r}_{i}";
+                parms[name] = keyRows[r][i] ?? DBNull.Value;
+                terms[i] = $"{MySqlDialect.Quote(keys[i].ColumnName)} = {name}";
+            }
+            groups.Add($"({string.Join(" AND ", terms)})");
+        }
+        return $"({string.Join(" OR ", groups)})";
+    }
+
+    /// <summary>
+    /// Turns the bindings of a <c>new T { … }</c> setter into <c>col = value</c> clauses and
+    /// adds every value they need to <paramref name="parms"/>. A value that depends only on
+    /// captured state binds as one parameter; one that reads the row translates as a column
+    /// expression (<c>Counter = t.Counter + 1</c> → <c>counter = (counter + 1)</c>) whose
+    /// captured values are parameters too.
+    /// </summary>
+    private static List<string> BuildSetClauses(
+        MemberInitExpression mi, ParameterExpression rowParam, Dictionary<string, object?> parms)
+    {
+        var sets = new List<string>();
+        var sink = new SqlParameterSink("@upd_");
+        foreach (var binding in mi.Bindings)
+        {
+            if (binding is not MemberAssignment ma) continue;
+
+            var colMeta = EntityMetadata<T>.TryResolve(ma.Member.Name)
+                          ?? throw new ArgumentException(
+                              $"Property '{ma.Member.Name}' is not mapped on '{typeof(T).Name}'.");
+            if (colMeta.IsAutoIncrement)
+                throw new ArgumentException(
+                    $"Property '{ma.Member.Name}' is database-generated and cannot be updated.");
+            var colName = MySqlDialect.Quote(colMeta.ColumnName);
+
+            if (ReferencesRowParameter(ma.Expression, rowParam))
+            {
+                var (sql, _) = SqlExpressionTranslator.Translate(
+                    ma.Expression, rowParam, null, null, sink, colMeta.EffectiveStorageType);
+                sets.Add($"{colName} = {sql}");
+            }
+            else
+            {
+                var value = ClosureEvaluator.Evaluate(ma.Expression);
+                var valueSql = value is null ? "NULL" : sink.Add(value, colMeta.EffectiveStorageType);
+                sets.Add($"{colName} = {valueSql}");
+            }
+        }
+        sink.CopyTo(parms);
+        return sets;
     }
 
     private static bool ReferencesRowParameter(Expression expr, ParameterExpression row)
@@ -1006,6 +1269,7 @@ public sealed class QueryBuilder<T> where T : class, new()
         try
         {
             EnsureCursorNotSet(nameof(UpdateAsync));
+            EnsureNoLock(nameof(UpdateAsync));
             foreach (var key in updates.Keys)
             {
                 EnsureValidColumn(key);
@@ -1065,7 +1329,7 @@ public sealed class QueryBuilder<T> where T : class, new()
         var limitSql = effectiveLimit.HasValue ? $" LIMIT {effectiveLimit.Value}" : string.Empty;
         var offsetSql = effectiveOffset.HasValue ? $" OFFSET {effectiveOffset.Value}" : string.Empty;
 
-        var sql = $"SELECT {selectCols} FROM {MySqlDialect.Quote(tableName)}{joinSql}{whereClause}{groupBySql}{orderBySql}{limitSql}{offsetSql}";
+        var sql = $"SELECT {selectCols} FROM {MySqlDialect.Quote(tableName)}{joinSql}{whereClause}{groupBySql}{orderBySql}{limitSql}{offsetSql}{LockSuffix()}";
         return (sql, parms);
     }
 
@@ -1106,6 +1370,39 @@ public sealed class QueryBuilder<T> where T : class, new()
                 $"After(cursor) can only be consumed by ToCursorPagedListAsync; '{operation}' is not a cursor terminal.");
     }
 
+    // ── Row locking ───────────────────────────────────────────────────────────
+
+    private string LockSuffix() => _lock is { } l ? " " + LockClause(l.Exclusive, l.Wait) : string.Empty;
+
+    private static string LockClause(bool exclusive, LockWait wait) => (exclusive, wait) switch
+    {
+        (true, LockWait.Wait)        => "FOR UPDATE",
+        (true, LockWait.NoWait)      => "FOR UPDATE NOWAIT",
+        (true, LockWait.SkipLocked)  => "FOR UPDATE SKIP LOCKED",
+        (false, LockWait.Wait)       => "LOCK IN SHARE MODE",
+        (false, LockWait.NoWait)     => "FOR SHARE NOWAIT",
+        _                            => "FOR SHARE SKIP LOCKED",
+    };
+
+    // Outside a transaction the lock would be released as soon as the statement finished,
+    // so a locking read there is almost certainly a bug — fail loudly instead.
+    private void EnsureLockUsable(string operation)
+    {
+        if (_lock is null) return;
+        if (_transactionScope is null)
+            throw new InvalidOperationException(
+                $"ForUpdate/ForShare needs a transaction: create the query with Query<T>(transactionScope) before calling {operation}.");
+        if (_groupBys.Count > 0)
+            throw new InvalidOperationException("ForUpdate/ForShare cannot be combined with GROUP BY.");
+    }
+
+    private void EnsureNoLock(string operation)
+    {
+        if (_lock is not null)
+            throw new InvalidOperationException(
+                $"ForUpdate/ForShare is not supported by {operation}; use ToListAsync, FirstOrDefaultAsync, AnyAsync, Select or UpdateAndGetAsync.");
+    }
+
     private async Task<TResult> ExecuteAsync<TResult>(
         Func<MySqlConnection, Task<TResult>> action,
         CancellationToken ct = default)
@@ -1137,6 +1434,7 @@ public sealed class QueryBuilder<T> where T : class, new()
         try
         {
             EnsureCursorNotSet($"{func} aggregate");
+            EnsureNoLock($"{func} aggregate");
             var col = MySqlExpressionVisitor.TranslateSelector(selector);
             var tableName = GetTableName();
             var (whereClause, parms) = BuildWhereSql();
