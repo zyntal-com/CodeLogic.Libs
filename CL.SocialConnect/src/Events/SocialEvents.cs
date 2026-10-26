@@ -36,6 +36,21 @@ public record SteamAuthenticatedEvent(
 ) : IEvent;
 
 /// <summary>
+/// Published on the <see cref="IEventBus"/> after a Steam OpenID ("Sign in through Steam") callback
+/// is verified or refused.
+/// </summary>
+/// <param name="SteamId">The 64-bit Steam ID, or empty when the assertion was refused before it was known.</param>
+/// <param name="Success">Whether Steam confirmed the sign-in.</param>
+/// <param name="VerifiedAt">UTC timestamp of the verification.</param>
+/// <param name="ErrorMessage">Why the sign-in was refused when <see cref="Success"/> is <c>false</c>.</param>
+public record SteamOpenIdVerifiedEvent(
+    string SteamId,
+    bool Success,
+    DateTime VerifiedAt,
+    string? ErrorMessage = null
+) : IEvent;
+
+/// <summary>
 /// Published on the <see cref="IEventBus"/> when a Steam player profile is fetched.
 /// </summary>
 /// <param name="SteamId">The 64-bit Steam ID of the fetched player.</param>

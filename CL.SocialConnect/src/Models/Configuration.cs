@@ -116,6 +116,14 @@ public class SteamConfig
         Group = "Steam", Order = 25, Collapsed = true)]
     public int TimeoutSeconds { get; set; } = 15;
 
+    /// <summary>
+    /// Whether "Sign in through Steam" (OpenID 2.0) is available. Active when Steam is enabled;
+    /// OpenID itself needs no API key, the key is for reading the player's profile afterwards.
+    /// </summary>
+    [ConfigField(Label = "Steam Sign-in (OpenID)", Description = "\"Sign in through Steam\" for websites.",
+        Group = "Steam", Order = 27)]
+    public bool OpenIdEnabled { get; set; } = true;
+
     /// <summary>Base URL for the Steam Web API. Typically not changed.</summary>
     [ConfigField(Label = "API Base URL", InputType = ConfigInputType.Url,
         Description = "Rarely changed.",
