@@ -46,6 +46,8 @@ public sealed class QueryBuilder<T> where T : class, new()
     // When false (default), reads on a [SoftDelete] entity append `<col> IS NULL`.
     private bool _includeDeleted;
     private string? _afterCursor;
+    // Set by ForUpdate / ForShare: a locking read, only valid inside a transaction scope.
+    private (bool Exclusive, LockWait Wait)? _lock;
 
     // ── Constructors ──────────────────────────────────────────────────────────
 
@@ -287,6 +289,7 @@ public sealed class QueryBuilder<T> where T : class, new()
         where TRight : class, new()
     {
         EnsureCursorNotSet(nameof(Join));
+        EnsureNoLock(nameof(Join));
         if (_orderBys.Count > 0 || _limit.HasValue || _offset.HasValue)
             throw new InvalidOperationException(
                 "Apply OrderBy / Take / Skip after .Join, on the returned JoinedQuery — " +
@@ -333,6 +336,7 @@ public sealed class QueryBuilder<T> where T : class, new()
     public ProjectedQuery<T, TResult> Select<TResult>(Expression<Func<T, TResult>> selector)
     {
         EnsureCursorNotSet(nameof(Select));
+        EnsureLockUsable(nameof(Select));
         var compiled = ProjectionCompiler.Compile(selector);
 
         var tableName = GetTableName();
@@ -343,7 +347,7 @@ public sealed class QueryBuilder<T> where T : class, new()
         var limitSql = _limit.HasValue ? $" LIMIT {_limit.Value}" : string.Empty;
         var offsetSql = _offset.HasValue ? $" OFFSET {_offset.Value}" : string.Empty;
 
-        var sql = $"SELECT {compiled.SelectList} FROM {EntityMetadata<T>.QualifiedTableNameFor(_connectionId)}{joinSql}{whereClause}{groupBySql}{orderBySql}{limitSql}{offsetSql}";
+        var sql = $"SELECT {compiled.SelectList} FROM {EntityMetadata<T>.QualifiedTableNameFor(_connectionId)}{joinSql}{whereClause}{groupBySql}{orderBySql}{limitSql}{offsetSql}{LockSuffix()}";
 
         // A subquery filter (WhereExists / WhereIn) references a second table whose
         // mutations the single-table version stamp cannot track, which is why ShouldCache /
@@ -371,6 +375,7 @@ public sealed class QueryBuilder<T> where T : class, new()
     public GroupedQuery<TKey, T> GroupBy<TKey>(Expression<Func<T, TKey>> keySelector)
     {
         EnsureCursorNotSet(nameof(GroupBy));
+        EnsureNoLock(nameof(GroupBy));
         var (whereClause, parms) = BuildWhereSql();
         // Same subquery-filter guard as Select: an aggregate over an EXISTS/IN-filtered
         // query cannot be invalidated by a mutation on the inner table.
@@ -379,6 +384,32 @@ public sealed class QueryBuilder<T> where T : class, new()
             _slowQueryThresholdMs, whereClause, parms, keySelector,
             _hasSubqueryWhere ? null : _cacheTtl, _orderBys, _limit, _offset,
             cacheDisallowed: _hasSubqueryWhere);
+    }
+
+    /// <summary>
+    /// Makes the read lock the rows it returns until the transaction ends
+    /// (<c>SELECT … FOR UPDATE</c>), so a read-modify-write needs no retry loop. Only valid
+    /// on a query created from a <see cref="TransactionScope"/>; honoured by
+    /// <c>ToListAsync</c>, <c>FirstOrDefaultAsync</c>, <c>AnyAsync</c>, <c>Select</c> and
+    /// <c>UpdateAndGetAsync</c>. <see cref="LockWait.SkipLocked"/> turns the query into a
+    /// job-queue claim; <see cref="LockWait.NoWait"/> fails with SQLSTATE 55P03 instead of
+    /// waiting.
+    /// </summary>
+    public QueryBuilder<T> ForUpdate(LockWait wait = LockWait.Wait)
+    {
+        _lock = (true, wait);
+        return this;
+    }
+
+    /// <summary>
+    /// Makes the read take a shared lock on the rows it returns until the transaction ends
+    /// (<c>SELECT … FOR SHARE</c>): others can read and share-lock them but not change them.
+    /// Same rules as <see cref="ForUpdate"/>.
+    /// </summary>
+    public QueryBuilder<T> ForShare(LockWait wait = LockWait.Wait)
+    {
+        _lock = (false, wait);
+        return this;
     }
 
     public QueryBuilder<T> WithConnection(string connectionId)
@@ -452,6 +483,7 @@ public sealed class QueryBuilder<T> where T : class, new()
         try
         {
             EnsureCursorNotSet(nameof(ToListAsync));
+            EnsureLockUsable(nameof(ToListAsync));
             var (sql, parms) = BuildSelectSql();
             var tableName = GetTableName();
 
@@ -542,6 +574,7 @@ public sealed class QueryBuilder<T> where T : class, new()
         try
         {
             EnsureCursorNotSet(nameof(FirstOrDefaultAsync));
+            EnsureLockUsable(nameof(FirstOrDefaultAsync));
             Limit(1);
             var (sql, parms) = BuildSelectSql();
             var tableName = GetTableName();
@@ -614,6 +647,7 @@ public sealed class QueryBuilder<T> where T : class, new()
         try
         {
             EnsureCursorNotSet(nameof(ToPagedListAsync));
+            EnsureNoLock(nameof(ToPagedListAsync));
             var tblName = GetTableName();
             var (whereClause, parms) = BuildWhereSql();
             var joinSql = _joins.Count > 0 ? " " + string.Join(" ", _joins) : string.Empty;
@@ -683,6 +717,7 @@ public sealed class QueryBuilder<T> where T : class, new()
     {
         try
         {
+            EnsureNoLock(nameof(ToCursorPagedListAsync));
             if (pageSize <= 0 || pageSize == int.MaxValue)
                 throw new CursorPagingException("Cursor page size must be between 1 and Int32.MaxValue - 1.");
             if (_limit.HasValue || _offset.HasValue)
@@ -776,6 +811,7 @@ public sealed class QueryBuilder<T> where T : class, new()
         try
         {
             EnsureCursorNotSet(nameof(CountAsync));
+            EnsureNoLock(nameof(CountAsync));
             var tblName = GetTableName();
             var (whereClause, parms) = BuildWhereSql();
             var joinSql = _joins.Count > 0 ? " " + string.Join(" ", _joins) : string.Empty;
@@ -834,6 +870,67 @@ public sealed class QueryBuilder<T> where T : class, new()
         return Result<long>.Success(count);
     }
 
+    /// <summary>
+    /// Whether any row matches the query — <c>SELECT 1 … LIMIT 1</c>, so the server stops at
+    /// the first hit instead of counting. Honours <see cref="WithCache(TimeSpan)"/> and
+    /// <see cref="ForUpdate"/>.
+    /// </summary>
+    public async Task<Result<bool>> AnyAsync(CancellationToken ct = default)
+    {
+        try
+        {
+            EnsureCursorNotSet(nameof(AnyAsync));
+            EnsureLockUsable(nameof(AnyAsync));
+            var tblName = GetTableName();
+            var (sql, parms) = BuildAnySql();
+
+            if (ShouldCache)
+            {
+                var cacheKey = QueryCache.BuildCacheKey(_connectionId, tblName, sql, parms);
+                return await QueryCache.GetOrSetAsync(cacheKey, tblName, () => ExecuteAny(sql, parms, ct), _cacheTtl!.Value, _connectionId).ConfigureAwait(false);
+            }
+
+            return await ExecuteAny(sql, parms, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger?.Error($"[PostgreSQL] QueryBuilder.AnyAsync failed: {ex.Message} — query: {DescribeQueryForLog()}", ex);
+            return Result<bool>.Failure(Error.FromException(ex, "postgresql.query_failed"));
+        }
+    }
+
+    /// <summary>
+    /// Whether any row matches the query and <paramref name="predicate"/>. Same as
+    /// <c>.Where(predicate).AnyAsync()</c>.
+    /// </summary>
+    public Task<Result<bool>> AnyAsync(Expression<Func<T, bool>> predicate, CancellationToken ct = default)
+    {
+        Where(predicate);
+        return AnyAsync(ct);
+    }
+
+    internal (string Sql, Dictionary<string, object?> Params) BuildAnySql()
+    {
+        var (whereClause, parms) = BuildWhereSql();
+        var joinSql = _joins.Count > 0 ? " " + string.Join(" ", _joins) : string.Empty;
+        return ($"SELECT 1 FROM {EntityMetadata<T>.QualifiedTableNameFor(_connectionId)}{joinSql}{whereClause} LIMIT 1{LockSuffix()}", parms);
+    }
+
+    private async Task<Result<bool>> ExecuteAny(string sql, Dictionary<string, object?> parms, CancellationToken ct)
+    {
+        LogQuery(sql);
+        var sw = Stopwatch.StartNew();
+        var any = await ExecuteAsync(async conn =>
+        {
+            await using var cmd = BuildCommand(conn, sql, parms);
+            var raw = await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
+            return raw is not null and not DBNull;
+        }, ct).ConfigureAwait(false);
+        sw.Stop();
+        LogSlowQuery(sql, sw.ElapsedMilliseconds, parameters: parms);
+        return Result<bool>.Success(any);
+    }
+
     public Task<Result<TResult>> MaxAsync<TResult>(
         Expression<Func<T, TResult>> selector,
         CancellationToken ct = default)
@@ -856,6 +953,7 @@ public sealed class QueryBuilder<T> where T : class, new()
         try
         {
             EnsureCursorNotSet(nameof(AverageAsync));
+            EnsureNoLock(nameof(AverageAsync));
             var col = PostgreSqlExpressionVisitor.TranslateSelector(selector);
             var tableName = GetTableName();
             var (whereClause, parms) = BuildWhereSql();
@@ -883,6 +981,7 @@ public sealed class QueryBuilder<T> where T : class, new()
         try
         {
             EnsureCursorNotSet(nameof(DeleteAsync));
+            EnsureNoLock(nameof(DeleteAsync));
             var tableName = GetTableName();
             // Hard delete — bypass the soft-delete read filter so it targets all matching rows.
             var (whereClause, parms) = BuildWhereSql(applySoftDelete: false);
@@ -929,6 +1028,7 @@ public sealed class QueryBuilder<T> where T : class, new()
         try
         {
             EnsureCursorNotSet(nameof(UpdateAsync));
+            EnsureNoLock(nameof(UpdateAsync));
             if (setExpression.Body is not MemberInitExpression mi)
                 throw new ArgumentException(
                     "UpdateAsync setter must be a member-init expression like x => new T { Prop = value }.",
@@ -961,6 +1061,122 @@ public sealed class QueryBuilder<T> where T : class, new()
             _logger?.Error($"[PostgreSQL] QueryBuilder.UpdateAsync (typed) failed: {ex.Message} — query: {DescribeQueryForLog()}", ex);
             return Result<int>.Failure(Error.FromException(ex, "postgresql.update_failed"));
         }
+    }
+
+    /// <summary>
+    /// Updates the matching rows and returns them as they are after the update, in one
+    /// atomic statement (<c>UPDATE … RETURNING *</c>).
+    /// <para>
+    /// Example — refill a token bucket and read the new balance in one call:
+    /// <code>
+    /// var r = await pg.Query&lt;Bucket&gt;()
+    ///     .Where(b =&gt; b.Key == key)
+    ///     .UpdateAndGetAsync(b =&gt; new Bucket { Tokens = Math.Min(cap, b.Tokens + refill) });
+    /// </code>
+    /// </para>
+    /// <para>
+    /// The setter follows the rules of <see cref="UpdateAsync(Expression{Func{T, T}}, CancellationToken)"/>.
+    /// <c>OrderBy</c> and <c>Take</c> limit which rows are updated, and a
+    /// <see cref="ForUpdate"/> wait mode is respected — <c>.OrderBy(j =&gt; j.Id).Take(1)
+    /// .ForUpdate(LockWait.SkipLocked).UpdateAndGetAsync(…)</c> claims one job from a queue.
+    /// PostgreSQL's UPDATE has no ORDER BY / LIMIT, so with any of those the target rows are
+    /// picked by primary key in a locking subquery
+    /// (<c>WHERE (pk) IN (SELECT pk … ORDER BY … LIMIT n FOR UPDATE …)</c>), which needs a
+    /// primary key on the entity. Returned rows follow the query's <c>OrderBy</c>.
+    /// </para>
+    /// <para>
+    /// Runs in the query's <see cref="TransactionScope"/> when there is one; otherwise the
+    /// single statement is atomic on its own.
+    /// </para>
+    /// </summary>
+    public async Task<Result<List<T>>> UpdateAndGetAsync(
+        Expression<Func<T, T>> setExpression,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            EnsureCursorNotSet(nameof(UpdateAndGetAsync));
+            var (sql, parms) = BuildUpdateAndGetSql(setExpression);
+            LogQuery(sql);
+            var sw = Stopwatch.StartNew();
+
+            var items = await ExecuteAsync(async conn =>
+            {
+                await using var cmd = BuildCommand(conn, sql, parms);
+                await using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+                var map = EntityMetadata<T>.Materializer.CompileForReader(reader);
+                var list = new List<T>();
+                while (await reader.ReadAsync(ct).ConfigureAwait(false))
+                    list.Add(map(reader));
+                return list;
+            }, ct).ConfigureAwait(false);
+
+            sw.Stop();
+            LogSlowQuery(sql, sw.ElapsedMilliseconds, items.Count, parms);
+            QueryCache.Invalidate(GetTableName());
+            return Result<List<T>>.Success(items);
+        }
+        catch (Exception ex)
+        {
+            _logger?.Error($"[PostgreSQL] QueryBuilder.UpdateAndGetAsync failed: {ex.Message} — query: {DescribeQueryForLog()}", ex);
+            return Result<List<T>>.Failure(Error.FromException(ex, "postgresql.update_failed"));
+        }
+    }
+
+    /// <summary>
+    /// Builds the single statement <see cref="UpdateAndGetAsync"/> runs. Without
+    /// <c>OrderBy</c>, <c>Take</c> or a non-blocking lock mode it is a plain
+    /// <c>UPDATE … WHERE … RETURNING *</c>; otherwise the rows are chosen by primary key in a
+    /// <c>SELECT … FOR UPDATE</c> subquery. An ordered result is re-sorted through a CTE,
+    /// since <c>RETURNING</c> has no order of its own.
+    /// </summary>
+    internal (string Sql, Dictionary<string, object?> Params) BuildUpdateAndGetSql(Expression<Func<T, T>> setExpression)
+    {
+        if (setExpression.Body is not MemberInitExpression mi)
+            throw new ArgumentException(
+                "UpdateAndGetAsync setter must be a member-init expression like x => new T { Prop = value }.",
+                nameof(setExpression));
+        if (_joins.Count > 0 || _groupBys.Count > 0 || _offset.HasValue)
+            throw new NotSupportedException("UpdateAndGetAsync supports Where, OrderBy, Take and ForUpdate only.");
+
+        var table = EntityMetadata<T>.QualifiedTableNameFor(_connectionId);
+        // Same row targeting as UpdateAsync: soft-deleted rows are not filtered out.
+        var (whereClause, whereParms) = BuildWhereSql(applySoftDelete: false);
+        var parms = new Dictionary<string, object?>(whereParms);
+        var sets = BuildSetClauses(mi, setExpression.Parameters[0], parms);
+        if (sets.Count == 0)
+            throw new ArgumentException("UpdateAndGetAsync setter assigns no columns.", nameof(setExpression));
+        var setSql = string.Join(", ", sets);
+
+        var wait = _lock?.Wait ?? LockWait.Wait;
+        var pickByKey = _orderBys.Count > 0 || _limit.HasValue || wait != LockWait.Wait;
+
+        string update;
+        if (!pickByKey)
+        {
+            update = $"UPDATE {table} SET {setSql}{whereClause} RETURNING *";
+        }
+        else
+        {
+            var keys = EntityMetadata<T>.Columns.Where(c => c.IsPrimary).ToArray();
+            if (keys.Length == 0)
+                throw new InvalidOperationException(
+                    $"UpdateAndGetAsync with OrderBy / Take / a lock wait mode needs a primary key on '{typeof(T).Name}' ([Column(Primary = true)]).");
+
+            var keyList = string.Join(", ", keys.Select(k => PostgreSqlDialect.Quote(k.ColumnName)));
+            var orderBySql = _orderBys.Count > 0 ? $" ORDER BY {string.Join(", ", _orderBys)}" : string.Empty;
+            var limitSql = _limit.HasValue ? $" LIMIT {_limit.Value}" : string.Empty;
+            // A shared lock would deadlock two callers upgrading to the update; always lock
+            // exclusively, keeping only the caller's wait mode.
+            var lockSql = LockClause(exclusive: true, wait);
+            update = $"UPDATE {table} SET {setSql} WHERE ({keyList}) IN " +
+                     $"(SELECT {keyList} FROM {table}{whereClause}{orderBySql}{limitSql} {lockSql}) RETURNING *";
+        }
+
+        var sql = _orderBys.Count > 0
+            ? $"WITH updated AS ({update}) SELECT * FROM updated ORDER BY {string.Join(", ", _orderBys)}"
+            : update;
+        return (sql, parms);
     }
 
     /// <summary>
@@ -1029,6 +1245,7 @@ public sealed class QueryBuilder<T> where T : class, new()
         try
         {
             EnsureCursorNotSet(nameof(UpdateAsync));
+            EnsureNoLock(nameof(UpdateAsync));
             foreach (var key in updates.Keys)
             {
                 EnsureValidColumn(key);
@@ -1071,7 +1288,7 @@ public sealed class QueryBuilder<T> where T : class, new()
 
     // ── Private helpers ───────────────────────────────────────────────────────
 
-    private (string Sql, Dictionary<string, object?> Params) BuildSelectSql(
+    internal (string Sql, Dictionary<string, object?> Params) BuildSelectSql(
         int? page = null,
         int? pageSize = null)
     {
@@ -1088,7 +1305,7 @@ public sealed class QueryBuilder<T> where T : class, new()
         var limitSql = effectiveLimit.HasValue ? $" LIMIT {effectiveLimit.Value}" : string.Empty;
         var offsetSql = effectiveOffset.HasValue ? $" OFFSET {effectiveOffset.Value}" : string.Empty;
 
-        var sql = $"SELECT {selectCols} FROM {EntityMetadata<T>.QualifiedTableNameFor(_connectionId)}{joinSql}{whereClause}{groupBySql}{orderBySql}{limitSql}{offsetSql}";
+        var sql = $"SELECT {selectCols} FROM {EntityMetadata<T>.QualifiedTableNameFor(_connectionId)}{joinSql}{whereClause}{groupBySql}{orderBySql}{limitSql}{offsetSql}{LockSuffix()}";
         return (sql, parms);
     }
 
@@ -1129,6 +1346,38 @@ public sealed class QueryBuilder<T> where T : class, new()
                 $"After(cursor) can only be consumed by ToCursorPagedListAsync; '{operation}' is not a cursor terminal.");
     }
 
+    // ── Row locking ───────────────────────────────────────────────────────────
+
+    // PostgreSQL places the locking clause after LIMIT / OFFSET.
+    private string LockSuffix() => _lock is { } l ? " " + LockClause(l.Exclusive, l.Wait) : string.Empty;
+
+    private static string LockClause(bool exclusive, LockWait wait) =>
+        (exclusive ? "FOR UPDATE" : "FOR SHARE") + wait switch
+        {
+            LockWait.NoWait     => " NOWAIT",
+            LockWait.SkipLocked => " SKIP LOCKED",
+            _                   => string.Empty,
+        };
+
+    // Outside a transaction the lock would be released as soon as the statement finished,
+    // so a locking read there is almost certainly a bug — fail loudly instead.
+    private void EnsureLockUsable(string operation)
+    {
+        if (_lock is null) return;
+        if (_transactionScope is null)
+            throw new InvalidOperationException(
+                $"ForUpdate/ForShare needs a transaction: create the query with Query<T>(transactionScope) before calling {operation}.");
+        if (_groupBys.Count > 0)
+            throw new InvalidOperationException("ForUpdate/ForShare cannot be combined with GROUP BY.");
+    }
+
+    private void EnsureNoLock(string operation)
+    {
+        if (_lock is not null)
+            throw new InvalidOperationException(
+                $"ForUpdate/ForShare is not supported by {operation}; use ToListAsync, FirstOrDefaultAsync, AnyAsync, Select or UpdateAndGetAsync.");
+    }
+
     private async Task<TResult> ExecuteAsync<TResult>(
         Func<NpgsqlConnection, Task<TResult>> action,
         CancellationToken ct = default)
@@ -1159,6 +1408,7 @@ public sealed class QueryBuilder<T> where T : class, new()
         try
         {
             EnsureCursorNotSet($"{func} aggregate");
+            EnsureNoLock($"{func} aggregate");
             var col = PostgreSqlExpressionVisitor.TranslateSelector(selector);
             var tableName = GetTableName();
             var (whereClause, parms) = BuildWhereSql();

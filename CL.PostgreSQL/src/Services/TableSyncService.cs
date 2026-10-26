@@ -56,6 +56,12 @@ public sealed class TableSyncService
         _appVersion = CodeLogicEnvironment.AppVersion;
     }
 
+    // Shared with DatabaseAdmin, which creates tables the same way a sync does.
+    internal SchemaAnalyzer Analyzer => _analyzer;
+    internal string AppVersion => _appVersion;
+    internal SyncMode ResolveMode(string connectionId) =>
+        _configLookup?.Invoke(connectionId)?.SyncMode ?? SyncMode.Production;
+
     private SchemaSyncLevel ResolveLevel(string connectionId) =>
         _configLookup?.Invoke(connectionId)?.EffectiveSyncLevel ?? SchemaSyncLevel.Safe;
 
@@ -371,7 +377,7 @@ public sealed class TableSyncService
 
     // ── Private helpers ────────────────────────────────────────────────────────
 
-    private async Task<bool> TableExistsAsync(
+    internal async Task<bool> TableExistsAsync(
         string tableName,
         string schemaName,
         string connectionId,
@@ -381,15 +387,16 @@ public sealed class TableSyncService
         {
             await using var cmd = conn.CreateCommand();
             // to_regclass is a single catalog lookup and, given a schema-qualified name,
-            // is unambiguous regardless of search_path.
+            // is unambiguous regardless of search_path. The name is passed quoted, as the DDL
+            // creates it: unquoted, to_regclass would fold a mixed-case name to lower case.
             cmd.CommandText = "SELECT to_regclass(@tbl) IS NOT NULL";
-            cmd.Parameters.AddWithValue("@tbl", $"{schemaName}.{tableName}");
+            cmd.Parameters.AddWithValue("@tbl", PostgreSqlDialect.Qualify(schemaName, tableName));
             var exists = await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
             return exists is bool found && found;
         }, connectionId, ct).ConfigureAwait(false);
     }
 
-    private async Task ExecuteSqlAsync(string sql, string connectionId, CancellationToken ct)
+    internal async Task ExecuteSqlAsync(string sql, string connectionId, CancellationToken ct)
     {
         await _connectionManager.ExecuteWithConnectionAsync(async conn =>
         {

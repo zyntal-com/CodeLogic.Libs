@@ -107,6 +107,42 @@ public sealed class ConnectionManager
         NpgsqlConnection.ClearPool(connection);
     }
 
+    /// <summary>
+    /// Runs <paramref name="action"/> on a server-level connection: the connection ID's host
+    /// and credentials, connected to its <see cref="PostgreSqlDatabaseConfig.MaintenanceDatabase"/>
+    /// instead of its own database, so that database can be created or dropped. The
+    /// connection is unpooled and closed afterwards.
+    /// </summary>
+    public async Task<TResult> ExecuteOnServerAsync<TResult>(
+        Func<NpgsqlConnection, Task<TResult>> action,
+        string connectionId = "Default",
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(action);
+        var config = RequireConfig(connectionId);
+        var builder = new NpgsqlConnectionStringBuilder(config.BuildConnectionString())
+        {
+            Database = string.IsNullOrWhiteSpace(config.MaintenanceDatabase) ? "postgres" : config.MaintenanceDatabase,
+            Pooling = false
+        };
+        await using var connection = new NpgsqlConnection(builder.ConnectionString);
+        await connection.OpenAsync(ct).ConfigureAwait(false);
+        return await action(connection).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Clears the idle pooled connections of every registered configuration that points at
+    /// <paramref name="database"/>, so they do not hold the database open during a DROP
+    /// DATABASE or go stale after it.
+    /// </summary>
+    internal void ClearPoolsForDatabase(string database)
+    {
+        // PostgreSQL database names are case-sensitive once created (quoted), so match exactly.
+        foreach (var config in _configs.Values)
+            if (string.Equals(config.Database, database, StringComparison.Ordinal))
+                ClearPool(config);
+    }
+
     /// <summary>Returns the configuration for the given connection ID, or null if not found.</summary>
     public PostgreSqlDatabaseConfig? GetConfiguration(string connectionId = "Default")
         => _configs.TryGetValue(connectionId, out var cfg) ? cfg : null;

@@ -77,6 +77,28 @@ public sealed class PostgreSqlDatabaseConfig
         RequiresRestart = true, Group = "Connection", Order = 14)]
     public string Password { get; set; } = string.Empty;
 
+    /// <summary>
+    /// Database the library connects to for server-level work — CREATE / DROP DATABASE and
+    /// database-existence checks — since PostgreSQL cannot create or drop the database a
+    /// session is connected to. Same host and credentials as <see cref="Database"/>.
+    /// Default: "postgres".
+    /// </summary>
+    [ConfigField(Label = "Maintenance Database",
+        Description = "Database used for CREATE / DROP DATABASE (cannot run while connected to the target).",
+        Placeholder = "postgres", RequiresRestart = true, Group = "Connection", Order = 15, Collapsed = true)]
+    public string MaintenanceDatabase { get; set; } = "postgres";
+
+    /// <summary>
+    /// When true, the library creates <see cref="Database"/> (with the server's default
+    /// encoding and locale) during initialization if the server does not have it yet. The
+    /// check and the CREATE run on <see cref="MaintenanceDatabase"/>. Needs a user allowed to
+    /// run CREATE DATABASE (the <c>CREATEDB</c> attribute). Default: false.
+    /// </summary>
+    [ConfigField(Label = "Create Database If Missing",
+        Description = "Create the database at startup when it does not exist. Requires the CREATEDB privilege.",
+        RequiresRestart = true, Group = "Connection", Order = 16, Collapsed = true)]
+    public bool CreateDatabaseIfMissing { get; set; } = false;
+
     /// <summary>Whether connection pooling is enabled. Default: true.</summary>
     [ConfigField(Label = "Enable Pooling", Description = "Use the Npgsql connection pool.",
         RequiresRestart = true, Group = "Pooling", Order = 20, Collapsed = true)]
