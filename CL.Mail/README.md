@@ -42,7 +42,7 @@ if (!result.IsSuccess)
 
 - **SMTP sending** — plain-text and/or HTML bodies, CC/BCC, attachments, custom headers, and message priority. A fresh connection is opened per send (no pooling).
 - **Fluent `MailBuilder`** — `mail.CreateMessage()` composes an immutable `MailMessage`; `Build()` throws if sender, recipients, subject, or a body are missing.
-- **Template engine** — JSON-backed templates with `{{var}}` / `${var}` / `{var}` substitution, `{{#if}}…{{#else}}…{{/if}}` conditionals, `{{#each}}…{{/each}}` loops, and `{{#section}}` / layout composition.
+- **Template engine** — JSON-backed templates with `{{var}}` / `${var}` / `{var}` substitution (HTML-encoded in HTML bodies; `{{{var}}}` for trusted HTML), `{{#if}}…{{#else}}…{{/if}}` conditionals, `{{#each}}…{{/each}}` loops, and `{{#section}}` / layout composition. Values are inserted once: placeholders inside a value are never expanded.
 - **Templated send** — `SendTemplatedAsync` renders a template by id and sends it in one call.
 - **IMAP reading** — list folders, fetch and page messages, fetch by UID with attachments, search, move/copy/delete, and add/remove flags.
 - **IMAP IDLE** — RFC 2177 push notifications via `StartIdleAsync` and the `NewMailReceived` event.
