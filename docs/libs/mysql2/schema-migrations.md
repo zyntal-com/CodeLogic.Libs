@@ -291,6 +291,47 @@ Result<bool> fromFile = await mysql.RestoreSchemaAsync(
 
 > Restore replays DDL only — rows in the dropped/recreated table are lost. Use it to recover schema shape, not data.
 
+## Database and table administration
+
+`mysql.Admin` (also available as methods directly on the library) creates, drops and checks
+databases and entity tables. It is meant for first-run setup, demos, per-test databases and
+resets; day-to-day schema changes stay with sync and migrations.
+
+```csharp
+await mysql.CreateDatabaseAsync("shop_test");                   // CHARACTER SET / COLLATE from config
+await mysql.CreateDatabaseAsync("shop_ci", charset: "utf8mb4", collation: "utf8mb4_0900_ai_ci");
+bool exists = (await mysql.DatabaseExistsAsync("shop_test")).Value;
+await mysql.DropDatabaseAsync("shop_test");
+
+await mysql.CreateTableAsync<Order>();      // create only; never alters an existing table
+bool has = (await mysql.TableExistsAsync<Order>()).Value;
+await mysql.TruncateTableAsync<Order>();    // TRUNCATE TABLE — also resets AUTO_INCREMENT
+await mysql.DropTableAsync<Order>();        // also forgets its __schema_state row
+```
+
+- All methods return `Result<bool>`. `Create*` returns `false` when the object already existed
+  (with `ifNotExists: true`, the default) and `Drop*` returns `false` when there was nothing to
+  drop (with `ifExists: true`). With the flag off, those cases are failures.
+- Database operations run on a server-level connection (same host and credentials, no default
+  database), so the user needs `CREATE` / `DROP` privileges. `DropDatabaseAsync` may drop any
+  database, including the one the connection is configured for; idle pooled connections to it
+  are cleared first.
+- Character set and collation names must be plain identifiers (`[A-Za-z0-9_]`); anything else
+  throws `ArgumentException` before reaching the server.
+- `CreateTableAsync<T>` records the table in `__schema_state`, so the next sync skips it, and
+  registers the entity like `SyncTableAsync<T>` does. MySQL refuses to truncate or drop a table
+  that another table's foreign key references.
+
+### Creating the database on startup
+
+Set `CreateDatabaseIfMissing` on a database in `config.mysql.json` and the library creates it
+(with that entry's `CharacterSet` / `Collation`) during initialization, before it first
+connects. It is off by default.
+
+```json
+"Default": { "Host": "localhost", "Database": "shop", "CreateDatabaseIfMissing": true }
+```
+
 ## See also
 
 - [Getting Started](../../getting-started.md) — load, configure, and use any `CL.*` library.

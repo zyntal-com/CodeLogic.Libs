@@ -4,6 +4,36 @@ All notable changes to **CodeLogic.MySQL2** are documented here. Versions follow
 [Semantic Versioning](https://semver.org/). The version listed here matches the
 NuGet package version of `CodeLogic.MySQL2`.
 
+## Unreleased
+
+### Security
+
+- **Captured values in column expressions are now parameters.** A typed `UpdateAsync` setter
+  that reads the row (`t => new T { A = t.A + x }`), grouped `Select` projections and `GroupBy`
+  keys used to write captured values into the SQL text, escaping only `'`. A string ending in a
+  backslash could break out of the literal. Every captured value except `NULL` and primitive
+  numbers is now bound as a parameter. This also keeps the fractional seconds of `DateTime`
+  values (previously cut to whole seconds) and binds enums by value (previously written as their
+  member name).
+
+### Added
+
+- **`Math.Min` / `Math.Max`** in setter, projection and grouping expressions (`LEAST` / `GREATEST`).
+- **Row locking**: `QueryBuilder.ForUpdate(LockWait)` / `ForShare(LockWait)` with
+  `LockWait.Wait | NoWait | SkipLocked`, for queries created from a `TransactionScope`.
+- **`QueryBuilder.UpdateAndGetAsync(setter)`** updates matching rows and returns them as they are
+  afterwards, atomically (honours `Where`, `OrderBy`, `Take` and the `ForUpdate` wait mode).
+- **`QueryBuilder.AnyAsync()` / `AnyAsync(predicate)`** — `SELECT 1 … LIMIT 1`.
+- **`Repository.UpsertAsync(entity, (current, incoming) => new T { … })`** — insert, or update the
+  existing row from its current values, in one `INSERT … ON DUPLICATE KEY UPDATE`.
+- **Database and table administration** on `MySQL2Library.Admin` (`DatabaseAdmin`) and as library
+  methods: `CreateDatabaseAsync`, `DropDatabaseAsync`, `DatabaseExistsAsync`, `CreateTableAsync<T>`,
+  `DropTableAsync<T>`, `TruncateTableAsync<T>`, `TableExistsAsync<T>` / `TableExistsAsync(name)`.
+- `MySqlDatabaseConfig.CreateDatabaseIfMissing` (default `false`) creates the database during
+  initialization.
+- `ConnectionManager.ExecuteOnServerAsync` runs work on a server-level connection (no default
+  database).
+
 ## 2026-10-24
 
 ### Added

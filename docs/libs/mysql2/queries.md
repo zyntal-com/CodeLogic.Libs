@@ -212,6 +212,7 @@ translation subtracts one to give 0–6.
 | `ToPagedListAsync(page, pageSize, ct)` | `Result<PagedResult<T>>` | data page + `COUNT(*)` |
 | `ToCursorPagedListAsync(pageSize, ct)` | `Result<CursorPagedResult<T>>` | keyset page + one lookahead row |
 | `CountAsync(ct)` | `Result<long>` | `SELECT COUNT(*)` |
+| `AnyAsync(ct)` / `AnyAsync(predicate, ct)` | `Result<bool>` | `SELECT 1 … LIMIT 1` |
 | `MaxAsync<TResult>(selector, ct)` | `Result<TResult>` | `SELECT MAX(col)` |
 | `MinAsync<TResult>(selector, ct)` | `Result<TResult>` | `SELECT MIN(col)` |
 | `SumAsync<TResult>(selector, ct)` | `Result<TResult>` | `SELECT SUM(col)` |
@@ -249,6 +250,44 @@ Result<int> purged = await mysql.Query<Order>()
     .Where(o => o.CreatedUtc < DateTime.UtcNow.AddYears(-3))
     .DeleteAsync();
 ```
+
+A setter value can read the row it updates, including through `Math.Min` / `Math.Max`
+(`LEAST` / `GREATEST`), so clamps and counters stay in SQL:
+
+```csharp
+await mysql.Query<Bucket>()
+    .Where(b => b.Key == key)
+    .UpdateAsync(b => new Bucket { Tokens = Math.Min(cap, b.Tokens + refill) });
+```
+
+Captured values (`cap`, `refill`, strings, dates, enums) are always sent as parameters, also
+inside such column expressions; only primitive numbers are written into the SQL text. MySQL
+applies `SET` assignments left to right, so a value that reads a column assigned earlier in
+the same setter sees its new value. `LEAST` / `GREATEST` return NULL when either argument is
+NULL.
+
+### Update and return the rows — `UpdateAndGetAsync`
+
+`UpdateAndGetAsync` runs the same setter and returns the updated rows as they are after the
+update, with no other writer in between:
+
+```csharp
+Result<List<Bucket>> r = await mysql.Query<Bucket>()
+    .Where(b => b.Key == key)
+    .UpdateAndGetAsync(b => new Bucket { Tokens = Math.Min(cap, b.Tokens + refill) });
+
+// Claim one job from a queue; concurrent workers skip rows another worker holds.
+Result<List<Job>> claimed = await mysql.Query<Job>()
+    .Where(j => j.Status == "queued")
+    .OrderBy(j => j.Id).Take(1)
+    .ForUpdate(LockWait.SkipLocked)
+    .UpdateAndGetAsync(j => new Job { Status = "running", StartedUtc = now });
+```
+
+MySQL has no `UPDATE … RETURNING`, so it runs as one transaction: `SELECT <pk> … FOR UPDATE`,
+then the `UPDATE` and a re-read by key in one batch. It uses the query's `TransactionScope`
+when there is one and otherwise opens a short transaction of its own. The entity needs a
+primary key; `Where`, `OrderBy`, `Take` and a `ForUpdate` wait mode are honoured.
 
 > The query builder's bulk `UpdateAsync` / `DeleteAsync` stay raw — they do **not** apply soft-delete auto-filtering, so you can target or restore deleted rows. `QueryBuilder.DeleteAsync` is always a hard delete. Soft-delete behaviour applies only to single-table reads and `Repository.DeleteAsync`; see [Schema & Migrations](schema-migrations.md).
 
@@ -302,6 +341,39 @@ a hand-written statement on them from application code. Where raw SQL genuinely 
 transactional, write it as an `IMigration`: `IMigrationContext` exposes the live `Connection`
 and `Transaction` along with `ExecuteAsync` / `QueryAsync` / `ScalarAsync` helpers that
 already run on them.
+
+### Row locking — `ForUpdate` / `ForShare`
+
+Inside a transaction, `ForUpdate()` locks the rows a read returns until the transaction ends,
+so a read-modify-write needs no retry loop. `ForShare()` takes a shared lock: others can still
+read the rows but not change them.
+
+```csharp
+await using var tx = await mysql.BeginTransactionAsync();
+
+var account = (await mysql.Query<Account>(tx)
+    .Where(a => a.Id == id)
+    .ForUpdate()
+    .FirstOrDefaultAsync()).Value;
+
+account!.Balance -= 100m;
+await mysql.GetRepository<Account>(tx).UpdateAsync(account);
+await tx.CommitAsync();
+```
+
+| Call | SQL |
+|------|-----|
+| `ForUpdate()` | `FOR UPDATE` |
+| `ForUpdate(LockWait.NoWait)` | `FOR UPDATE NOWAIT` — fail at once instead of waiting |
+| `ForUpdate(LockWait.SkipLocked)` | `FOR UPDATE SKIP LOCKED` — leave locked rows out (job queues) |
+| `ForShare()` | `LOCK IN SHARE MODE` (MySQL and MariaDB) |
+| `ForShare(LockWait.NoWait / SkipLocked)` | `FOR SHARE NOWAIT / SKIP LOCKED` (MySQL 8+) |
+
+`SKIP LOCKED` and `NOWAIT` need MySQL 8.0+ or MariaDB 10.6+. A locking read only makes sense
+inside a transaction, so it fails when the query was not created from a `TransactionScope`.
+It is honoured by `ToListAsync`, `FirstOrDefaultAsync`, `AnyAsync`, `Select` and
+`UpdateAndGetAsync`; the other terminals (counts, aggregates, paging, `GroupBy`, typed joins)
+refuse it.
 
 > Statements inside an explicit transaction scope are **never** transient-retried — the whole transaction is the caller's to retry. The result cache and smart-cache pools are also disabled inside a transaction. See [Performance & Caching](performance.md).
 
