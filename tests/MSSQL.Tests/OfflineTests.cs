@@ -132,6 +132,14 @@ public sealed class OfflineTests
         "DataType", "StorageType", "TableEngine", "Charset", "TableAttribute", "ColumnAttribute"
     ];
 
+    // Member signatures that differ on purpose. SQL Server has no per-database character set,
+    // so CreateDatabaseAsync (library facade and DatabaseAdmin) drops MySQL's charset parameter.
+    private static readonly HashSet<string> NativeMemberExclusions =
+    [
+        "M:CreateDatabaseAsync`0(System.String,System.String,System.String,System.Boolean,System.String,System.Threading.CancellationToken):System.Threading.Tasks.Task`1[CodeLogic.Core.Results.Result`1[System.Boolean]]",
+        "M:CreateDatabaseAsync`0(System.String,System.String,System.Boolean,System.String,System.Threading.CancellationToken):System.Threading.Tasks.Task`1[CodeLogic.Core.Results.Result`1[System.Boolean]]"
+    ];
+
     private static string NormalizedTypeName(Type type) => type.Name
         .Replace("MySQL2Library", "DatabaseLibrary", StringComparison.Ordinal)
         .Replace("MSSQLLibrary", "DatabaseLibrary", StringComparison.Ordinal)
@@ -164,6 +172,8 @@ public sealed class OfflineTests
         }
         var expectedMembers = Signatures(expected);
         var actualMembers = Signatures(actual);
+        expectedMembers.ExceptWith(NativeMemberExclusions);
+        actualMembers.ExceptWith(NativeMemberExclusions);
         Assert.True(expectedMembers.SetEquals(actualMembers),
             $"API mismatch for {expected.Name}. Missing: {string.Join("; ", expectedMembers.Except(actualMembers))}. Extra: {string.Join("; ", actualMembers.Except(expectedMembers))}.");
     }

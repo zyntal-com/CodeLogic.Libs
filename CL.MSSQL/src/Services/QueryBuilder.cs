@@ -46,6 +46,8 @@ public sealed class QueryBuilder<T> where T : class, new()
     // When false (default), reads on a [SoftDelete] entity append `<col> IS NULL`.
     private bool _includeDeleted;
     private string? _afterCursor;
+    // Set by ForUpdate / ForShare: a locking read, only valid inside a transaction scope.
+    private (bool Exclusive, LockWait Wait)? _lock;
 
     // ── Constructors ──────────────────────────────────────────────────────────
 
@@ -243,6 +245,7 @@ public sealed class QueryBuilder<T> where T : class, new()
     public QueryBuilder<T> Join(string table, string condition, JoinType type = JoinType.Inner)
     {
         EnsureCursorNotSet(nameof(Join));
+        EnsureNoLock(nameof(Join));
         var keyword = type switch
         {
             JoinType.Left  => "LEFT JOIN",
@@ -287,6 +290,7 @@ public sealed class QueryBuilder<T> where T : class, new()
         where TRight : class, new()
     {
         EnsureCursorNotSet(nameof(Join));
+        EnsureNoLock(nameof(Join));
         if (_orderBys.Count > 0 || _limit.HasValue || _offset.HasValue)
             throw new InvalidOperationException(
                 "Apply OrderBy / Take / Skip after .Join, on the returned JoinedQuery — " +
@@ -333,6 +337,7 @@ public sealed class QueryBuilder<T> where T : class, new()
     public ProjectedQuery<T, TResult> Select<TResult>(Expression<Func<T, TResult>> selector)
     {
         EnsureCursorNotSet(nameof(Select));
+        EnsureLockUsable(nameof(Select));
         var compiled = ProjectionCompiler.Compile(selector);
 
         var tableName = GetTableName();
@@ -345,7 +350,7 @@ public sealed class QueryBuilder<T> where T : class, new()
         var pagingSql = _offset.HasValue
             ? $" OFFSET {_offset.Value} ROWS" + (_limit.HasValue ? $" FETCH NEXT {_limit.Value} ROWS ONLY" : "") : string.Empty;
 
-        var sql = $"SELECT {topSql}{compiled.SelectList} FROM {EntityMetadata<T>.QualifiedTableName}{joinSql}{whereClause}{groupBySql}{orderBySql}{pagingSql}";
+        var sql = $"SELECT {topSql}{compiled.SelectList} FROM {EntityMetadata<T>.QualifiedTableName}{LockHint()}{joinSql}{whereClause}{groupBySql}{orderBySql}{pagingSql}";
 
         // A subquery-filtered query is not cacheable — the cache stamps an entry with a single
         // table's version, so a mutation on the EXISTS / IN inner table could never invalidate
@@ -373,6 +378,7 @@ public sealed class QueryBuilder<T> where T : class, new()
     public GroupedQuery<TKey, T> GroupBy<TKey>(Expression<Func<T, TKey>> keySelector)
     {
         EnsureCursorNotSet(nameof(GroupBy));
+        EnsureNoLock(nameof(GroupBy));
         var (whereClause, parms) = BuildWhereSql();
         // Same guard as Select: a grouped projection over a subquery filter is not cacheable.
         return new GroupedQuery<TKey, T>(
@@ -380,6 +386,35 @@ public sealed class QueryBuilder<T> where T : class, new()
             _slowQueryThresholdMs, whereClause, parms, keySelector,
             _hasSubqueryWhere ? null : _cacheTtl, _orderBys, _limit, _offset,
             cacheDisallowed: _hasSubqueryWhere);
+    }
+
+    /// <summary>
+    /// Makes the read lock the rows it returns until the transaction ends, so a
+    /// read-modify-write needs no retry loop. Renders the table hint
+    /// <c>WITH (UPDLOCK, ROWLOCK)</c> after the table; <see cref="LockWait.NoWait"/> adds
+    /// <c>NOWAIT</c> and <see cref="LockWait.SkipLocked"/> adds <c>READPAST</c>, which turns
+    /// the query into a job-queue claim. Only valid on a query created from a
+    /// <see cref="TransactionScope"/>; honoured by <c>ToListAsync</c>,
+    /// <c>FirstOrDefaultAsync</c>, <c>AnyAsync</c>, <c>Select</c> and <c>UpdateAndGetAsync</c>.
+    /// </summary>
+    public QueryBuilder<T> ForUpdate(LockWait wait = LockWait.Wait)
+    {
+        _lock = (true, wait);
+        return this;
+    }
+
+    /// <summary>
+    /// Makes the read take a shared lock on the rows it returns until the transaction ends:
+    /// others can read them but not change them. Same rules as <see cref="ForUpdate"/>.
+    /// Renders <c>WITH (HOLDLOCK, ROWLOCK)</c> (serializable: key ranges are locked too, so no
+    /// new matching row can appear). SQL Server does not allow <c>READPAST</c> with
+    /// <c>HOLDLOCK</c>, so <see cref="LockWait.SkipLocked"/> uses <c>REPEATABLEREAD</c> instead,
+    /// which holds the shared locks on the rows read but not on the ranges between them.
+    /// </summary>
+    public QueryBuilder<T> ForShare(LockWait wait = LockWait.Wait)
+    {
+        _lock = (false, wait);
+        return this;
     }
 
     public QueryBuilder<T> WithConnection(string connectionId)
@@ -468,6 +503,7 @@ public sealed class QueryBuilder<T> where T : class, new()
         try
         {
             EnsureCursorNotSet(nameof(ToListAsync));
+            EnsureLockUsable(nameof(ToListAsync));
             var (sql, parms) = BuildSelectSql();
             var tableName = GetTableName();
 
@@ -558,6 +594,7 @@ public sealed class QueryBuilder<T> where T : class, new()
         try
         {
             EnsureCursorNotSet(nameof(FirstOrDefaultAsync));
+            EnsureLockUsable(nameof(FirstOrDefaultAsync));
             Limit(1);
             var (sql, parms) = BuildSelectSql();
             var tableName = GetTableName();
@@ -630,6 +667,7 @@ public sealed class QueryBuilder<T> where T : class, new()
         try
         {
             EnsureCursorNotSet(nameof(ToPagedListAsync));
+            EnsureNoLock(nameof(ToPagedListAsync));
             var tblName = GetTableName();
             var (whereClause, parms) = BuildWhereSql();
             var joinSql = _joins.Count > 0 ? " " + string.Join(" ", _joins) : string.Empty;
@@ -699,6 +737,7 @@ public sealed class QueryBuilder<T> where T : class, new()
     {
         try
         {
+            EnsureNoLock(nameof(ToCursorPagedListAsync));
             if (pageSize <= 0 || pageSize == int.MaxValue)
                 throw new CursorPagingException("Cursor page size must be between 1 and Int32.MaxValue - 1.");
             if (_limit.HasValue || _offset.HasValue)
@@ -792,6 +831,7 @@ public sealed class QueryBuilder<T> where T : class, new()
         try
         {
             EnsureCursorNotSet(nameof(CountAsync));
+            EnsureNoLock(nameof(CountAsync));
             var tblName = GetTableName();
             var (whereClause, parms) = BuildWhereSql();
             var joinSql = _joins.Count > 0 ? " " + string.Join(" ", _joins) : string.Empty;
@@ -850,6 +890,67 @@ public sealed class QueryBuilder<T> where T : class, new()
         return Result<long>.Success(count);
     }
 
+    /// <summary>
+    /// Whether any row matches the query — <c>SELECT TOP (1) 1 …</c>, so the server stops at
+    /// the first hit instead of counting. Honours <see cref="WithCache(TimeSpan)"/> and
+    /// <see cref="ForUpdate"/>.
+    /// </summary>
+    public async Task<Result<bool>> AnyAsync(CancellationToken ct = default)
+    {
+        try
+        {
+            EnsureCursorNotSet(nameof(AnyAsync));
+            EnsureLockUsable(nameof(AnyAsync));
+            var (sql, parms) = BuildAnySql();
+            var tblName = GetTableName();
+
+            if (ShouldCache)
+            {
+                var cacheKey = QueryCache.BuildCacheKey(_connectionId, tblName, sql, parms);
+                return await QueryCache.GetOrSetAsync(cacheKey, tblName, () => ExecuteAny(sql, parms, ct), _cacheTtl!.Value, _connectionId).ConfigureAwait(false);
+            }
+
+            return await ExecuteAny(sql, parms, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger?.Error($"[MSSQL] QueryBuilder.AnyAsync failed: {ex.Message} — query: {DescribeQueryForLog()}", ex);
+            return Result<bool>.Failure(Error.FromException(ex, "mssql.query_failed"));
+        }
+    }
+
+    /// <summary>
+    /// Whether any row matches the query and <paramref name="predicate"/>. Same as
+    /// <c>.Where(predicate).AnyAsync()</c>.
+    /// </summary>
+    public Task<Result<bool>> AnyAsync(Expression<Func<T, bool>> predicate, CancellationToken ct = default)
+    {
+        Where(predicate);
+        return AnyAsync(ct);
+    }
+
+    internal (string Sql, Dictionary<string, object?> Params) BuildAnySql()
+    {
+        var (whereClause, parms) = BuildWhereSql();
+        var joinSql = _joins.Count > 0 ? " " + string.Join(" ", _joins) : string.Empty;
+        return ($"SELECT TOP (1) 1 FROM {EntityMetadata<T>.QualifiedTableName}{LockHint()}{joinSql}{whereClause}", parms);
+    }
+
+    private async Task<Result<bool>> ExecuteAny(string sql, Dictionary<string, object?> parms, CancellationToken ct)
+    {
+        LogQuery(sql);
+        var sw = Stopwatch.StartNew();
+        var any = await ExecuteAsync(async conn =>
+        {
+            await using var cmd = BuildCommand(conn, sql, parms);
+            var raw = await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
+            return raw is not null and not DBNull;
+        }, ct).ConfigureAwait(false);
+        sw.Stop();
+        LogSlowQuery(sql, sw.ElapsedMilliseconds);
+        return Result<bool>.Success(any);
+    }
+
     public Task<Result<TResult>> MaxAsync<TResult>(
         Expression<Func<T, TResult>> selector,
         CancellationToken ct = default)
@@ -872,6 +973,7 @@ public sealed class QueryBuilder<T> where T : class, new()
         try
         {
             EnsureCursorNotSet(nameof(AverageAsync));
+            EnsureNoLock(nameof(AverageAsync));
             var col = SqlServerExpressionVisitor.TranslateSelector(selector);
             var tableName = GetTableName();
             var (whereClause, parms) = BuildWhereSql();
@@ -899,6 +1001,7 @@ public sealed class QueryBuilder<T> where T : class, new()
         try
         {
             EnsureCursorNotSet(nameof(DeleteAsync));
+            EnsureNoLock(nameof(DeleteAsync));
             var tableName = GetTableName();
             // Hard delete — bypass the soft-delete read filter so it targets all matching rows.
             var (whereClause, parms) = BuildWhereSql(applySoftDelete: false);
@@ -945,6 +1048,7 @@ public sealed class QueryBuilder<T> where T : class, new()
         try
         {
             EnsureCursorNotSet(nameof(UpdateAsync));
+            EnsureNoLock(nameof(UpdateAsync));
             if (setExpression.Body is not MemberInitExpression mi)
                 throw new ArgumentException(
                     "UpdateAsync setter must be a member-init expression like x => new T { Prop = value }.",
@@ -977,6 +1081,117 @@ public sealed class QueryBuilder<T> where T : class, new()
             _logger?.Error($"[MSSQL] QueryBuilder.UpdateAsync (typed) failed: {ex.Message} — query: {DescribeQueryForLog()}", ex);
             return Result<int>.Failure(Error.FromException(ex, "mssql.update_failed"));
         }
+    }
+
+    /// <summary>
+    /// Updates the matching rows and returns them as they are after the update, in one
+    /// statement: no other writer can change them between the update and the read.
+    /// <para>
+    /// Example — refill a token bucket and read the new balance in one call:
+    /// <code>
+    /// var r = await mssql.Query&lt;Bucket&gt;()
+    ///     .Where(b =&gt; b.Key == key)
+    ///     .UpdateAndGetAsync(b =&gt; new Bucket { Tokens = Math.Min(cap, b.Tokens + refill) });
+    /// </code>
+    /// </para>
+    /// <para>
+    /// The setter follows the rules of <see cref="UpdateAsync(Expression{Func{T, T}}, CancellationToken)"/>.
+    /// <c>Take</c> (with an optional <c>OrderBy</c>) limits which rows are updated, and a
+    /// <see cref="ForUpdate"/> wait mode is respected — <c>.OrderBy(j =&gt; j.Id).Take(1)
+    /// .ForUpdate(LockWait.SkipLocked).UpdateAndGetAsync(…)</c> claims one job from a queue.
+    /// </para>
+    /// <para>
+    /// Emits <c>UPDATE … SET … OUTPUT INSERTED.* WHERE …</c>; with <c>Take</c> it updates
+    /// through <c>WITH cte AS (SELECT TOP (n) * FROM … WITH (UPDLOCK, ROWLOCK) WHERE … ORDER BY …)
+    /// UPDATE cte SET … OUTPUT INSERTED.*</c>. <c>OUTPUT</c> carries no order, so the rows
+    /// are sorted by the <c>OrderBy</c> keys after they are read. Runs on the query's
+    /// <see cref="TransactionScope"/> when there is one; otherwise the single statement is
+    /// atomic by itself. No primary key is needed.
+    /// </para>
+    /// <para><b>Triggers:</b> SQL Server rejects <c>OUTPUT</c> without <c>INTO</c> on a table
+    /// that has an enabled trigger, so this fails on such tables.</para>
+    /// </summary>
+    public async Task<Result<List<T>>> UpdateAndGetAsync(
+        Expression<Func<T, T>> setExpression,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            EnsureCursorNotSet(nameof(UpdateAndGetAsync));
+            var (sql, parms) = BuildUpdateAndGetSql(setExpression);
+            var tableName = GetTableName();
+
+            LogQuery(sql);
+            var sw = Stopwatch.StartNew();
+            var items = await ExecuteAsync(async conn =>
+            {
+                await using var cmd = BuildCommand(conn, sql, parms);
+                await using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+                var map = EntityMetadata<T>.Materializer.CompileForReader(reader);
+                var rows = new List<T>();
+                while (await reader.ReadAsync(ct).ConfigureAwait(false))
+                    rows.Add(map(reader));
+                return rows;
+            }, ct).ConfigureAwait(false);
+            sw.Stop();
+            LogSlowQuery(sql, sw.ElapsedMilliseconds, items.Count);
+
+            if (_cursorOrders.Count > 0 && items.Count > 1)
+                items.Sort(CompareByOrder);
+
+            QueryCache.Invalidate(tableName);
+            return Result<List<T>>.Success(items);
+        }
+        catch (Exception ex)
+        {
+            _logger?.Error($"[MSSQL] QueryBuilder.UpdateAndGetAsync failed: {ex.Message} — query: {DescribeQueryForLog()}", ex);
+            return Result<List<T>>.Failure(Error.FromException(ex, "mssql.update_failed"));
+        }
+    }
+
+    internal (string Sql, Dictionary<string, object?> Params) BuildUpdateAndGetSql(Expression<Func<T, T>> setExpression)
+    {
+        if (setExpression.Body is not MemberInitExpression mi)
+            throw new ArgumentException(
+                "UpdateAndGetAsync setter must be a member-init expression like x => new T { Prop = value }.",
+                nameof(setExpression));
+        if (_joins.Count > 0 || _groupBys.Count > 0 || _offset.HasValue)
+            throw new NotSupportedException("UpdateAndGetAsync supports Where, OrderBy, Take and ForUpdate only.");
+
+        var table = EntityMetadata<T>.QualifiedTableName;
+        // Same row targeting as UpdateAsync: soft-deleted rows are not filtered out. The WHERE
+        // terms are unqualified column names, valid against the table and against the CTE.
+        var (whereClause, parms) = BuildWhereSql(applySoftDelete: false);
+        var sets = BuildSetClauses(mi, setExpression.Parameters[0], parms);
+        if (sets.Count == 0)
+            throw new ArgumentException("UpdateAndGetAsync setter assigns no columns.", nameof(setExpression));
+        var setSql = string.Join(", ", sets);
+
+        // A shared lock would deadlock two callers upgrading to the update; always lock
+        // exclusively, keeping only the caller's wait mode.
+        var wait = _lock?.Wait ?? LockWait.Wait;
+        if (_limit.HasValue)
+        {
+            var orderBySql = _orderBys.Count > 0 ? $" ORDER BY {string.Join(", ", _orderBys)}" : string.Empty;
+            return ($"WITH [__target] AS (SELECT TOP ({_limit.Value}) * FROM {table}{LockHintFor(true, wait)}{whereClause}{orderBySql}) " +
+                    $"UPDATE [__target] SET {setSql} OUTPUT INSERTED.*;", parms);
+        }
+
+        // Without Take every matching row is updated; the UPDATE takes its own exclusive locks,
+        // so a hint is only needed to carry a NOWAIT / READPAST wait mode.
+        var hint = wait == LockWait.Wait ? string.Empty : LockHintFor(true, wait);
+        return ($"UPDATE {table}{hint} SET {setSql} OUTPUT INSERTED.*{whereClause};", parms);
+    }
+
+    // Orders materialized rows by the query's OrderBy keys (NULLs first, as SQL Server does).
+    private int CompareByOrder(T a, T b)
+    {
+        foreach (var order in _cursorOrders)
+        {
+            var cmp = Comparer<object>.Default.Compare(order.Column.Get(a)!, order.Column.Get(b)!);
+            if (cmp != 0) return order.Descending ? -cmp : cmp;
+        }
+        return 0;
     }
 
     /// <summary>
@@ -1045,6 +1260,7 @@ public sealed class QueryBuilder<T> where T : class, new()
         try
         {
             EnsureCursorNotSet(nameof(UpdateAsync));
+            EnsureNoLock(nameof(UpdateAsync));
             foreach (var key in updates.Keys)
             {
                 EnsureValidColumn(key);
@@ -1106,7 +1322,7 @@ public sealed class QueryBuilder<T> where T : class, new()
         var pagingSql = effectiveOffset.HasValue
             ? $" OFFSET {effectiveOffset.Value} ROWS" + (effectiveLimit.HasValue ? $" FETCH NEXT {effectiveLimit.Value} ROWS ONLY" : "") : string.Empty;
 
-        var sql = $"SELECT {topSql}{selectCols} FROM {EntityMetadata<T>.QualifiedTableName}{joinSql}{whereClause}{groupBySql}{orderBySql}{pagingSql}";
+        var sql = $"SELECT {topSql}{selectCols} FROM {EntityMetadata<T>.QualifiedTableName}{LockHint()}{joinSql}{whereClause}{groupBySql}{orderBySql}{pagingSql}";
         return (sql, parms);
     }
 
@@ -1147,6 +1363,42 @@ public sealed class QueryBuilder<T> where T : class, new()
                 $"After(cursor) can only be consumed by ToCursorPagedListAsync; '{operation}' is not a cursor terminal.");
     }
 
+    // ── Row locking ───────────────────────────────────────────────────────────
+
+    private string LockHint() => _lock is { } l ? LockHintFor(l.Exclusive, l.Wait) : string.Empty;
+
+    // SQL Server locks through table hints placed right after the table reference.
+    // READPAST is rejected together with HOLDLOCK (serializable), so a skip-locked shared
+    // read holds its row locks with REPEATABLEREAD instead.
+    private static string LockHintFor(bool exclusive, LockWait wait) => (exclusive, wait) switch
+    {
+        (true, LockWait.Wait)        => " WITH (UPDLOCK, ROWLOCK)",
+        (true, LockWait.NoWait)      => " WITH (UPDLOCK, ROWLOCK, NOWAIT)",
+        (true, LockWait.SkipLocked)  => " WITH (UPDLOCK, ROWLOCK, READPAST)",
+        (false, LockWait.Wait)       => " WITH (HOLDLOCK, ROWLOCK)",
+        (false, LockWait.NoWait)     => " WITH (HOLDLOCK, ROWLOCK, NOWAIT)",
+        _                            => " WITH (REPEATABLEREAD, ROWLOCK, READPAST)",
+    };
+
+    // Outside a transaction the lock would be released as soon as the statement finished,
+    // so a locking read there is almost certainly a bug — fail loudly instead.
+    private void EnsureLockUsable(string operation)
+    {
+        if (_lock is null) return;
+        if (_transactionScope is null)
+            throw new InvalidOperationException(
+                $"ForUpdate/ForShare needs a transaction: create the query with Query<T>(transactionScope) before calling {operation}.");
+        if (_groupBys.Count > 0)
+            throw new InvalidOperationException("ForUpdate/ForShare cannot be combined with GROUP BY.");
+    }
+
+    private void EnsureNoLock(string operation)
+    {
+        if (_lock is not null)
+            throw new InvalidOperationException(
+                $"ForUpdate/ForShare is not supported by {operation}; use ToListAsync, FirstOrDefaultAsync, AnyAsync, Select or UpdateAndGetAsync.");
+    }
+
     private async Task<TResult> ExecuteAsync<TResult>(
         Func<SqlConnection, Task<TResult>> action,
         CancellationToken ct = default)
@@ -1181,6 +1433,7 @@ public sealed class QueryBuilder<T> where T : class, new()
         try
         {
             EnsureCursorNotSet($"{func} aggregate");
+            EnsureNoLock($"{func} aggregate");
             var col = SqlServerExpressionVisitor.TranslateSelector(selector);
             var tableName = GetTableName();
             var (whereClause, parms) = BuildWhereSql();

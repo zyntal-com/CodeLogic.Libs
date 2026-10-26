@@ -427,6 +427,132 @@ public sealed class Repository<T> where T : class, new()
         }
     }
 
+    /// <summary>
+    /// Inserts <paramref name="entity"/>, or — when it collides with an existing row on the
+    /// primary key or a UNIQUE column / index — updates that row with
+    /// <paramref name="onConflict"/>, atomically. The setter receives the existing row and the
+    /// row that failed to insert, so the update can build on current values:
+    /// <code>
+    /// await repo.UpsertAsync(
+    ///     new LoginThrottle { Ip = ip, Failures = 1, LastUtc = now },
+    ///     (current, incoming) =&gt; new LoginThrottle
+    ///     {
+    ///         Failures = current.Failures + 1,
+    ///         LastUtc  = incoming.LastUtc,
+    ///     });
+    /// </code>
+    /// Columns the setter does not assign keep their current value on conflict. Captured
+    /// values are sent as parameters. Runs the same locked batch as
+    /// <see cref="UpsertAsync(T, CancellationToken)"/> (table-variable source matched with
+    /// <c>WITH (UPDLOCK, HOLDLOCK)</c> under <c>SERIALIZABLE</c>), with <c>current.Col</c>
+    /// written as the target row's column and <c>incoming.Col</c> as the source row's.
+    /// <para>SQL Server evaluates every assignment against the row as it was before the
+    /// update: an assignment that reads <c>current.X</c> sees the old value of <c>X</c> even
+    /// when <c>X</c> is assigned in the same setter, whatever the order.</para>
+    /// </summary>
+    /// <returns>Rows affected: 1 for an insert, 1 for an update.</returns>
+    public async Task<Result<int>> UpsertAsync(
+        T entity,
+        Expression<Func<T, T, T>> onConflict,
+        CancellationToken ct = default)
+    {
+        if (entity is null) throw new ArgumentNullException(nameof(entity));
+        if (onConflict is null) throw new ArgumentNullException(nameof(onConflict));
+        if (onConflict.Body is not MemberInitExpression mi || mi.Bindings.Count == 0)
+            throw new ArgumentException(
+                "onConflict must be a member-init expression like (current, incoming) => new T { Prop = value }.",
+                nameof(onConflict));
+
+        var insertCols = EntityMetadata<T>.Columns.Where(c => !c.IsAutoIncrement && !c.IsRowVersion).ToArray();
+        // The source table variable holds only the inserted columns, so incoming.Col can only
+        // name one of those.
+        var sourceNames = insertCols.Select(c => c.ColumnName).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var current = onConflict.Parameters[0];
+        var incoming = onConflict.Parameters[1];
+        var renderers = new Dictionary<ParameterExpression, Func<string, string>>
+        {
+            [current] = c => $"target.{Q(c)}",
+            [incoming] = c => sourceNames.Contains(c)
+                ? $"source.{Q(c)}"
+                : throw new ArgumentException(
+                    $"incoming.{c} is database-generated and has no inserted value; use current.{c}.", nameof(onConflict)),
+        };
+
+        // "@ups_" cannot collide with the batch's own @p_<row>_<col>, @source, @own and @affected.
+        var sink = new SqlParameterSink("@ups_");
+        var updateClauses = new List<string>();
+        foreach (var binding in mi.Bindings)
+        {
+            if (binding is not MemberAssignment ma)
+                throw new ArgumentException("onConflict supports plain property assignments only.", nameof(onConflict));
+            var col = ResolveUpsertColumns([ma.Member.Name], nameof(onConflict))[0];
+            var target = $"target.{Q(col.ColumnName)}";
+
+            if (ReferencesAny(ma.Expression, current, incoming))
+            {
+                var (sql, _) = SqlExpressionTranslator.Translate(ma.Expression, renderers, sink, col.EffectiveStorageType);
+                updateClauses.Add($"{target} = {sql}");
+            }
+            else
+            {
+                var value = ClosureEvaluator.Evaluate(ma.Expression);
+                updateClauses.Add($"{target} = {(value is null ? "NULL" : sink.Add(value, col.EffectiveStorageType))}");
+            }
+        }
+
+        try
+        {
+            var table = EntityMetadata<T>.QualifiedTableName;
+            var sql = BuildUpsertSql(table, insertCols, GetUpsertMatchGroups(insertCols), 1,
+                incrementColumns: null, returnIdentity: false, updateClauses: updateClauses);
+
+            LogQuery(sql);
+            var sw = Stopwatch.StartNew();
+
+            var affected = await ExecuteAsync(async conn =>
+            {
+                await using var cmd = NewCommand(conn);
+                if (_transactionScope is not null) cmd.Transaction = _transactionScope.Transaction;
+                cmd.CommandText = sql;
+                for (var i = 0; i < insertCols.Length; i++)
+                {
+                    var col = insertCols[i];
+                    cmd.Parameters.Add(TypeConverter.CreateParameter($"@p_0_{i}", TypeConverter.ToDbValue(col.Get(entity), col.EffectiveStorageType), col.Attribute));
+                }
+                foreach (var kv in sink.Parameters)
+                    cmd.Parameters.AddWithValue(kv.Key, kv.Value ?? DBNull.Value);
+                return Convert.ToInt32(await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false));
+            }, ct).ConfigureAwait(false);
+
+            sw.Stop();
+            LogSlowQuery(sql, sw.ElapsedMilliseconds);
+            QueryCache.Invalidate(table);
+            return Result<int>.Success(affected);
+        }
+        catch (Exception ex)
+        {
+            _logger?.Error($"[MSSQL] UpsertAsync (expression) failed: {ex.Message}", ex);
+            return Result<int>.Failure(Error.FromException(ex, "mssql.upsert_failed"));
+        }
+    }
+
+    private static bool ReferencesAny(Expression expr, params ParameterExpression[] parameters)
+    {
+        var walker = new ParameterFinder(parameters);
+        walker.Visit(expr);
+        return walker.Found;
+    }
+
+    private sealed class ParameterFinder(ParameterExpression[] parameters) : ExpressionVisitor
+    {
+        public bool Found { get; private set; }
+        protected override Expression VisitParameter(ParameterExpression node)
+        {
+            if (Array.IndexOf(parameters, node) >= 0) Found = true;
+            return base.VisitParameter(node);
+        }
+    }
+
     private static ColumnMetadata[] ResolveUpsertColumns(IReadOnlyList<string> propertyNames, string paramName)
     {
         var cols = new ColumnMetadata[propertyNames.Count];
@@ -883,7 +1009,8 @@ public sealed class Repository<T> where T : class, new()
 
     private static string BuildUpsertSql(string table, IReadOnlyList<ColumnMetadata> columns,
         IReadOnlyList<IReadOnlyList<ColumnMetadata>> matchGroups, int rowCount, IReadOnlySet<string>? incrementColumns,
-        bool returnIdentity, IReadOnlySet<string>? updateColumns = null)
+        bool returnIdentity, IReadOnlySet<string>? updateColumns = null,
+        IReadOnlyList<string>? updateClauses = null)
     {
         var declarations = string.Join(", ", columns.Select(c =>
         {
@@ -899,6 +1026,9 @@ public sealed class Repository<T> where T : class, new()
         var updates = string.Join(", ", updateCandidates.Select(c =>
             $"target.{Q(c.ColumnName)} = " + (incrementColumns?.Contains(c.ColumnName) == true
                 ? $"target.{Q(c.ColumnName)} + source.{Q(c.ColumnName)}" : $"source.{Q(c.ColumnName)}")));
+        // A caller-built SET list (the expression upsert) replaces the column-derived one.
+        if (updateClauses is { Count: > 0 })
+            updates = string.Join(", ", updateClauses);
         if (updates.Length == 0)
             updates = $"target.{Q(matchGroups[0][0].ColumnName)} = target.{Q(matchGroups[0][0].ColumnName)}";
         var pk = EntityMetadata<T>.PrimaryKey;
