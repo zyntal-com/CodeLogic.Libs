@@ -933,8 +933,10 @@ public sealed class QueryBuilder<T> where T : class, new()
     /// </code>
     /// </para>
     /// Each <c>new T { Prop = value }</c> binding maps to one <c>SET col = value</c>.
-    /// Values may reference captured variables (parameterized) or other columns of the
-    /// same row (<c>new T { Counter = t.Counter + 1 }</c>).
+    /// Values may reference captured variables or other columns of the same row
+    /// (<c>new T { Counter = Math.Min(cap, t.Counter + step) }</c>). Captured values are
+    /// always sent as parameters, including inside column expressions; only primitive
+    /// numbers are written into the SQL text.
     /// </summary>
     public async Task<Result<int>> UpdateAsync(
         Expression<Func<T, T>> setExpression,
@@ -954,36 +956,7 @@ public sealed class QueryBuilder<T> where T : class, new()
             var (whereClause, whereParms) = BuildWhereSql(applySoftDelete: false);
             var allParms = new Dictionary<string, object?>(whereParms);
 
-            var sets = new List<string>();
-            var idx = 0;
-            foreach (var binding in mi.Bindings)
-            {
-                if (binding is not MemberAssignment ma) continue;
-
-                var colMeta = EntityMetadata<T>.TryResolve(ma.Member.Name)
-                              ?? throw new ArgumentException(
-                                  $"Property '{ma.Member.Name}' is not mapped on '{typeof(T).Name}'.");
-                if (colMeta.IsAutoIncrement || colMeta.IsRowVersion)
-                    throw new ArgumentException($"Property '{ma.Member.Name}' is database-generated and cannot be updated.");
-                var colName = colMeta.ColumnName;
-
-                // If the value only depends on captured state (closure), bind as a parameter.
-                // Otherwise translate it as a column expression so `Counter = t.Counter + 1`
-                // becomes `counter = counter + 1`.
-                if (ReferencesRowParameter(ma.Expression, rowParam))
-                {
-                    var (sql, _) = SqlExpressionTranslator.Translate(ma.Expression, rowParam, null, null);
-                    sets.Add($"{SqlServerDialect.Quote(colName)} = {sql}");
-                }
-                else
-                {
-                    var paramName = $"@upd_{idx++}";
-                    var value = ClosureEvaluator.Evaluate(ma.Expression);
-                    allParms[paramName] = TypeConverter.ToDbValue(value, colMeta.EffectiveStorageType);
-                    sets.Add($"{SqlServerDialect.Quote(colName)} = {paramName}");
-                }
-            }
-
+            var sets = BuildSetClauses(mi, rowParam, allParms);
             if (sets.Count == 0)
                 return Result<int>.Success(0);
 
@@ -1004,6 +977,47 @@ public sealed class QueryBuilder<T> where T : class, new()
             _logger?.Error($"[MSSQL] QueryBuilder.UpdateAsync (typed) failed: {ex.Message} — query: {DescribeQueryForLog()}", ex);
             return Result<int>.Failure(Error.FromException(ex, "mssql.update_failed"));
         }
+    }
+
+    /// <summary>
+    /// Turns the bindings of a <c>new T { … }</c> setter into <c>col = value</c> clauses and
+    /// adds every value they need to <paramref name="parms"/>. A value that depends only on
+    /// captured state binds as one parameter; one that reads the row translates as a column
+    /// expression (<c>Counter = t.Counter + 1</c> → <c>counter = (counter + 1)</c>) whose
+    /// captured values are parameters too.
+    /// </summary>
+    private static List<string> BuildSetClauses(
+        MemberInitExpression mi, ParameterExpression rowParam, Dictionary<string, object?> parms)
+    {
+        var sets = new List<string>();
+        var sink = new SqlParameterSink("@upd_");
+        foreach (var binding in mi.Bindings)
+        {
+            if (binding is not MemberAssignment ma) continue;
+
+            var colMeta = EntityMetadata<T>.TryResolve(ma.Member.Name)
+                          ?? throw new ArgumentException(
+                              $"Property '{ma.Member.Name}' is not mapped on '{typeof(T).Name}'.");
+            if (colMeta.IsAutoIncrement || colMeta.IsRowVersion)
+                throw new ArgumentException(
+                    $"Property '{ma.Member.Name}' is database-generated and cannot be updated.");
+            var colName = SqlServerDialect.Quote(colMeta.ColumnName);
+
+            if (ReferencesRowParameter(ma.Expression, rowParam))
+            {
+                var (sql, _) = SqlExpressionTranslator.Translate(
+                    ma.Expression, rowParam, null, null, sink, colMeta.EffectiveStorageType);
+                sets.Add($"{colName} = {sql}");
+            }
+            else
+            {
+                var value = ClosureEvaluator.Evaluate(ma.Expression);
+                var valueSql = value is null ? "NULL" : sink.Add(value, colMeta.EffectiveStorageType);
+                sets.Add($"{colName} = {valueSql}");
+            }
+        }
+        sink.CopyTo(parms);
+        return sets;
     }
 
     private static bool ReferencesRowParameter(Expression expr, ParameterExpression row)
