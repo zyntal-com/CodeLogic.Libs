@@ -2,13 +2,14 @@ using System.Globalization;
 using System.Net.Http.Headers;
 using System.Net.Sockets;
 using System.Security.Authentication;
+using System.Text.RegularExpressions;
 using CL.Storage.Errors;
 using CodeLogic.Core.Results;
 
 namespace CL.Storage.Providers;
 
 /// <summary>Shared classification of transport exceptions and HTTP statuses into storage errors.</summary>
-internal static class ProviderErrorMapper
+internal static partial class ProviderErrorMapper
 {
     private const int WindowsDiskFull = unchecked((int)0x80070070);
     private const int WindowsHandleDiskFull = unchecked((int)0x80070027);
@@ -107,6 +108,41 @@ internal static class ProviderErrorMapper
             details += $";inner={inner.GetType().Name}";
         return details;
     }
+
+    /// <summary>
+    /// A provider SDK message fit for an error message and logs: the first line only, URL query strings and
+    /// credential-looking values (access keys, signatures, tokens, passwords) redacted, at most 300 characters.
+    /// Returns an empty string when nothing is left.
+    /// </summary>
+    public static string SafeProviderMessage(string? message)
+    {
+        if (string.IsNullOrWhiteSpace(message)) return string.Empty;
+        var text = message.Trim();
+        var newline = text.IndexOfAny(['\r', '\n']);
+        if (newline >= 0) text = text[..newline];
+        text = UrlQuery().Replace(text, "?[redacted]");
+        text = SecretPair().Replace(text, m => m.Groups[1].Value + "=[redacted]");
+        text = AccessKeyId().Replace(text, "[redacted]");
+        text = text.Trim();
+        return text.Length <= 300 ? text : text[..300] + "…";
+    }
+
+    /// <summary>A value for a <c>key=value</c> detail: no separators, at most 128 characters.</summary>
+    public static string SafeDetailValue(string value)
+    {
+        var text = new string(value.Where(c => !char.IsControl(c) && c is not (';' or '=')).ToArray()).Trim();
+        return text.Length <= 128 ? text : text[..128];
+    }
+
+    [GeneratedRegex(@"\?[^\s""']+", RegexOptions.CultureInvariant)]
+    private static partial Regex UrlQuery();
+
+    [GeneratedRegex(@"\b(signature|x-amz-signature|x-amz-credential|x-amz-security-token|sig|token|secret|password|passwd|pwd|key|accesskey|secretkey|sessiontoken)\s*[=:]\s*[^\s,;&""']+",
+        RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)]
+    private static partial Regex SecretPair();
+
+    [GeneratedRegex(@"\b(?:AKIA|ASIA|AGPA|AIDA|AROA|ANPA|ANVA|AIPA)[A-Z0-9]{12,}\b", RegexOptions.CultureInvariant)]
+    private static partial Regex AccessKeyId();
 
     /// <summary>Joins sanitized <c>key=value</c> diagnostics.</summary>
     public static string Details(string key, string value, string? providerCode = null, TimeSpan? retryAfter = null)

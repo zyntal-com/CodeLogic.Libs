@@ -5,6 +5,7 @@ using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Amazon.Runtime;
 using Amazon.S3;
 using Amazon.S3.Model;
 using CL.Storage.Abstractions;
@@ -1756,7 +1757,8 @@ public sealed class S3StorageBackend :
     private static bool IsNotFound(AmazonS3Exception error) => error.StatusCode == HttpStatusCode.NotFound ||
         error.ErrorCode is "NoSuchKey" or "NoSuchBucket" or "NotFound";
 
-    private static Error Map(Exception exception, string operation)
+    /// <summary>Maps an S3 SDK or transport exception to a storage error (internal for tests).</summary>
+    internal static Error Map(Exception exception, string operation)
     {
         if (exception is StorageMultipartLimitException)
             return StorageErrors.TooLarge($"{operation}: the multipart upload exceeds 10,000 parts.");
@@ -1764,6 +1766,8 @@ public sealed class S3StorageBackend :
         {
             var details = ProviderErrorMapper.Details(
                 StorageErrorInfo.HttpStatusKey, ((int)s3.StatusCode).ToString(CultureInfo.InvariantCulture), s3.ErrorCode);
+            if (!string.IsNullOrWhiteSpace(s3.RequestId))
+                details += ";requestId=" + ProviderErrorMapper.SafeDetailValue(s3.RequestId);
             if (IsNotFound(s3)) return StorageErrors.NotFound($"{operation}: item was not found.", details);
             if (s3.ErrorCode is "InvalidAccessKeyId" or "SignatureDoesNotMatch" or "ExpiredToken" or "InvalidToken")
                 return StorageErrors.AuthenticationFailed($"{operation}: S3 rejected the credentials.", details);
@@ -1779,8 +1783,13 @@ public sealed class S3StorageBackend :
                 return ProviderErrorMapper.FromHttpStatus((int)s3.StatusCode, operation, "S3", providerCode: s3.ErrorCode);
             return StorageErrors.ProviderError($"{operation}: S3 request failed.", details);
         }
-        return ProviderErrorMapper.FromTransport(exception, operation, "S3")
-            ?? StorageErrors.ProviderError($"{operation}: S3 provider failed.", ProviderErrorMapper.ExceptionDetails(exception));
+        if (ProviderErrorMapper.FromTransport(exception, operation, "S3") is { } transport)
+            return transport;
+        // The SDK refused the request before sending it (configuration, signing, checksums). Its messages are
+        // written by the SDK, not the server, and say what to fix; keep a sanitized copy.
+        if (exception is AmazonClientException client && ProviderErrorMapper.SafeProviderMessage(client.Message) is { Length: > 0 } reason)
+            return StorageErrors.ProviderError($"{operation}: the S3 client refused the request: {reason}", ProviderErrorMapper.ExceptionDetails(exception));
+        return StorageErrors.ProviderError($"{operation}: S3 provider failed.", ProviderErrorMapper.ExceptionDetails(exception));
     }
 
     private static string EncodeVersionContinuation(S3VersionContinuation continuation) =>

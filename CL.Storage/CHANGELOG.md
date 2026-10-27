@@ -1,5 +1,26 @@
 # Changelog
 
+## 2026-10-27 (4.9.104)
+
+### Fixed
+
+- **S3 SDK refusals say why.** An `AmazonClientException` (the SDK refusing a request before sending it:
+  configuration, signing, checksums) was reported as `storage.provider_error` "S3 provider failed" with only
+  the exception type. The message now carries the SDK's reason, sanitized: first line only, URL query strings
+  and credential-like values (`AKIA…` keys, `signature=`, `token=`, `password=` …) redacted, at most 300
+  characters. Other unclassified exceptions still report only their type.
+- **`DisablePayloadSigning` with an `http://` endpoint is rejected by validation.** The AWS SDK refuses
+  unsigned payloads over plain HTTP ("the request must be sent over HTTPS"), so such a connection passed its
+  health check and served reads but failed every upload.
+- **Failed operations are logged.** A failed service operation only raised `StorageOperationFailedEvent`, so
+  the library log stayed empty. It is now also logged as a warning with its code, message and details, except
+  the routine `not_found`, `conflict`, `cancelled` and `invalid_path`, at most once a minute per connection,
+  operation and code.
+
+### Added
+
+- S3 service errors include the request id in `Details` (`requestId=…`).
+
 ## 2026-10-25 (4.9.98)
 
 Everything below is relative to the published **4.8.93**. Types and members that 4.8.93 never shipped
