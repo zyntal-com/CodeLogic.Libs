@@ -110,6 +110,10 @@ string clip = HtmlHelper.TruncateText(longHtml, 120);
 | Member | Returns | Purpose |
 |--------|---------|---------|
 | `StripTags` / `Sanitize` / `TrimWhitespace` / `Encode` / `Decode(html)` | `string` | HTML cleanup and encoding. |
+
+`Sanitize` is an allowlist: basic formatting elements without attributes, and links with http(s),
+mailto or relative `href`s (`SanitizeAllowedTags` lists the elements). Images, styles, tables and embeds
+are removed; use a full HTML sanitizer for rich text.
 | `TruncateText(html, maxLength, suffix = "...")` | `string` | Length-limit HTML text. |
 
 ### HttpClientHelper
