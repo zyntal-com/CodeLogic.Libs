@@ -3,6 +3,45 @@
 All notable changes to **CodeLogic.Common** are documented here. Versions follow
 [Semantic Versioning](https://semver.org/).
 
+## 2026-10-27 (4.9.104)
+
+### Added
+
+- `CLU_Imaging.ProcessImage(stream, ImageProcessOptions?)` → `Result<ProcessedImage>` for user uploads:
+  checks the pixel count from the header **before** decoding (`MaxPixels`, default
+  `CLU_Imaging.DefaultMaxPixels` = 40 megapixels; `imaging.too_large`), turns photos upright from their EXIF
+  orientation (`ApplyOrientation`), scales down (never up) into `MaxWidth` × `MaxHeight`, and encodes to
+  `Format` (default WebP) at `Quality` (default 85). Re-encoding drops metadata such as GPS positions.
+  `ProcessedImage` carries the bytes, the final width and height, and the format.
+- `CLU_Imaging.FitWithin(width, height, maxWidth, maxHeight)`: the scaled-down size for a box.
+- `ResizeImage(stream, targetWidth, targetHeight, allowCrop, format, quality = 90)`: resize to another
+  format than PNG.
+
+### Fixed
+
+- **Decompression bombs.** `ConvertImage` and `ResizeImage` decoded any image, so a small PNG claiming
+  50,000 × 50,000 pixels allocated about 10 GB. They now refuse images over `DefaultMaxPixels` with
+  `imaging.too_large`; `ProcessImage` makes the limit configurable.
+- **Sideways phone photos.** `ConvertImage` and `ResizeImage` ignored the EXIF orientation, so portrait
+  photos came out rotated. They now turn the image upright first.
+- **`ResizeImage(..., allowCrop: false)` stretched the image** to exactly the target size instead of
+  keeping the aspect ratio as documented; it now fits inside the target. The file overload's
+  `maintainAspectRatio: true` (which maps to it) is fixed with it, and its doc for `false` now says what it
+  does: scale to cover and crop.
+- **Crop edges.** The cover-and-crop path truncated the scaled size and could leave a transparent row or
+  column; it now rounds up. Resizing uses Mitchell cubic sampling instead of nearest-neighbour.
+- `IsValidSize`, `IsValidAspectRatio` and `GetImageDimensions` read only the header instead of decoding the
+  whole image (fast, and safe for huge images). Their `catch` no longer swallows `OutOfMemoryException`.
+
+### Upgrade notes
+
+- Images over 40 megapixels now fail `ConvertImage`/`ResizeImage` with `imaging.too_large`. Use
+  `ProcessImage` with a larger `MaxPixels` if you need them.
+- Output is upright: an EXIF-rotated photo comes out with width and height swapped compared to before.
+- `ResizeImage(stream, w, h, allowCrop: false)` (and the file overload with `maintainAspectRatio: true`) may
+  return an image smaller than `w` × `h` on one side.
+- `GetImageDimensions` reports the stored size (before EXIF orientation), as it did before.
+
 ## 2026-10-27
 
 ### Security
