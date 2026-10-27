@@ -22,11 +22,15 @@ public enum ImageFormat
 /// Provides image processing utilities including validation, resizing, conversion, thumbnail creation,
 /// and Base64 encoding. All operations are implemented using SkiaSharp.
 /// Methods that can fail return <see cref="Result{T}"/> or <see cref="Result"/> instead of throwing.
+/// Decoding methods refuse images over <see cref="DefaultMaxPixels"/> (checked from the header) and turn
+/// photos upright from their EXIF orientation; size checks read only the header.
+/// For user uploads use <see cref="ProcessImage"/>.
 /// </summary>
-public static class CLU_Imaging
+public static partial class CLU_Imaging
 {
     /// <summary>
     /// Checks whether the image contained in the given stream does not exceed the specified dimensions.
+    /// Only the header is read, so a huge image is not decoded to find out.
     /// </summary>
     /// <param name="imageStream">A readable stream containing image data. Must not be null.</param>
     /// <param name="maxWidth">Maximum allowed width in pixels.</param>
@@ -37,10 +41,10 @@ public static class CLU_Imaging
         ArgumentNullException.ThrowIfNull(imageStream);
         try
         {
-            using var bitmap = SKBitmap.Decode(imageStream);
-            return bitmap is not null && bitmap.Width <= maxWidth && bitmap.Height <= maxHeight;
+            return ReadHeader(imageStream) is { } header && header.Width > 0 && header.Height > 0
+                && header.Width <= maxWidth && header.Height <= maxHeight;
         }
-        catch
+        catch (Exception ex) when (ex is not OutOfMemoryException)
         {
             return false;
         }
@@ -48,7 +52,7 @@ public static class CLU_Imaging
 
     /// <summary>
     /// Checks whether the image in the stream has a valid (non-degenerate) aspect ratio.
-    /// An aspect ratio is considered invalid if either dimension is zero.
+    /// An aspect ratio is considered invalid if either dimension is zero. Only the header is read.
     /// </summary>
     /// <param name="imageStream">A readable stream containing image data. Must not be null.</param>
     /// <returns><c>true</c> if the image has non-zero width and height; otherwise <c>false</c>.</returns>
@@ -57,17 +61,18 @@ public static class CLU_Imaging
         ArgumentNullException.ThrowIfNull(imageStream);
         try
         {
-            using var bitmap = SKBitmap.Decode(imageStream);
-            return bitmap is not null && bitmap.Width > 0 && bitmap.Height > 0;
+            return ReadHeader(imageStream) is { } header && header.Width > 0 && header.Height > 0;
         }
-        catch
+        catch (Exception ex) when (ex is not OutOfMemoryException)
         {
             return false;
         }
     }
 
     /// <summary>
-    /// Converts the image in the given stream to the specified <see cref="ImageFormat"/>.
+    /// Converts the image in the given stream to the specified <see cref="ImageFormat"/> (quality 90), upright
+    /// from its EXIF orientation. Images over <see cref="DefaultMaxPixels"/> are refused
+    /// (<c>imaging.too_large</c>); use <see cref="ProcessImage"/> to choose the limit, quality or a size box.
     /// </summary>
     /// <param name="imageStream">A readable stream containing the source image. Must not be null.</param>
     /// <param name="format">The target image format.</param>
@@ -78,37 +83,23 @@ public static class CLU_Imaging
     public static Result<MemoryStream> ConvertImage(Stream imageStream, ImageFormat format)
     {
         ArgumentNullException.ThrowIfNull(imageStream);
-        try
-        {
-            using var bitmap = SKBitmap.Decode(imageStream);
-            if (bitmap is null)
-                return Result<MemoryStream>.Failure(Error.Validation("imaging.decode_failed", "Failed to decode source image."));
-
-            var skFormat = ToSkiaFormat(format);
-            using var image = SKImage.FromBitmap(bitmap);
-            using var data = image.Encode(skFormat, 90);
-            if (data is null)
-                return Result<MemoryStream>.Failure(Error.Internal("imaging.encode_failed", "Failed to encode image to target format."));
-
-            var output = new MemoryStream();
-            data.SaveTo(output);
-            output.Position = 0;
-            return Result<MemoryStream>.Success(output);
-        }
-        catch (Exception ex)
-        {
-            return Result<MemoryStream>.Failure(Error.FromException(ex, "imaging.convert_failed"));
-        }
+        var processed = ProcessImage(imageStream, new ImageProcessOptions { Format = format, Quality = 90 });
+        if (processed.IsSuccess)
+            return Result<MemoryStream>.Success(ToStream(processed.Value!.Data));
+        var error = processed.Error!;
+        return Result<MemoryStream>.Failure(error.Code == "imaging.process_failed"
+            ? Error.Internal("imaging.convert_failed", error.Message, error.Details)
+            : error);
     }
 
     /// <summary>
-    /// Resizes the image in the given stream to the specified dimensions.
+    /// Resizes the image in the given stream to the specified dimensions and encodes it as PNG.
     /// </summary>
     /// <param name="imageStream">A readable stream containing the source image. Must not be null.</param>
     /// <param name="targetWidth">The desired output width in pixels.</param>
     /// <param name="targetHeight">The desired output height in pixels.</param>
     /// <param name="allowCrop">
-    /// When <c>true</c>, the image is cropped to fill the exact target dimensions.
+    /// When <c>true</c>, the image is scaled to cover the target and cropped to its exact dimensions.
     /// When <c>false</c>, the image is scaled to fit within the bounds, preserving aspect ratio.
     /// Default: <c>true</c>.
     /// </param>
@@ -116,49 +107,64 @@ public static class CLU_Imaging
     /// A <see cref="Result{T}"/> containing a <see cref="MemoryStream"/> with PNG-encoded resized image data on success,
     /// or a failure result with a descriptive error.
     /// </returns>
-    public static Result<MemoryStream> ResizeImage(Stream imageStream, int targetWidth, int targetHeight, bool allowCrop = true)
+    public static Result<MemoryStream> ResizeImage(Stream imageStream, int targetWidth, int targetHeight, bool allowCrop = true) =>
+        ResizeImage(imageStream, targetWidth, targetHeight, allowCrop, ImageFormat.Png, 100);
+
+    /// <summary>
+    /// Resizes the image in the given stream and encodes it to <paramref name="format"/>. The image is turned
+    /// upright from its EXIF orientation first; images over <see cref="DefaultMaxPixels"/> are refused.
+    /// </summary>
+    /// <param name="imageStream">A readable stream containing the source image. Must not be null.</param>
+    /// <param name="targetWidth">The desired output width in pixels.</param>
+    /// <param name="targetHeight">The desired output height in pixels.</param>
+    /// <param name="allowCrop">
+    /// When <c>true</c>, the image is scaled to cover the target and cropped to its exact dimensions.
+    /// When <c>false</c>, the image is scaled to fit within the bounds, preserving aspect ratio.
+    /// </param>
+    /// <param name="format">The output format.</param>
+    /// <param name="quality">Encoder quality, 1–100.</param>
+    /// <returns>The encoded image, or a failure.</returns>
+    public static Result<MemoryStream> ResizeImage(Stream imageStream, int targetWidth, int targetHeight, bool allowCrop, ImageFormat format, int quality = 90)
     {
         ArgumentNullException.ThrowIfNull(imageStream);
+        if (targetWidth <= 0 || targetHeight <= 0)
+            return Result<MemoryStream>.Failure(Error.Validation("imaging.invalid_options", "Target width and height must be greater than zero."));
+        if (quality is < 1 or > 100)
+            return Result<MemoryStream>.Failure(Error.Validation("imaging.invalid_options", "Quality must be between 1 and 100."));
         try
         {
-            using var sourceBitmap = SKBitmap.Decode(imageStream);
-            if (sourceBitmap is null)
-                return Result<MemoryStream>.Failure(Error.Validation("imaging.decode_failed", "Failed to decode source image."));
+            var decoded = Decode(imageStream, DefaultMaxPixels, applyOrientation: true);
+            if (decoded.IsFailure)
+                return Result<MemoryStream>.Failure(decoded.Error!);
+            using var source = decoded.Value!;
+            var sampling = new SKSamplingOptions(SKCubicResampler.Mitchell);
 
             SKBitmap resized;
             if (allowCrop)
             {
-                // Scale to fill, then crop center
-                float scaleX = (float)targetWidth  / sourceBitmap.Width;
-                float scaleY = (float)targetHeight / sourceBitmap.Height;
-                float scale  = Math.Max(scaleX, scaleY);
-
-                int scaledW = (int)(sourceBitmap.Width  * scale);
-                int scaledH = (int)(sourceBitmap.Height * scale);
-
-                resized = sourceBitmap.Resize(new SKImageInfo(scaledW, scaledH), SKSamplingOptions.Default);
-                int cropX = (scaledW - targetWidth)  / 2;
-                int cropY = (scaledH - targetHeight) / 2;
-
-                using var cropped = new SKBitmap(targetWidth, targetHeight);
-                using var canvas  = new SKCanvas(cropped);
-                canvas.DrawBitmap(resized, -cropX, -cropY, SKSamplingOptions.Default);
-                resized.Dispose();
-                resized = cropped.Copy();
+                // Scale to cover, then crop the centre.
+                var scale = Math.Max((double)targetWidth / source.Width, (double)targetHeight / source.Height);
+                var scaledW = Math.Max(targetWidth, (int)Math.Ceiling(source.Width * scale));
+                var scaledH = Math.Max(targetHeight, (int)Math.Ceiling(source.Height * scale));
+                using var cover = source.Resize(new SKImageInfo(scaledW, scaledH, SKColorType.Rgba8888, SKAlphaType.Premul), sampling);
+                resized = new SKBitmap(targetWidth, targetHeight, SKColorType.Rgba8888, SKAlphaType.Premul);
+                using var canvas = new SKCanvas(resized);
+                using var coverImage = SKImage.FromBitmap(cover);
+                canvas.DrawImage(coverImage, -(scaledW - targetWidth) / 2f, -(scaledH - targetHeight) / 2f, SKSamplingOptions.Default);
             }
             else
             {
-                resized = sourceBitmap.Resize(new SKImageInfo(targetWidth, targetHeight), SKSamplingOptions.Default);
+                var (fitW, fitH) = FitWithin(source.Width, source.Height, targetWidth, targetHeight);
+                resized = source.Resize(new SKImageInfo(fitW, fitH, SKColorType.Rgba8888, SKAlphaType.Premul), sampling);
             }
 
             using (resized)
             {
                 using var image = SKImage.FromBitmap(resized);
-                using var data  = image.Encode(SKEncodedImageFormat.Png, 100);
-                var output = new MemoryStream();
-                data.SaveTo(output);
-                output.Position = 0;
-                return Result<MemoryStream>.Success(output);
+                using var data = image.Encode(ToSkiaFormat(format), quality);
+                if (data is null)
+                    return Result<MemoryStream>.Failure(Error.Internal("imaging.encode_failed", "Failed to encode image to target format."));
+                return Result<MemoryStream>.Success(ToStream(data.ToArray()));
             }
         }
         catch (Exception ex)
@@ -200,7 +206,7 @@ public static class CLU_Imaging
     /// <param name="height">The desired output height in pixels.</param>
     /// <param name="maintainAspectRatio">
     /// When <c>true</c>, the image is scaled to fit within the bounds while preserving the aspect ratio.
-    /// When <c>false</c>, the image is stretched to exactly <paramref name="width"/> × <paramref name="height"/>.
+    /// When <c>false</c>, the image is scaled to cover <paramref name="width"/> × <paramref name="height"/> and cropped to it.
     /// Default: <c>true</c>.
     /// </param>
     /// <returns>A <see cref="Result"/> indicating success or failure.</returns>
@@ -295,7 +301,8 @@ public static class CLU_Imaging
     }
 
     /// <summary>
-    /// Returns the pixel dimensions of an image file.
+    /// Returns the pixel dimensions of an image file, as stored (before EXIF orientation), read from the header
+    /// without decoding the pixels.
     /// </summary>
     /// <param name="imagePath">The full path to the image file. Must not be null or empty.</param>
     /// <returns>
@@ -311,16 +318,24 @@ public static class CLU_Imaging
                 return Result<(int, int)>.Failure(Error.NotFound("imaging.file_not_found", $"Image not found: {imagePath}"));
 
             using var stream = File.OpenRead(imagePath);
-            using var bitmap = SKBitmap.Decode(stream);
-            if (bitmap is null)
+            if (ReadHeader(stream) is not { } header || header.Width <= 0 || header.Height <= 0)
                 return Result<(int, int)>.Failure(Error.Validation("imaging.decode_failed", $"Cannot decode image: {imagePath}"));
 
-            return Result<(int, int)>.Success((bitmap.Width, bitmap.Height));
+            return Result<(int, int)>.Success((header.Width, header.Height));
         }
         catch (Exception ex)
         {
             return Result<(int, int)>.Failure(Error.FromException(ex, "imaging.dimensions_failed"));
         }
+    }
+
+    /// <summary>An expandable stream positioned at the start (callers may keep writing to it).</summary>
+    private static MemoryStream ToStream(byte[] bytes)
+    {
+        var output = new MemoryStream(bytes.Length);
+        output.Write(bytes);
+        output.Position = 0;
+        return output;
     }
 
     private static SKEncodedImageFormat ToSkiaFormat(ImageFormat format) => format switch

@@ -58,7 +58,7 @@ await CodeLogic.StartAsync();
 - **Web** — `HtmlHelper`, `HttpClientHelper`, `HttpHeaderHelper`, `UrlHelper` for HTML sanitization, typed HTTP requests, header/IP/UA parsing, and URL building.
 - **Networking** — `NetworkPing`, `NetworkDns`, `SubnetCalculator`, `TraceRoute`.
 - **Parser / Cron** — `CronParser` parse/validate 5-field cron and compute the next UTC occurrence.
-- **Imaging** — `CLU_Imaging` resize, crop, format conversion (JPEG/PNG/WebP), thumbnails, dimensions, Base64 — via SkiaSharp.
+- **Imaging** — `CLU_Imaging` safe upload processing (pixel limit, EXIF orientation, fit, WebP), resize, crop, format conversion (JPEG/PNG/WebP), thumbnails, dimensions, Base64 — via SkiaSharp.
 - **Caching** — `ICache` / `MemoryCache` async typed in-process cache with per-entry TTL.
 - **File handling** — `FileSystem` async read/write/copy/move/delete, directory create, listing, size, existence.
 - **Reflection** — `AssemblyHelper` and `ReflectionHelper` for assembly metadata, type discovery, embedded resources, and dynamic property/method access.

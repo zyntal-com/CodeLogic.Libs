@@ -243,6 +243,24 @@ public record CronExpression(string Raw, string Minutes, string Hours,
 
 `CL.Common.Imaging.CLU_Imaging` does image validation and transformation via SkiaSharp, working with both `Stream`s and file paths. The validation predicates return `bool`; transforms return `Result`.
 
+Every method that decodes refuses images over `CLU_Imaging.DefaultMaxPixels` (40 megapixels, checked from the header before decoding; error `imaging.too_large`) and turns photos upright from their EXIF orientation. The size checks read only the header.
+
+For user uploads use `ProcessImage`: one call that checks the pixel count, orients, scales down into a box and re-encodes (which also drops metadata such as GPS positions).
+
+```csharp
+using var upload = request.File.OpenReadStream();
+Result<ProcessedImage> avatar = CLU_Imaging.ProcessImage(upload, new ImageProcessOptions
+{
+    MaxWidth = 512, MaxHeight = 512,   // scaled down, never up
+    Format = ImageFormat.Webp,         // default
+    Quality = 85,                      // default
+    MaxPixels = 40_000_000             // default; refused before decoding
+});
+if (avatar.IsFailure) return BadRequest(avatar.Error!.Message);   // imaging.decode_failed / imaging.too_large
+await storage.UploadBytesAsync($"avatars/{id}.webp", avatar.Value!.Data);
+// avatar.Value.Width / Height are the final size
+```
+
 ```csharp
 using CL.Common.Imaging;
 
@@ -264,19 +282,26 @@ Result<(int width, int height)> dims = CLU_Imaging.GetImageDimensions("in.png");
 
 | Member | Returns | Purpose |
 |--------|---------|---------|
-| `IsValidSize(stream, maxWidth, maxHeight)` | `bool` | Whether dimensions are within bounds. |
-| `IsValidAspectRatio(stream)` | `bool` | Aspect-ratio sanity check. |
-| `ConvertImage(stream, format)` | `Result<MemoryStream>` | Re-encode to JPEG/PNG/WebP. |
-| `ResizeImage(stream, targetWidth, targetHeight, allowCrop = true)` | `Result<MemoryStream>` | Resize a stream. |
+| `ProcessImage(stream, options?)` | `Result<ProcessedImage>` | Safe upload pipeline: pixel limit, EXIF orientation, fit into a box, re-encode (default WebP q85). |
+| `FitWithin(width, height, maxWidth, maxHeight)` | `(int, int)` | Size scaled down (never up) to fit a box; 0 = no limit on that side. |
+| `IsValidSize(stream, maxWidth, maxHeight)` | `bool` | Whether dimensions are within bounds (header only). |
+| `IsValidAspectRatio(stream)` | `bool` | Aspect-ratio sanity check (header only). |
+| `ConvertImage(stream, format)` | `Result<MemoryStream>` | Re-encode to JPEG/PNG/WebP (quality 90). |
+| `ResizeImage(stream, targetWidth, targetHeight, allowCrop = true)` | `Result<MemoryStream>` | Resize to PNG: `allowCrop` covers and crops to the exact size, otherwise fits inside keeping the aspect ratio. |
+| `ResizeImage(stream, targetWidth, targetHeight, allowCrop, format, quality = 90)` | `Result<MemoryStream>` | Resize to another format. |
 | `ImageToBase64(imagePath)` | `Result<string>` | Read a file as a Base64 string. |
-| `ResizeImage(inputPath, outputPath, width, height, maintainAspectRatio = true)` | `Result` | Resize file → file. |
+| `ResizeImage(inputPath, outputPath, width, height, maintainAspectRatio = true)` | `Result` | Resize file → file (`false` covers and crops). |
 | `ConvertImageFormat(inputPath, outputPath, format)` | `Result` | Convert file → file. |
 | `CreateThumbnail(inputPath, outputPath, thumbnailSize = 100)` | `Result` | Square thumbnail. |
-| `GetImageDimensions(imagePath)` | `Result<(int width, int height)>` | Read width/height. |
+| `GetImageDimensions(imagePath)` | `Result<(int width, int height)>` | Read the stored width/height from the header. |
 
 ```csharp
 public enum ImageFormat { Jpeg, Png, Webp }
 ```
+
+`ImageProcessOptions`: `Format` (Webp), `Quality` (85), `MaxWidth`/`MaxHeight` (0 = no limit), `MaxPixels` (`DefaultMaxPixels`), `ApplyOrientation` (true). `ProcessedImage(byte[] Data, int Width, int Height, ImageFormat Format)`.
+
+Error codes: `imaging.decode_failed` (not an image), `imaging.too_large` (over the pixel limit), `imaging.invalid_options`, `imaging.encode_failed`.
 
 ## Caching — ICache / MemoryCache
 
