@@ -3,6 +3,25 @@
 All notable changes to **CodeLogic.Common** are documented here. Versions follow
 [Semantic Versioning](https://semver.org/).
 
+## 2026-10-27
+
+### Security
+
+- `HtmlHelper.Sanitize` is now an allowlist sanitizer. It used to remove only `<script>`/`<style>`
+  blocks and double-quoted `on*="…"` attributes, so unquoted or single-quoted handlers
+  (`<img src=x onerror=alert(1)>`), `javascript:` links, `<iframe>`, `<object>`, `<svg>`, `<form>` and
+  inline styles got through. It now rebuilds the markup: the formatting elements in the new
+  `SanitizeAllowedTags` (p, br, b, strong, i, em, lists, headings, blockquote, code, …) without
+  attributes, links with an `href` only when it is http, https, mailto or relative (plus
+  `rel="nofollow noopener noreferrer"`); script, style, iframe, object, svg and similar elements are
+  removed with their content, other tags are removed and their text kept.
+
+### Upgrade notes
+
+- Output changes: attributes (`class`, `style`, `title`, `src`), images, tables and embeds are no longer
+  kept. For rich text that needs them, use a full allowlist sanitizer such as CL.WebLogic's
+  `WebHtmlSanitizer`.
+
 ## 2026-10-24
 
 ### Changed
