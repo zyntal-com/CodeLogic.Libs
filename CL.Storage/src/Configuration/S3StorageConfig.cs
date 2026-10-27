@@ -149,6 +149,11 @@ public sealed class S3ConnectionConfig : StorageConnectionConfigBase
                     yield return "HTTP S3-compatible endpoints require AllowInsecureHttp=true";
                 }
 
+                // The AWS SDK refuses unsigned payloads on plain HTTP ("the request must be sent over HTTPS"),
+                // so every upload would fail while reads keep working.
+                if (uri.Scheme == Uri.UriSchemeHttp && DisablePayloadSigning)
+                    yield return "DisablePayloadSigning requires an HTTPS ServiceUrl: the AWS SDK refuses unsigned payloads over HTTP";
+
                 if (!string.IsNullOrEmpty(uri.UserInfo) || !string.IsNullOrEmpty(uri.Query) || !string.IsNullOrEmpty(uri.Fragment))
                     yield return "ServiceUrl cannot contain user info, a query string, or a fragment";
             }
