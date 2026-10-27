@@ -128,7 +128,7 @@ Every helper class, grouped by area, with the page that documents it in depth.
 | `Networking.SubnetCalculator` | static | IPv4 subnet math returning a `SubnetInfo`. |
 | `Networking.TraceRoute` | static | Walks the route to a host, returning `HopInfo` records. |
 | `Parser.CronParser` | static | Parse/validate 5-field cron and compute the next UTC occurrence (`CronExpression`). |
-| `Imaging.CLU_Imaging` | static | Resize, crop, format conversion (JPEG/PNG/WebP), thumbnails, dimensions, Base64. |
+| `Imaging.CLU_Imaging` | static | Safe upload processing (pixel limit, EXIF orientation, fit, WebP), resize, crop, format conversion (JPEG/PNG/WebP), thumbnails, dimensions, Base64. |
 | `Caching.MemoryCache` (`ICache`) | instance | Async typed in-process cache with per-entry TTL, prefix removal, background eviction. |
 | `FileHandling.FileSystem` | static | Async read/write/copy/move/delete, directory create, listing, size, existence. |
 | `Assemblies.AssemblyHelper` | static | Assembly metadata/loading, type discovery, embedded resources. |

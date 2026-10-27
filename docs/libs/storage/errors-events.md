@@ -32,7 +32,7 @@ Every provider maps its own failures to the same codes:
 | `storage.unavailable` | the service is unavailable | provider outages, other HTTP 5xx, FTP 450 and other 4xx replies; a disposed transfer queue; a job whose store failed 8 times in a row |
 | `storage.partial_failure` | a multi-step operation stopped halfway | restore or move-source deletion failed, a WebDAV `207 Multi-Status` |
 | `storage.cancelled` | the caller cancelled, reported where a report says what was left | a cancelled `CopyAsync`/`MoveAsync` (`Outcome = Cancelled`) |
-| `storage.provider_error` | anything not classified above | carries the exception type (never its message) |
+| `storage.provider_error` | anything not classified above | carries the exception type; never the message, except an S3 SDK refusal (`AmazonClientException`), whose reason is kept with URL queries and credential-like values redacted |
 | `storage.unauthorized` | legacy code, not raised by the built-in providers | `StorageErrors.Create` still maps it |
 
 Classify errors by `Code` (or `StorageErrorInfo.IsTransient`), not by the Core error kind:
@@ -155,4 +155,7 @@ events.Subscribe<StorageOperationFailedEvent>(e =>
 
 `StorageOperationFailedEvent` includes expected failures such as `storage.not_found`, so filter on
 `ErrorCode`. Input rejected before reaching the provider (invalid paths or options) is not reported.
-Each retry and each retired session is also logged as a warning.
+Each retry and each retired session is also logged as a warning, and so is each failed operation
+(code, message and details) except the routine `not_found`, `conflict`, `cancelled` and `invalid_path`;
+the same connection, operation and code is logged at most once a minute. S3 service errors carry the
+request id in `Details` (`requestId=…`) for support cases.

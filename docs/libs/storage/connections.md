@@ -165,6 +165,8 @@ holds anything (hidden names included); a recursive FTP delete includes hidden f
 
 Plain-HTTP endpoints need `AllowInsecureHttp = true` on S3, Google Cloud, Swift, and WebDAV; Azure accepts
 HTTP only through a connection string (Azurite).
+On S3, `DisablePayloadSigning` needs an HTTPS `ServiceUrl`: the AWS SDK refuses unsigned payloads over
+plain HTTP, so validation rejects that combination (every upload would fail while reads kept working).
 
 ## Proxies
 
