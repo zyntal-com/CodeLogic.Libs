@@ -48,6 +48,7 @@ public sealed class QueryBuilder<T> where T : class, new()
     private string? _afterCursor;
     // Set by ForUpdate / ForShare: a locking read, only valid inside a transaction scope.
     private (bool Exclusive, LockWait Wait)? _lock;
+    private HashSet<string>? _excluded;
 
     // ── Constructors ──────────────────────────────────────────────────────────
 
@@ -235,6 +236,34 @@ public sealed class QueryBuilder<T> where T : class, new()
     {
         _afterCursor = cursor;
         return this;
+    }
+
+    /// <summary>
+    /// Leaves <paramref name="columns"/> out of the rows this query reads: the SELECT lists every other mapped
+    /// column instead of <c>*</c>, and the excluded properties keep their default value. Meant for wide text/binary
+    /// columns a reader doesn't need; unlike <see cref="Select{TResult}"/> a column added to <typeparamref name="T"/>
+    /// later is still read. Applies to <c>ToListAsync</c>, <c>FirstOrDefaultAsync</c>, the paged and cursor-paged
+    /// reads and <c>UpdateAndGetAsync</c>; <see cref="Select{TResult}"/> picks its own columns. Don't write an entity
+    /// read this way back with <c>Repository.UpdateAsync</c> — the excluded columns would be overwritten with defaults.
+    /// </summary>
+    public QueryBuilder<T> Exclude(params Expression<Func<T, object?>>[] columns)
+    {
+        ArgumentNullException.ThrowIfNull(columns);
+        _excluded ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var column in columns)
+            _excluded.Add(EntityMetadata<T>.RequireColumn(SqlServerExpressionVisitor.TranslateSelector(column)).ColumnName);
+        if (EntityMetadata<T>.Columns.All(c => _excluded.Contains(c.ColumnName)))
+            throw new ArgumentException($"Exclude would leave no columns of {typeof(T).Name} to read.", nameof(columns));
+        return this;
+    }
+
+    /// <summary>The column list: <c>{source}.*</c>, or the table's columns minus <see cref="Exclude"/>d ones.</summary>
+    private string SelectColumns(string source)
+    {
+        if (_excluded is null) return $"{source}.*";
+        return string.Join(", ", EntityMetadata<T>.Columns
+            .Where(c => !_excluded.Contains(c.ColumnName))
+            .Select(c => $"{source}.{SqlServerDialect.Quote(c.ColumnName)}"));
     }
 
     public QueryBuilder<T> Limit(int count) { _limit = count; return this; }
@@ -760,7 +789,7 @@ public sealed class QueryBuilder<T> where T : class, new()
             }
 
             var orderSql = string.Join(", ", orders.Select(RenderOrder));
-            var sql = $"SELECT TOP ({pageSize + 1}) * FROM {EntityMetadata<T>.QualifiedTableName}{whereClause} ORDER BY {orderSql}";
+            var sql = $"SELECT TOP ({pageSize + 1}) {(_excluded is null ? "*" : SelectColumns(EntityMetadata<T>.QualifiedTableName))} FROM {EntityMetadata<T>.QualifiedTableName}{whereClause} ORDER BY {orderSql}";
             var tableName = GetTableName();
 
             if (ShouldCache)
@@ -1174,13 +1203,13 @@ public sealed class QueryBuilder<T> where T : class, new()
         {
             var orderBySql = _orderBys.Count > 0 ? $" ORDER BY {string.Join(", ", _orderBys)}" : string.Empty;
             return ($"WITH [__target] AS (SELECT TOP ({_limit.Value}) * FROM {table}{LockHintFor(true, wait)}{whereClause}{orderBySql}) " +
-                    $"UPDATE [__target] SET {setSql} OUTPUT INSERTED.*;", parms);
+                    $"UPDATE [__target] SET {setSql} OUTPUT {SelectColumns("INSERTED")};", parms);
         }
 
         // Without Take every matching row is updated; the UPDATE takes its own exclusive locks,
         // so a hint is only needed to carry a NOWAIT / READPAST wait mode.
         var hint = wait == LockWait.Wait ? string.Empty : LockHintFor(true, wait);
-        return ($"UPDATE {table}{hint} SET {setSql} OUTPUT INSERTED.*{whereClause};", parms);
+        return ($"UPDATE {table}{hint} SET {setSql} OUTPUT {SelectColumns("INSERTED")}{whereClause};", parms);
     }
 
     // Orders materialized rows by the query's OrderBy keys (NULLs first, as SQL Server does).
@@ -1307,7 +1336,7 @@ public sealed class QueryBuilder<T> where T : class, new()
         int? pageSize = null)
     {
         var tableName = GetTableName();
-        var selectCols = "*";
+        var selectCols = _excluded is null ? "*" : SelectColumns(EntityMetadata<T>.QualifiedTableName);
         var joinSql = _joins.Count > 0 ? " " + string.Join(" ", _joins) : string.Empty;
         var (whereClause, parms) = BuildWhereSql();
         var groupBySql = _groupBys.Count > 0 ? $" GROUP BY {string.Join(", ", _groupBys)}" : string.Empty;

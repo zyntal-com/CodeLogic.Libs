@@ -42,6 +42,22 @@ public sealed class SvcRow
     public int Qty { get; set; }
 }
 
+[Table(Name = "it_excl", Schema = "dbo")]
+public sealed class ExclRow
+{
+    [Column(Name = "id", DataType = DataType.BigInt, Primary = true, AutoIncrement = true)]
+    public long Id { get; set; }
+
+    [Column(Name = "sku", DataType = DataType.NVarChar, Size = 40, NotNull = true)]
+    public string Sku { get; set; } = "";
+
+    [Column(Name = "qty", DataType = DataType.Int, NotNull = true)]
+    public int Qty { get; set; }
+
+    [Column(Name = "label", DataType = DataType.NVarChar, Size = 400)]
+    public string? Label { get; set; }
+}
+
 [Table(Name = "it_svc_retain", Schema = "dbo")]
 [RetainDays(30, nameof(CreatedUtc))]
 public sealed class SvcRetain
@@ -184,6 +200,48 @@ public sealed class LiveServiceSurfaceTests
     {
         var ex = Assert.Throws<InvalidOperationException>(() => SqlFn.Lower("x"));
         Assert.Contains("Lower", ex.Message, StringComparison.Ordinal);
+    }
+
+    // ── Exclude ──────────────────────────────────────────────────────────────────
+
+    [DbFact]
+    public async Task Exclude_leaves_columns_out_of_every_entity_read()
+    {
+        await _fx.Exec("DROP TABLE IF EXISTS [dbo].[it_excl]");
+        Assert.True((await Mssql.SyncTableAsync<ExclRow>(createBackup: false)).IsSuccess);
+        var repo = Mssql.GetRepository<ExclRow>();
+        foreach (var (sku, qty) in new[] { ("a", 1), ("b", 2), ("c", 3) })
+            Assert.True((await repo.InsertAsync(new ExclRow { Sku = sku, Qty = qty, Label = "wide " + sku })).IsSuccess);
+
+        var list = await Mssql.Query<ExclRow>().Exclude(r => r.Label).OrderBy(r => r.Sku).ToListAsync();
+        Assert.True(list.IsSuccess, list.Error?.ToString());
+        Assert.Equal(["a", "b", "c"], list.Value!.Select(r => r.Sku));
+        Assert.Equal([1, 2, 3], list.Value!.Select(r => r.Qty));
+        Assert.All(list.Value!, r => Assert.Null(r.Label));
+
+        var first = await Mssql.Query<ExclRow>().Where(r => r.Sku == "b").Exclude(r => r.Label, r => r.Qty).FirstOrDefaultAsync();
+        Assert.Equal(("b", 0, (string?)null), (first.Value!.Sku, first.Value.Qty, first.Value.Label));
+
+        var paged = await Mssql.Query<ExclRow>().Exclude(r => r.Label).OrderBy(r => r.Sku).ToPagedListAsync(1, 2);
+        Assert.Equal((3L, 2), (paged.Value!.TotalItems, paged.Value.Items.Count));
+        Assert.All(paged.Value.Items, r => Assert.Null(r.Label));
+
+        var cursor = await Mssql.Query<ExclRow>().Exclude(r => r.Label).OrderBy(r => r.Sku).ToCursorPagedListAsync(2);
+        Assert.Equal(["a", "b"], cursor.Value!.Items.Select(r => r.Sku));
+        Assert.All(cursor.Value.Items, r => Assert.Null(r.Label));
+
+        var updated = await Mssql.Query<ExclRow>().Where(r => r.Sku == "c").Exclude(r => r.Label).UpdateAndGetAsync(r => new ExclRow { Qty = r.Qty + 10 });
+        Assert.Equal((13, (string?)null), (updated.Value!.Single().Qty, updated.Value!.Single().Label));
+
+        // Nothing was written: the label is still there for a normal read.
+        Assert.Equal("wide c", (await Mssql.Query<ExclRow>().Where(r => r.Sku == "c").FirstOrDefaultAsync()).Value!.Label);
+    }
+
+    [Fact]
+    public void Exclude_refuses_unknown_or_all_columns()
+    {
+        Assert.Throws<ArgumentException>(() => Mssql.Query<ExclRow>().Exclude(r => r.Id, r => r.Sku, r => r.Qty, r => r.Label));
+        Assert.ThrowsAny<Exception>(() => Mssql.Query<ExclRow>().Exclude(r => r.Sku.Length));
     }
 
     // ── Transactions ─────────────────────────────────────────────────────────────
