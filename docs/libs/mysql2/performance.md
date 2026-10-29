@@ -162,7 +162,7 @@ Every query also publishes a `QueryExecutedEvent` carrying a `CacheHit` flag, so
 ## Compiled materializers & projection pushdown
 
 - **Compiled materializers** — reflection runs once per entity at first use to build `EntityMetadata<T>` and a compiled reader-to-entity function. Subsequent reads map rows with no per-row reflection.
-- **Projection pushdown** — `.Select(...)` emits a real `SELECT col1, col2, …` column list rather than `SELECT *`, transferring only the columns referenced. Combined with compiled mapping this often cuts row-transfer bandwidth substantially.
+- **Projection pushdown** — `.Select(...)` emits a real `SELECT col1, col2, …` column list rather than `SELECT *`, transferring only the columns referenced. Combined with compiled mapping this often cuts row-transfer bandwidth substantially. To keep the entity type and drop only a few wide columns, use `.Exclude(...)` (see [Queries](queries.md#leaving-columns-out--exclude)).
 
 Both apply automatically to the builder, projections, joins, and raw `SqlQueryAsync<T>`.
 

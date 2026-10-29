@@ -4,6 +4,18 @@ All notable changes to **CodeLogic.MySQL2** are documented here. Versions follow
 [Semantic Versioning](https://semver.org/). The version listed here matches the
 NuGet package version of `CodeLogic.MySQL2`.
 
+## 2026-10-29
+
+### Added
+
+- **`QueryBuilder<T>.Exclude(...)`** leaves columns out of an entity read:
+  `Query<T>().Exclude(r => r.Json, r => r.Blob)` selects every other mapped column instead of
+  `SELECT *`, and the excluded properties keep their default value. Unlike a `Select` that lists
+  the columns, a column added to the entity later is still read. It applies to `ToListAsync`,
+  `FirstOrDefaultAsync`, the paged and cursor-paged reads and `UpdateAndGetAsync`. Excluding an
+  unknown member or every column throws. Don't write such an entity back with
+  `Repository.UpdateAsync`; the excluded columns would be overwritten with defaults.
+
 ## 2026-10-27
 
 ### Fixed
