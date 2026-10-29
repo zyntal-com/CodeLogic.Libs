@@ -159,6 +159,21 @@ Result<List<OrderSummary>> rows = await mysql.Query<Order>()
 
 `ProjectedQuery` exposes `WithCache(ttl)`, `WithCache()` (the cache configuration's `DefaultTtlSeconds`), `SmartCache(pool)`, `ToListAsync`, and `FirstOrDefaultAsync`.
 
+### Leaving columns out — `Exclude`
+
+When a reader needs the entity but not a few wide columns (JSON, text, blobs), `Exclude` reads every other mapped column instead of `SELECT *`. The excluded properties keep their default value. Unlike a `Select` that lists the columns, a column added to the entity later is still read.
+
+```csharp
+Result<List<PlayerRound>> rounds = await mysql.Query<PlayerRound>()
+    .Where(r => r.SteamId == steamId)
+    .Exclude(r => r.SpatialNodesJson, r => r.SpatialEdgesJson)
+    .ToListAsync();
+```
+
+It applies to `ToListAsync`, `FirstOrDefaultAsync`, `ToPagedListAsync`, `ToCursorPagedListAsync` and `UpdateAndGetAsync`; `Select` picks its own columns. Excluding an unknown member or every column throws `ArgumentException`.
+
+> **Don't write such an entity back** with `Repository.UpdateAsync(entity)`: the excluded columns hold defaults and would overwrite the stored values. Use a typed `UpdateAsync(x => new T { … })` setter instead.
+
 ## Aggregates — `GroupBy`
 
 `GroupBy<TKey>` returns a `GroupedQuery<TKey, TSource>`; its `Select` projects the grouping into a `ProjectedQuery` and translates to a real `GROUP BY` with aggregate functions — no client-side materialization.

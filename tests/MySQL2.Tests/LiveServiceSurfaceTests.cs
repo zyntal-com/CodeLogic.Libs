@@ -169,6 +169,47 @@ public sealed class LiveServiceSurfaceTests
         Assert.Contains("Lower", ex.Message, StringComparison.Ordinal);
     }
 
+    // ── Exclude ──────────────────────────────────────────────────────────────────
+
+    [DbFact]
+    public async Task Exclude_leaves_columns_out_of_every_entity_read()
+    {
+        await FreshSvcAsync();
+        var repo = Mysql.GetRepository<SvcRow>();
+        foreach (var (sku, qty) in new[] { ("a", 1), ("b", 2), ("c", 3) })
+            Assert.True((await repo.InsertAsync(new SvcRow { Sku = sku, Qty = qty, Label = "wide " + sku })).IsSuccess);
+
+        var list = await Mysql.Query<SvcRow>().Exclude(r => r.Label).OrderBy(r => r.Sku).ToListAsync();
+        Assert.True(list.IsSuccess, list.Error?.ToString());
+        Assert.Equal(["a", "b", "c"], list.Value!.Select(r => r.Sku));
+        Assert.Equal([1, 2, 3], list.Value!.Select(r => r.Qty));
+        Assert.All(list.Value!, r => Assert.Null(r.Label));
+
+        var first = await Mysql.Query<SvcRow>().Where(r => r.Sku == "b").Exclude(r => r.Label, r => r.Qty).FirstOrDefaultAsync();
+        Assert.Equal(("b", 0, (string?)null), (first.Value!.Sku, first.Value.Qty, first.Value.Label));
+
+        var paged = await Mysql.Query<SvcRow>().Exclude(r => r.Label).OrderBy(r => r.Sku).ToPagedListAsync(1, 2);
+        Assert.Equal((3L, 2), (paged.Value!.TotalItems, paged.Value.Items.Count));
+        Assert.All(paged.Value.Items, r => Assert.Null(r.Label));
+
+        var cursor = await Mysql.Query<SvcRow>().Exclude(r => r.Label).OrderBy(r => r.Sku).ToCursorPagedListAsync(2);
+        Assert.Equal(["a", "b"], cursor.Value!.Items.Select(r => r.Sku));
+        Assert.All(cursor.Value.Items, r => Assert.Null(r.Label));
+
+        var updated = await Mysql.Query<SvcRow>().Where(r => r.Sku == "c").Exclude(r => r.Label).UpdateAndGetAsync(r => new SvcRow { Qty = r.Qty + 10 });
+        Assert.Equal((13, (string?)null), (updated.Value!.Single().Qty, updated.Value!.Single().Label));
+
+        // Nothing was written: the label is still there for a normal read.
+        Assert.Equal("wide c", (await Mysql.Query<SvcRow>().Where(r => r.Sku == "c").FirstOrDefaultAsync()).Value!.Label);
+    }
+
+    [DbFact]
+    public void Exclude_refuses_unknown_or_all_columns()
+    {
+        Assert.Throws<ArgumentException>(() => Mysql.Query<SvcRow>().Exclude(r => r.Id, r => r.Sku, r => r.Qty, r => r.Label));
+        Assert.ThrowsAny<Exception>(() => Mysql.Query<SvcRow>().Exclude(r => r.Sku.Length));
+    }
+
     // ── Upserts ──────────────────────────────────────────────────────────────────
 
     [DbFact]
