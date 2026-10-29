@@ -155,6 +155,16 @@ Result<List<OrderSummary>> rows = await mssql.Query<Order>()
 
 `ProjectedQuery` exposes `WithCache(ttl)`, `WithCache()` (the configured `DefaultTtlSeconds`), `SmartCache(pool)`, `ToListAsync`, and `FirstOrDefaultAsync`.
 
+### Leaving columns out — `Exclude`
+
+When a reader needs the entity but not a few wide columns, `Exclude` reads every other mapped column instead of `*` (`OUTPUT INSERTED.<columns>` for `UpdateAndGetAsync`). The excluded properties keep their default value, and a column added to the entity later is still read.
+
+```csharp
+var rows = await mssql.Query<Document>().Where(d => d.OwnerId == id).Exclude(d => d.Body).ToListAsync();
+```
+
+It applies to `ToListAsync`, `FirstOrDefaultAsync`, `ToPagedListAsync`, `ToCursorPagedListAsync` and `UpdateAndGetAsync`. Excluding an unknown member or every column throws. **Don't write such an entity back** with `Repository.UpdateAsync(entity)`; the excluded columns would be overwritten with defaults.
+
 ## Aggregates — `GroupBy`
 
 `GroupBy<TKey>` returns a `GroupedQuery<TKey, TSource>`; its `Select` projects the grouping into a `ProjectedQuery` and translates to a real `GROUP BY` with aggregate functions — no client-side materialization.

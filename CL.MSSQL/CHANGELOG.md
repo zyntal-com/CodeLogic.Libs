@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-10-29
+
+### Added
+
+- **`QueryBuilder<T>.Exclude(...)`**, matching CL.MySQL2: leaves columns out of an entity read
+  (every other mapped column is selected instead of `*`; excluded properties keep their default).
+  Applies to `ToListAsync`, `FirstOrDefaultAsync`, the paged and cursor-paged reads and
+  `UpdateAndGetAsync` (`OUTPUT INSERTED.<columns>`). Don't write such an entity back with
+  `Repository.UpdateAsync`.
+
 ## 2026-10-26
 
 ### Security

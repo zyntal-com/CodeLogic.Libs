@@ -203,7 +203,7 @@ public sealed class LiveServiceSurfaceTests
         Assert.Equal("wide c", (await Mysql.Query<SvcRow>().Where(r => r.Sku == "c").FirstOrDefaultAsync()).Value!.Label);
     }
 
-    [Fact]
+    [DbFact]
     public void Exclude_refuses_unknown_or_all_columns()
     {
         Assert.Throws<ArgumentException>(() => Mysql.Query<SvcRow>().Exclude(r => r.Id, r => r.Sku, r => r.Qty, r => r.Label));
