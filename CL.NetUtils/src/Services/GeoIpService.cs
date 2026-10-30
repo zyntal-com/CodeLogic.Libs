@@ -41,6 +41,12 @@ public class GeoIpService : IDisposable
             : Path.Combine(dataDirectory, "geoip", $"{config.DatabaseType}.mmdb");
     }
 
+    /// <summary>The <c>.mmdb</c> file this service reads (from <see cref="GeoIpConfig.DatabasePath"/> or the library data directory).</summary>
+    public string DatabasePath => _databasePath;
+
+    /// <summary><see langword="true"/> when MaxMind credentials are set, so a missing database can be downloaded.</summary>
+    public bool CanDownload => _config.AccountId != 0 && !string.IsNullOrWhiteSpace(_config.LicenseKey);
+
     /// <summary>
     /// Ensures the database file exists (downloading it when needed and permitted),
     /// then opens the <see cref="DatabaseReader"/>.
@@ -139,7 +145,7 @@ public class GeoIpService : IDisposable
     {
         try
         {
-            if (_config.AccountId == 0 || string.IsNullOrWhiteSpace(_config.LicenseKey))
+            if (!CanDownload)
             {
                 _logger?.Warning("MaxMind credentials not configured — skipping database download.");
                 return;

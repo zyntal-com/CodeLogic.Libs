@@ -133,4 +133,19 @@ public sealed class LiveConfigReloadTests : IAsyncLifetime
         Assert.True(_social.HasDiscord);
         Assert.True(_social.HasSteam);
     }
+
+    [Fact]
+    public async Task Health_is_healthy_with_every_service_switched_off()
+    {
+        Assert.Equal("Active services: Discord, Steam, SteamOpenId", (await _social.HealthCheckAsync()).Message);
+
+        var config = Config();
+        config["discord"]!["enabled"] = false;
+        config["steam"]!["enabled"] = false;
+        Assert.True((await UpdateAsync(config)).Applied);
+
+        var health = await _social.HealthCheckAsync();
+        Assert.Equal(HealthStatusLevel.Healthy, health.Status);
+        Assert.Equal("No services enabled", health.Message);
+    }
 }

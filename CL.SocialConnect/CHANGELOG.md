@@ -3,6 +3,14 @@
 All notable changes to **CodeLogic.SocialConnect** are documented here. Versions follow
 [Semantic Versioning](https://semver.org/).
 
+## 2026-10-30
+
+### Fixed
+
+- **Health with every service switched off is Healthy** (`No services enabled`). It reported Unhealthy
+  "Not initialized — no services active", although services are only ever absent because the config
+  turns them off — an app that uses only some of the library (or none of it yet) showed as broken.
+
 ## 2026-10-26
 
 ### Added
