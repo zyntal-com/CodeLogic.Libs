@@ -1,3 +1,6 @@
+using CL.NetUtils;
+using CodeLogic.Core.Events;
+using CodeLogic.Framework.Libraries;
 using CL.NetUtils.Models;
 using CL.NetUtils.Services;
 using Xunit;
@@ -205,5 +208,63 @@ public sealed class LiveGeoIpTests
 
         Assert.True(result.IsSuccessful, result.ErrorMessage);
         Assert.False(string.IsNullOrEmpty(result.CountryCode));
+    }
+}
+
+// ── Library health (offline: DNSBL is never queried, GeoIP never downloads) ───────
+
+public sealed class NetUtilsHealthTests : IAsyncLifetime
+{
+    private readonly string _root = Path.Combine(Path.GetTempPath(), "cl_netutils_health_" + Guid.NewGuid().ToString("N"));
+    private LibraryManager? _manager;
+
+    public Task InitializeAsync() => Task.CompletedTask;
+
+    public async Task DisposeAsync()
+    {
+        if (_manager is not null)
+        {
+            await _manager.StopAllAsync();
+            _manager.Dispose();
+        }
+        try { Directory.Delete(_root, recursive: true); } catch { /* logger may still hold its file */ }
+    }
+
+    private async Task<HealthStatus> StartAsync(string geoIpJson)
+    {
+        var libDir = Path.Combine(_root, "Libraries", "CL.NetUtils");
+        Directory.CreateDirectory(libDir);
+        await File.WriteAllTextAsync(Path.Combine(libDir, "config.netutils.json"),
+            $$"""{ "enabled": true, "dnsbl": { "enabled": true }, "geoIp": {{geoIpJson}} }""");
+
+        _manager = new LibraryManager(new EventBus()) { FrameworkRootPath = _root };
+        await _manager.LoadLibraryAsync<NetUtilsLibrary>();
+        await _manager.ConfigureAllAsync();
+        await _manager.InitializeAllAsync();
+        await _manager.StartAllAsync();
+        return await _manager.GetLibrary<NetUtilsLibrary>()!.HealthCheckAsync();
+    }
+
+    [Fact]
+    public async Task GeoIP_that_was_never_set_up_is_healthy()
+    {
+        var health = await StartAsync("""{ "enabled": true }""");
+
+        Assert.Equal(HealthStatusLevel.Healthy, health.Status);
+        Assert.Equal("DNSBL on, GeoIP not configured", health.Message);
+        Assert.False(_manager!.GetLibrary<NetUtilsLibrary>()!.HasGeoIp);
+    }
+
+    [Fact]
+    public async Task GeoIP_that_is_set_up_but_fails_degrades()
+    {
+        var database = Path.Combine(_root, "broken.mmdb");
+        Directory.CreateDirectory(_root);
+        await File.WriteAllTextAsync(database, "not a MaxMind database");
+
+        var health = await StartAsync($$"""{ "enabled": true, "databasePath": {{System.Text.Json.JsonSerializer.Serialize(database)}} }""");
+
+        Assert.Equal(HealthStatusLevel.Degraded, health.Status);
+        Assert.StartsWith("DNSBL on, GeoIP failed: ", health.Message);
     }
 }

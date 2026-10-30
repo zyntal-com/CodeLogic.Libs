@@ -34,6 +34,8 @@ public sealed class NetUtilsLibrary : ILibrary
     private LibraryContext? _context;
     private DnsblChecker? _dnsblChecker;
     private GeoIpService? _geoIpService;
+    private bool _initialized;
+    private string _geoIpState = "off";   // "on", "off", "not configured" or "failed: …"
 
     // ── Phase 1: Configure ────────────────────────────────────────────────────
 
@@ -83,20 +85,33 @@ public sealed class NetUtilsLibrary : ILibrary
         // GeoIP service — optional; failure is a warning, not a fatal error
         if (config.GeoIp.Enabled)
         {
-            _geoIpService = new GeoIpService(config.GeoIp, context.Logger, context.DataDirectory);
+            var geoIp = new GeoIpService(config.GeoIp, context.Logger, context.DataDirectory);
 
-            try
+            if (!File.Exists(geoIp.DatabasePath) && !geoIp.CanDownload)
             {
-                await _geoIpService.InitializeAsync();
+                // Nothing to open and nothing to download with: GeoIP was simply never set up.
+                context.Logger.Info("GeoIP not configured (no database file and no MaxMind credentials) — lookups are off");
+                geoIp.Dispose();
+                _geoIpState = "not configured";
             }
-            catch (Exception ex)
+            else
             {
-                context.Logger.Warning($"GeoIP service initialization failed (service will be unavailable): {ex.Message}");
-                _geoIpService.Dispose();
-                _geoIpService = null;
+                try
+                {
+                    await geoIp.InitializeAsync();
+                    _geoIpService = geoIp;
+                    _geoIpState = "on";
+                }
+                catch (Exception ex)
+                {
+                    context.Logger.Warning($"GeoIP service initialization failed (service will be unavailable): {ex.Message}");
+                    geoIp.Dispose();
+                    _geoIpState = $"failed: {ex.Message}";
+                }
             }
         }
 
+        _initialized = true;
         context.Logger.Info($"{Manifest.Name} initialized");
     }
 
@@ -120,6 +135,7 @@ public sealed class NetUtilsLibrary : ILibrary
         _geoIpService?.Dispose();
         _geoIpService = null;
         _dnsblChecker = null;
+        _initialized = false;
 
         _context?.Logger.Info($"{Manifest.Name} stopped");
         return Task.CompletedTask;
@@ -135,16 +151,15 @@ public sealed class NetUtilsLibrary : ILibrary
         if (config is { Enabled: false })
             return Task.FromResult(HealthStatus.Healthy("NetUtils library is disabled"));
 
-        if (_dnsblChecker is null && _geoIpService is null)
+        if (!_initialized)
             return Task.FromResult(HealthStatus.Unhealthy("Not initialized"));
 
-        if (_dnsblChecker is not null && _geoIpService is not null)
-            return Task.FromResult(HealthStatus.Healthy("All network services operational"));
-
-        if (_dnsblChecker is not null)
-            return Task.FromResult(HealthStatus.Degraded("DNSBL available, GeoIP unavailable"));
-
-        return Task.FromResult(HealthStatus.Degraded("GeoIP available, DNSBL unavailable"));
+        // A service that is switched off or was never set up is not a fault; only a GeoIP that was
+        // set up (database file or MaxMind credentials) and still failed to start degrades the library.
+        var summary = $"DNSBL {(_dnsblChecker is not null ? "on" : "off")}, GeoIP {_geoIpState}";
+        return Task.FromResult(_geoIpState.StartsWith("failed", StringComparison.Ordinal)
+            ? HealthStatus.Degraded(summary)
+            : HealthStatus.Healthy(summary));
     }
 
     // ── Public API ────────────────────────────────────────────────────────────

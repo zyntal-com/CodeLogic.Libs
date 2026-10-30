@@ -226,7 +226,16 @@ The library writes `config.netutils.json` (section `netutils`) with defaults on 
 
 ## Health check
 
-`HealthCheckAsync()` reports the library status. When `Enabled` is `false`, it reports *disabled* rather than failing.
+`HealthCheckAsync()` reports the library status, with a message such as `DNSBL on, GeoIP not configured`.
+
+| Situation | Status |
+|-----------|--------|
+| `Enabled` is `false` | Healthy (*disabled*) |
+| A service is switched off, or GeoIP has neither a database file nor MaxMind credentials (*not configured*) | Healthy |
+| GeoIP is set up (database file or credentials) but failed to start — download failed, corrupt file | Degraded (`GeoIP failed: <reason>`) |
+| Called before initialization | Unhealthy |
+
+`HasGeoIp` tells callers whether lookups are available.
 
 ```csharp
 var status = await net.HealthCheckAsync();
