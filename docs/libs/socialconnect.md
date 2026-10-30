@@ -457,7 +457,7 @@ All events implement `IEvent` and are published to the CodeLogic event bus.
 
 ## Health check
 
-`HealthCheckAsync()` reports a `HealthStatus` based on which services are available and configured. Disabled services do not fail the check.
+`HealthCheckAsync()` reports a `HealthStatus` listing the active services (`Active services: Discord, Steam, SteamOpenId`). Services are only absent when their config switches them off, so an app with every service off is Healthy (`No services enabled`); only a call before initialization is Unhealthy.
 
 ```csharp
 var status = await social.HealthCheckAsync();

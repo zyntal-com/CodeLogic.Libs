@@ -223,8 +223,8 @@ public sealed class SocialConnectLibrary : ILibrary, IConfigReloadable
         if (config is { Enabled: false })
             return Task.FromResult(HealthStatus.Healthy($"{Manifest.Name} is disabled"));
 
-        if (_discord is null && _steam is null)
-            return Task.FromResult(HealthStatus.Unhealthy("Not initialized — no services active"));
+        if (config is null)
+            return Task.FromResult(HealthStatus.Unhealthy("Not initialized"));
 
         var active = new List<string>();
         if (_discord is not null) active.Add("Discord");
@@ -232,9 +232,11 @@ public sealed class SocialConnectLibrary : ILibrary, IConfigReloadable
         if (_auth is not null) active.Add("SteamAuth");
         if (_openId is not null) active.Add("SteamOpenId");
 
-        return Task.FromResult(
-            HealthStatus.Healthy($"Active services: {string.Join(", ", active)}")
-        );
+        // Services are only ever missing because their config switches them off,
+        // so an app that uses neither is healthy, not broken.
+        return Task.FromResult(HealthStatus.Healthy(active.Count > 0
+            ? $"Active services: {string.Join(", ", active)}"
+            : "No services enabled"));
     }
 
     // ── Public API ────────────────────────────────────────────────────────────

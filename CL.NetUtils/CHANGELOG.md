@@ -3,6 +3,20 @@
 All notable changes to **CodeLogic.NetUtils** are documented here. Versions follow
 [Semantic Versioning](https://semver.org/).
 
+## 2026-10-30
+
+### Fixed
+
+- **Health no longer reports optional features that are off as faults.** GeoIP with neither a database file
+  nor MaxMind credentials is now *not configured* and Healthy (it was Degraded "GeoIP unavailable"), and is
+  logged at Info instead of a startup warning. Degraded now means GeoIP was set up (database file or
+  credentials) and still failed to start; the message carries the reason. The health message lists both
+  services, e.g. `DNSBL on, GeoIP not configured`. A library with both services switched off is Healthy too.
+
+### Added
+
+- `GeoIpService.DatabasePath` and `GeoIpService.CanDownload`.
+
 ## 2026-10-24
 
 ### Changed
