@@ -180,3 +180,11 @@
 - **Advisory locks:** `db.AcquireLockAsync(name, timeout)` returns a `DataLock`, held on its own connection. It uses GET_LOCK on MySQL, pg_try_advisory_lock on PostgreSQL and sp_getapplock on SQL Server; SQLite returns `data.unsupported`.
 - **Events:** `DatabaseOptions.Events` receives CL.Data events.
 - **Backup before alter:** moved to WP-75, together with backup and restore.
+- **Migrations:** `IMigration`/`Migration` with `MigrationVersion` (semantic app version plus order, written `1.2.0/003`).
+  - **Context:** `IMigrationContext` gives a `Db` bound to the migration's transaction, plus `ExecuteAsync`, `ApplyAsync(SchemaChange)`, `ReadTableAsync` and `SyncTableAsync<T>`.
+  - **Runner:** `db.Migrations(...)` creates a `MigrationRunner` with `PendingAsync`, `AppliedAsync`, `MigrateAsync` and `RollbackAsync(target)`.
+  - **History:** each migration commits in one transaction with its row in `cl_data_migrations`.
+  - **Checksums** (XxHash128 of version and description) detect migrations edited after they were applied.
+  - **Safety:** `AppVersion` filters which migrations run; a rollback that includes an irreversible migration is refused before anything changes; runs take an advisory lock.
+  - **Discovery:** `MigrationRunner.FromAssembly` finds migrations by reflection (annotated for trimming).
+- **`DataTransaction`:** can run session setup and teardown statements around the transaction (SQLite foreign keys).

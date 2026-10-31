@@ -201,6 +201,10 @@ public sealed partial class Database : IAsyncDisposable
     public ValueTask<Result<DataLock>> AcquireLockAsync(string name, TimeSpan timeout, CancellationToken ct = default) =>
         DataLock.AcquireAsync(this, name, timeout, ct);
 
+    /// <summary>A migration runner for <paramref name="migrations"/> on this connection.</summary>
+    public CL.Data.Migrations.MigrationRunner Migrations(IEnumerable<CL.Data.Migrations.IMigration> migrations, CL.Data.Migrations.MigrationOptions? options = null) =>
+        new(this, migrations, options);
+
     /// <summary>Schema sync and drift detection for this connection.</summary>
     public CL.Data.Schema.SchemaSync Schema => field ??= new CL.Data.Schema.SchemaSync(this);
 

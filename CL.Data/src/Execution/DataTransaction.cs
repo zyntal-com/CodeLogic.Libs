@@ -17,13 +17,15 @@ public sealed class DataTransaction : IAsyncDisposable
     private readonly DbConnection _connection;
     private readonly DbTransaction _transaction;
     private readonly Database _owner;
+    private readonly IReadOnlyList<string> _teardown;
     private bool _completed;
 
-    private DataTransaction(Database owner, DbConnection connection, DbTransaction transaction)
+    private DataTransaction(Database owner, DbConnection connection, DbTransaction transaction, IReadOnlyList<string> teardown)
     {
         _owner = owner;
         _connection = connection;
         _transaction = transaction;
+        _teardown = teardown;
         Db = owner.BoundTo(this);
     }
 
@@ -39,16 +41,28 @@ public sealed class DataTransaction : IAsyncDisposable
     /// <summary>A query inside the transaction.</summary>
     public QueryBuilder<T> Query<T>() => Db.Query<T>();
 
-    internal static async ValueTask<Result<DataTransaction>> BeginAsync(Database owner, IsolationLevel? isolation, CancellationToken ct)
+    /// <summary>
+    /// Opens a connection and begins a transaction. <paramref name="setup"/> runs on the connection before
+    /// <c>BEGIN</c> and <paramref name="teardown"/> after the transaction ends (session settings such as SQLite
+    /// <c>PRAGMA foreign_keys</c>, which cannot change inside a transaction).
+    /// </summary>
+    internal static async ValueTask<Result<DataTransaction>> BeginAsync(Database owner, IsolationLevel? isolation, CancellationToken ct,
+        IReadOnlyList<string>? setup = null, IReadOnlyList<string>? teardown = null)
     {
         DbConnection? connection = null;
         try
         {
             connection = await owner.Primary.DataSource.OpenConnectionAsync(ct).ConfigureAwait(false);
+            foreach (var statement in setup ?? [])
+            {
+                await using var command = connection.CreateCommand();
+                command.CommandText = statement;
+                await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+            }
             var transaction = isolation is { } level
                 ? await connection.BeginTransactionAsync(level, ct).ConfigureAwait(false)
                 : await connection.BeginTransactionAsync(ct).ConfigureAwait(false);
-            return new DataTransaction(owner, connection, transaction);
+            return new DataTransaction(owner, connection, transaction, teardown ?? []);
         }
         catch (Exception ex)
         {
@@ -156,6 +170,16 @@ public sealed class DataTransaction : IAsyncDisposable
             _completed = true;
         }
         await _transaction.DisposeAsync().ConfigureAwait(false);
+        foreach (var statement in _teardown)
+        {
+            try
+            {
+                await using var command = _connection.CreateCommand();
+                command.CommandText = statement;
+                await command.ExecuteNonQueryAsync(CancellationToken.None).ConfigureAwait(false);
+            }
+            catch { /* a broken connection is discarded by the pool anyway */ }
+        }
         await _connection.DisposeAsync().ConfigureAwait(false);
     }
 }
