@@ -1,0 +1,4 @@
+
+# Scripts run inside Linux test containers must keep LF endings.
+tests/replicas/*.sh text eol=lf
+tests/replicas/*.sql text eol=lf
