@@ -293,3 +293,8 @@
 - **Running probes:** `db.ProbeReplicasAsync()`, or `db.StartReplicaProbes(scheduler)` to run them every `ReplicaProbeIntervalSeconds`.
   - Each probe updates `DataNode.LagMs` and feeds the replica's circuit breaker, so a recovered replica gets back into rotation through the probe.
   - When replication is stopped, the probe reports `ReplicaProbe.Broken`, which keeps that replica out of rotation.
+- **Node health (WP-94):** `db.CheckHealthAsync()` pings every node, skipping routing and retries. For each node it reports reachability, circuit state, lag, latency and any error (`NodeHealth.IsUsable`).
+  - Primary failover through the drivers was already mapped: MySQL failover hosts, Npgsql `TargetSessionAttributes=primary`, and SQL Server `MultiSubnetFailover` and `FailoverPartner` (primary only, now tested).
+- **Live replica tests (WP-93):** `tests/replicas/docker-compose.yml` starts a MySQL 8.4 GTID pair and a PostgreSQL 18 streaming pair.
+  - `LiveReplicaSuite` covers replica reads seeing primary writes, live lag, skipping a paused replica until it catches up, and falling back to the primary when the replica is down.
+  - It runs with `CL_DATA_REPLICAS=1`, in the non-required CI job `data-replicas`.

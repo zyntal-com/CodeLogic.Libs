@@ -19,17 +19,19 @@ public sealed class SqlServerProviderTests
         var config = new DataConnectionConfig
         {
             Provider = "sqlserver", Host = "sql1", Port = 1444, Database = "app", Username = "u", Password = "p",
-            SqlServer = new SqlServerOptions { MultiSubnetFailover = true, ApplicationName = "cl-data" },
+            SqlServer = new SqlServerOptions { MultiSubnetFailover = true, ApplicationName = "cl-data", FailoverPartner = "sql2" },
         };
         var primary = new SqlConnectionStringBuilder(Provider.BuildConnectionString(config, NodeEndpoint.Primary(config)).ValueOrThrow());
         Assert.Equal("sql1,1444", primary.DataSource);
         Assert.Equal(("app", "u"), (primary.InitialCatalog, primary.UserID));
         Assert.True(primary.MultiSubnetFailover);
         Assert.Equal(ApplicationIntent.ReadWrite, primary.ApplicationIntent);
+        Assert.Equal("sql2", primary.FailoverPartner);
 
         var replica = new SqlConnectionStringBuilder(Provider.BuildConnectionString(config,
             NodeEndpoint.Replica(config, new ReplicaConfig { Name = "r", Host = "listener" })).ValueOrThrow());
         Assert.Equal(ApplicationIntent.ReadOnly, replica.ApplicationIntent);
+        Assert.Equal("", replica.FailoverPartner);                           // mirroring partners belong to the primary only
 
         config.SqlServer!.Authentication = SqlServerAuthentication.EntraManagedIdentity;
         var entra = new SqlConnectionStringBuilder(Provider.BuildConnectionString(config, NodeEndpoint.Primary(config)).ValueOrThrow());

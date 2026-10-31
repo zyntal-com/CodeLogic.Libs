@@ -77,6 +77,38 @@ jobs:
       - name: Run CL.Data MySQL tests
         run: dotnet test tests/Data.MySql.Tests/Data.MySql.Tests.csproj --configuration Release -p:CodeLogicFromNuGet=true --logger "console;verbosity=normal"
 
+  data-replicas:
+    # Live primary/replica pairs (MySQL GTID, PostgreSQL streaming). Not required: replica startup is the most fragile part of CI.
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    continue-on-error: true
+    env:
+      CL_DATA_REPLICAS: '1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup .NET 11
+        uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+
+      - name: Start replica pairs
+        run: |
+          docker compose -f tests/replicas/docker-compose.yml up -d --wait mysql-primary pg-primary
+          docker compose -f tests/replicas/docker-compose.yml up -d mysql-replica pg-replica
+          for i in $(seq 1 90); do
+            docker compose -f tests/replicas/docker-compose.yml exec -T mysql-replica mysql -uroot -e "SHOW REPLICA STATUS\G" 2>/dev/null | grep -q "Replica_SQL_Running: Yes"               && docker compose -f tests/replicas/docker-compose.yml exec -T pg-replica psql -U postgres -d cl_data -tAc "SELECT pg_is_in_recovery()" 2>/dev/null | grep -q t               && exit 0
+            sleep 2
+          done
+          docker compose -f tests/replicas/docker-compose.yml logs
+          exit 1
+
+      - name: Run live replica tests
+        run: |
+          dotnet test tests/Data.MySql.Tests/Data.MySql.Tests.csproj --configuration Release -p:CodeLogicFromNuGet=true --filter "FullyQualifiedName~LiveReplica" --logger "console;verbosity=normal"
+          dotnet test tests/Data.PostgreSql.Tests/Data.PostgreSql.Tests.csproj --configuration Release -p:CodeLogicFromNuGet=true --filter "FullyQualifiedName~LiveReplica" --logger "console;verbosity=normal"
+
   data-postgresql:
     runs-on: ubuntu-latest
     timeout-minutes: 20

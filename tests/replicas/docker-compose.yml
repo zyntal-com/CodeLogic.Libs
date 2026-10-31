@@ -1,0 +1,63 @@
+# Live replica pairs for CL.Data routing and lag-probe tests (tests/Data.{MySql,PostgreSql}.Tests, LiveReplica*).
+#   docker compose -p cl-data-replicas -f tests/replicas/docker-compose.yml up -d
+#   CL_DATA_REPLICAS=1 dotnet test tests/Data.MySql.Tests --filter LiveReplica
+# MySQL 8.4 GTID replication: primary 33407, replica 33408. PostgreSQL 18 streaming replication: primary 15533, replica 15534.
+# Throwaway: no volumes, root/postgres without passwords, never expose beyond localhost.
+name: cl-data-replicas
+services:
+  mysql-primary:
+    image: mysql:8.4
+    environment:
+      MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+      MYSQL_DATABASE: cl_data
+    command: --server-id=1 --log-bin=mysql-bin --gtid-mode=ON --enforce-gtid-consistency=ON
+    ports: ["127.0.0.1:33407:3306"]
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1"]
+      interval: 2s
+      retries: 60
+
+  mysql-replica:
+    image: mysql:8.4
+    environment:
+      MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+    command: --server-id=2 --log-bin=mysql-bin --gtid-mode=ON --enforce-gtid-consistency=ON
+    ports: ["127.0.0.1:33408:3306"]
+    volumes:
+      - ./mysql-replica-init.sql:/docker-entrypoint-initdb.d/replica.sql:ro
+    depends_on:
+      mysql-primary: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1"]
+      interval: 2s
+      retries: 60
+
+  pg-primary:
+    image: postgres:18
+    environment:
+      POSTGRES_HOST_AUTH_METHOD: trust
+      POSTGRES_DB: cl_data
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - ./pg-primary-init.sh:/docker-entrypoint-initdb.d/replication.sh:ro
+    ports: ["127.0.0.1:15533:5432"]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+      interval: 2s
+      retries: 60
+
+  pg-replica:
+    image: postgres:18
+    environment:
+      PGDATA: /var/lib/postgresql/data/pgdata
+    entrypoint: ["bash", "-c"]
+    command:
+      - |
+        set -e
+        until pg_isready -h pg-primary -U postgres; do sleep 1; done
+        mkdir -p "$$PGDATA" && chown -R postgres:postgres /var/lib/postgresql/data && chmod 0700 "$$PGDATA"
+        if [ ! -s "$$PGDATA/PG_VERSION" ]; then gosu postgres pg_basebackup -h pg-primary -U postgres -D "$$PGDATA" -R -X stream; fi
+        exec gosu postgres postgres
+    ports: ["127.0.0.1:15534:5432"]
+    depends_on:
+      pg-primary: { condition: service_healthy }

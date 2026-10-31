@@ -151,4 +151,19 @@ public sealed class RoutingTests : IAsyncLifetime
         Assert.Equal(2, await db.ProbeReplicasAsync());
         Assert.True(db.Replicas[1].IsHealthy);
     }
+
+    [Fact]
+    public async Task Health_reports_every_node()
+    {
+        var (db, provider, _) = Create(breaker: 1);
+        db.Replicas[0].LagMs = 60_000;
+        provider.Nodes["r2"].OpenFaults = 1;
+        var health = (await db.CheckHealthAsync()).ToDictionary(h => h.Node);
+
+        Assert.True(health["primary"].Reachable && health["primary"].IsPrimary);
+        Assert.True(health["r1"].Reachable);
+        Assert.False(health["r1"].IsUsable(db.Config.MaxReplicaLagMs));     // reachable but too far behind
+        Assert.False(health["r2"].Reachable);
+        Assert.Equal(CL.Data.Errors.DataErrors.UnavailableCode, health["r2"].Error);
+    }
 }
