@@ -255,6 +255,10 @@ public sealed partial class Database : IAsyncDisposable
             static async (cmd, _, token) => await cmd.ExecuteNonQueryAsync(token).ConfigureAwait(false),
             static affected => affected);
 
+    /// <summary>A seed runner for <paramref name="seeds"/> on this connection (run it after schema sync).</summary>
+    public CL.Data.Seeding.SeedRunner Seeds(IEnumerable<CL.Data.Seeding.IDataSeed> seeds, CL.Data.Seeding.SeedOptions? options = null) =>
+        new(this, seeds, options);
+
     /// <summary>Schema sync and drift detection for this connection.</summary>
     public CL.Data.Schema.SchemaSync Schema => field ??= new CL.Data.Schema.SchemaSync(this);
 

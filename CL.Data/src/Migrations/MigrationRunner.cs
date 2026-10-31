@@ -211,43 +211,21 @@ public sealed class MigrationRunner
 
     private async ValueTask<Result> EnsureHistoryAsync(CancellationToken ct)
     {
-        var provider = _db.Provider;
-        if (provider.Introspector is not { } introspector) return DataErrors.Unsupported($"{provider.Name} has no schema introspector.");
-        var definition = HistoryDefinition();
-        var existing = await introspector.ReadTableAsync(_db, definition.Name, definition.Schema, ct).ConfigureAwait(false);
-        if (existing.IsFailure) return existing.Error!;
-        if (existing.Value is not null) return Result.Success();
-        foreach (var statement in provider.Ddl.Generate(new CreateTableChange(definition)))
-        {
-            var created = await _db.ExecuteSqlAsync(SqlText.Raw(statement), ct).ConfigureAwait(false);
-            if (created.IsFailure) return DataErrors.MigrationFailed(HistoryTable, statement, created.Error);
-        }
-        return Result.Success();
+        var ensured = await SystemTables.EnsureAsync(_db, HistoryDefinition(), ct).ConfigureAwait(false);
+        return ensured.IsFailure ? ensured.Error! : Result.Success();
     }
 
-    private TableSchema HistoryDefinition()
-    {
-        var provider = _db.Provider;
-        ColumnSchema Column(string name, Type type, DataType dataType, int size) => new(name,
-            provider.NormalizeStoreType(provider.Types.GetStoreType(new ColumnMap { PropertyName = name, ClrType = type, DataType = dataType, Size = size }, _db.Config)),
-            false);
-        return new TableSchema(HistoryTable, provider.Capabilities.Schemas ? provider.GetDefaultSchema(_db.Config) : null,
-        [
-            Column("id", typeof(string), DataType.String, 64),
-            Column("description", typeof(string), DataType.String, 500),
-            Column("checksum", typeof(string), DataType.String, 32),
-            Column("applied_at", typeof(DateTimeOffset), DataType.DateTimeOffset, 0),
-        ], ["id"]);
-    }
+    private TableSchema HistoryDefinition() => SystemTables.Table(_db, HistoryTable,
+    [
+        SystemTables.Column(_db, "id", typeof(string), DataType.String, 64),
+        SystemTables.Column(_db, "description", typeof(string), DataType.String, 500),
+        SystemTables.Column(_db, "checksum", typeof(string), DataType.String, 32),
+        SystemTables.Column(_db, "applied_at", typeof(DateTimeOffset), DataType.DateTimeOffset),
+    ], ["id"]);
 
     private SqlIdentifier History() => SqlKit.Identifier(HistoryTable);
 
-    private async ValueTask<Result<IAsyncDisposable>> LockAsync(CancellationToken ct)
-    {
-        if (!_db.Provider.Capabilities.AdvisoryLocks) return Result<IAsyncDisposable>.Success(NoLock.Instance);
-        var acquired = await _db.AcquireLockAsync(LockName, _options.LockTimeout, ct).ConfigureAwait(false);
-        return acquired.IsFailure ? acquired.Error! : Result<IAsyncDisposable>.Success(acquired.Value!);
-    }
+    private ValueTask<Result<IAsyncDisposable>> LockAsync(CancellationToken ct) => SystemTables.LockAsync(_db, LockName, _options.LockTimeout, ct);
 
     private IEnumerable<IMigration> Pending(Dictionary<string, HistoryRow> applied) =>
         _migrations.Where(m => !applied.ContainsKey(m.Version.ToString()) && (_options.AppVersion is not { } app || m.Version.IsAtOrBelow(app)));
@@ -262,9 +240,4 @@ public sealed class MigrationRunner
 
     private static string Truncate(string text, int max) => text.Length <= max ? text : text[..max];
 
-    private sealed class NoLock : IAsyncDisposable
-    {
-        public static readonly NoLock Instance = new();
-        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
-    }
 }

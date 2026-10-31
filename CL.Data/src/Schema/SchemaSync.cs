@@ -244,18 +244,9 @@ public sealed class SchemaSync
 
     private async ValueTask<Result<Dictionary<string, string>>> LoadStateAsync(SchemaIntrospector introspector, CancellationToken ct)
     {
-        var definition = StateDefinition();
-        var existing = await introspector.ReadTableAsync(_db, definition.Name, definition.Schema, ct).ConfigureAwait(false);
-        if (existing.IsFailure) return existing.Error!;
-        if (existing.Value is null)
-        {
-            foreach (var statement in _db.Provider.Ddl.Generate(new CreateTableChange(definition)))
-            {
-                var created = await _db.ExecuteSqlAsync(SqlText.Raw(statement), ct).ConfigureAwait(false);
-                if (created.IsFailure) return DataErrors.SchemaSyncFailed(StateTable, statement, created.Error);
-            }
-            return new Dictionary<string, string>(StringComparer.Ordinal);
-        }
+        var created = await SystemTables.EnsureAsync(_db, StateDefinition(), ct).ConfigureAwait(false);
+        if (created.IsFailure) return created.Error!;
+        if (created.Value) return new Dictionary<string, string>(StringComparer.Ordinal);
 
         var rows = await _db.SqlReadAsync($"SELECT {SqlKit.Identifier("table_name")}, {SqlKit.Identifier("fingerprint")} FROM {Table()}",
             static r => (Table: r.GetString(0), Fingerprint: r.GetString(1)), ct).ConfigureAwait(false);
@@ -275,19 +266,12 @@ public sealed class SchemaSync
 
     private SqlIdentifier Table() => SqlKit.Identifier(StateTable);
 
-    private TableSchema StateDefinition()
-    {
-        var provider = _db.Provider;
-        ColumnSchema Column(string name, Type type, DataType dataType, int size) => new(name,
-            provider.NormalizeStoreType(provider.Types.GetStoreType(new ColumnMap { PropertyName = name, ClrType = type, DataType = dataType, Size = size }, _db.Config)),
-            false);
-        return new TableSchema(StateTable, provider.Capabilities.Schemas ? provider.GetDefaultSchema(_db.Config) : null,
-        [
-            Column("table_name", typeof(string), DataType.String, 255),
-            Column("fingerprint", typeof(string), DataType.String, 64),
-            Column("synced_at", typeof(DateTimeOffset), DataType.DateTimeOffset, 0),
-        ], ["table_name"]);
-    }
+    private TableSchema StateDefinition() => SystemTables.Table(_db, StateTable,
+    [
+        SystemTables.Column(_db, "table_name", typeof(string), DataType.String, 255),
+        SystemTables.Column(_db, "fingerprint", typeof(string), DataType.String, 64),
+        SystemTables.Column(_db, "synced_at", typeof(DateTimeOffset), DataType.DateTimeOffset),
+    ], ["table_name"]);
 
     /// <summary>Referenced tables first (foreign keys within the set); otherwise the given order.</summary>
     private static List<EntityMap> Order(IReadOnlyList<EntityMap> maps)

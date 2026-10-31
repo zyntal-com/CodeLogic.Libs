@@ -257,3 +257,7 @@
   - **Where they apply:** queries, key lookups, joins, subqueries, set-based updates and deletes, and compiled queries. Entity writes by key aren't filtered, and `UpdateAndGet` returns the rows it updated even if they no longer match.
   - **`QueryBuilder.IgnoreFilters()`** lifts all user filters, or only the named ones. The tenant filter always applies.
 - **`Database.ForTenant(tenant)`:** a cheap view scoped to one tenant (filters and stamps `[TenantKey]` entities). It shares the connection pools; disposing the view does nothing.
+- **Seeding:** `IDataSeed`/`DataSeed` (id, order, version) and `DataSeed.Rows<T>(id, rows)`, an idempotent upsert seed.
+  - **Runner:** `db.Seeds(...).RunAsync()` runs seeds that are new or have a higher version than recorded, in order. Each seed commits in one transaction with its row in `cl_data_seeds`, under an advisory lock.
+  - **Failures:** a failed seed rolls back and is retried on the next run.
+- **Internal:** schema sync, migrations and seeds share one helper for their bookkeeping tables and locks.
