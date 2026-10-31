@@ -12,8 +12,9 @@ namespace NetUtils.Tests;
 
 public sealed class DnsblCheckerResolverTests
 {
-    private const string Ip = "203.0.113.7";
-    private const string Reversed = "7.113.0.203";
+    // A public address: documentation ranges such as 203.0.113.0/24 are skipped without any query.
+    private const string Ip = "93.184.215.7";
+    private const string Reversed = "7.215.184.93";
 
     private static readonly IPAddress Listed = IPAddress.Parse("127.0.0.2");
     private static readonly IPAddress SpamhausError = IPAddress.Parse("127.255.255.254");
@@ -83,6 +84,21 @@ public sealed class DnsblCheckerResolverTests
         Assert.Equal("b.test", result.MatchedService);
         Assert.Equal(1, resolver.MaxConcurrent);
         Assert.DoesNotContain(resolver.Lookups, l => l.EndsWith("c.test"));
+    }
+
+    [Theory]
+    [InlineData("93.184.215.7")]
+    [InlineData("93.184.55047")]                // shorthand: last part fills two bytes (215 * 256 + 7)
+    [InlineData("0x5d.0xb8.0xd7.0x07")]         // hex octets
+    [InlineData("::ffff:93.184.215.7")]         // IPv4-mapped IPv6 uses the IPv4 zones
+    public async Task Query_name_comes_from_the_address_bytes_not_the_input_text(string input)
+    {
+        var resolver = new FakeResolver(_ => Task.FromException<IPAddress[]>(NxDomain()));
+
+        var result = await Checker(resolver).CheckIpAsync(input, Request(false, ["a.test"]));
+
+        Assert.Equal(DnsblCheckStatus.NotBlacklisted, result.Status);
+        Assert.Equal([Reversed + ".a.test"], resolver.Lookups);
     }
 
     [Fact]

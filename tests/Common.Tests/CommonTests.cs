@@ -258,6 +258,48 @@ public class StringHelperTests
     [Fact]
     public void Reverse_works()
         => Assert.Equal("cba", StringHelper.Reverse("abc"));
+
+    // Pin the regex-backed helpers (source-generated since 5.0) to their established output.
+    [Theory]
+    [InlineData("Hello_World  Again", "hello-world-again")]
+    [InlineData("--Café & Crème--", "caf-crme")]
+    [InlineData("a---b__c", "a-b-c")]
+    [InlineData("   ", "")]
+    public void ToSlug_handles_separators_symbols_and_repeats(string input, string expected)
+        => Assert.Equal(expected, StringHelper.ToSlug(input));
+
+    [Theory]
+    [InlineData("hello_world-again  now", "HelloWorldAgainNow")]
+    [InlineData("HELLO wORLD", "HelloWorld")]
+    public void ToPascalCase_splits_on_spaces_underscores_and_hyphens(string input, string expected)
+        => Assert.Equal(expected, StringHelper.ToPascalCase(input));
+
+    [Theory]
+    [InlineData("HelloWorld", "hello_world")]
+    [InlineData("userID2Value", "user_id2_value")]
+    [InlineData("some text-here", "some_text_here")]
+    [InlineData(" _Leading", "leading")]
+    public void ToSnakeCase_inserts_underscores(string input, string expected)
+        => Assert.Equal(expected, StringHelper.ToSnakeCase(input));
+
+    [Fact]
+    public void ToKebabCase_follows_snake_case()
+        => Assert.Equal("hello-big-world", StringHelper.ToKebabCase("HelloBig world"));
+
+    [Fact]
+    public void StripHtml_removes_tags_but_keeps_entities()
+        => Assert.Equal("Hi &amp; bye a < b", StringHelper.StripHtml("<p class=\"x\">Hi &amp; <b>bye</b></p> a < b"));
+
+    [Theory]
+    [InlineData("one  two\tthree\nfour", 4)]
+    [InlineData("  single  ", 1)]
+    [InlineData("", 0)]
+    public void WordCount_counts_whitespace_separated_runs(string input, int expected)
+        => Assert.Equal(expected, StringHelper.WordCount(input));
+
+    [Fact]
+    public void ExtractNumbers_returns_each_digit_run_and_skips_overflow()
+        => Assert.Equal([12L, 7L, 300L], StringHelper.ExtractNumbers("a12b007c300 d99999999999999999999999"));
 }
 
 public class StringValidatorTests

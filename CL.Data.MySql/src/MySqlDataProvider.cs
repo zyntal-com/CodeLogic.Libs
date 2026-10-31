@@ -33,6 +33,7 @@ public sealed class MySqlDataProvider : DataProvider
     public override ProviderCapabilities Capabilities { get; } = new()
     {
         ParameterLimit = 65535,
+        AffectedRowsCountChangesOnly = true,   // UseAffectedRows: insert-ignore needs it to tell duplicates apart
         MaxIdentifierLength = 64,
         Returning = false,
         NativeUpsert = true,

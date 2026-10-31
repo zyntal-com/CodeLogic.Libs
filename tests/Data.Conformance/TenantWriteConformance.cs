@@ -41,6 +41,22 @@ public abstract class TenantWriteConformance(ProviderFixture fixture) : Conforma
     }
 
     [SkippableFact]
+    public async Task Inserts_upserts_and_bulk_copy_without_a_tenant_are_refused_even_with_a_tenant_value_set()
+    {
+        RequireProvider();
+        var unscoped = Db.Repository<TenantNote>();
+        Assert.Equal(DataErrors.TenantMissingCode, (await unscoped.InsertAsync(new TenantNote { TenantId = 7, Text = "forged" })).Error!.Code);
+        Assert.Equal(DataErrors.TenantMissingCode, (await unscoped.InsertManyAsync([new TenantNote { TenantId = 7, Text = "forged" }])).Error!.Code);
+        Assert.Equal(DataErrors.TenantMissingCode, (await unscoped.UpsertAsync(new TenantNote { TenantId = 7, Text = "forged" })).Error!.Code);
+        Assert.Equal(DataErrors.TenantMissingCode, (await Db.Bulk<TenantNote>().InsertAsync([new TenantNote { TenantId = 7, Text = "forged" }])).Error!.Code);
+        Assert.Empty((await Db.ForTenant(7).Query<TenantNote>().ToListAsync()).ValueOrThrow());
+
+        // Writing for a specific tenant goes through a tenant view.
+        var note = (await Db.ForTenant(7).Repository<TenantNote>().InsertAsync(new TenantNote { Text = "for seven" })).ValueOrThrow();
+        Assert.Equal(7, note.TenantId);
+    }
+
+    [SkippableFact]
     public async Task Another_tenant_cannot_change_a_row_by_key()
     {
         RequireProvider();
@@ -101,5 +117,36 @@ public abstract class TenantWriteConformance(ProviderFixture fixture) : Conforma
         Assert.True(first.Id > 0 && last.Id > 0 && first.Id != last.Id && first.Id != explicitId && last.Id != explicitId);
         foreach (var product in new[] { first, middle, last })
             Assert.Equal(product.Sku, (await Db.Repository<Product>().GetByIdAsync(product.Id)).ValueOrThrow()!.Sku);
+    }
+
+    [SkippableFact]
+    public async Task Mixed_identity_upserts_keep_the_explicit_identities()
+    {
+        RequireProvider();
+        var explicitId = 800_000 + Random.Shared.Next(1, 99_999);
+        var generated = new Product { Sku = "UMIX-1", Name = "generated" };
+        var withId = new Product { Id = explicitId, Sku = "UMIX-2", Name = "explicit" };
+
+        (await Db.Repository<Product>().UpsertManyAsync([generated, withId])).ValueOrThrow();
+
+        var stored = (await Db.Repository<Product>().GetByIdAsync((long)explicitId)).ValueOrThrow();
+        Assert.Equal("UMIX-2", stored?.Sku);                                 // inserted under its own identity
+        Assert.Equal(1L, (await Db.Query<Product>().Where(p => p.Sku == "UMIX-1").CountAsync()).ValueOrThrow());
+    }
+
+    [SkippableFact]
+    public async Task Saving_an_unchanged_entity_succeeds_and_a_missing_row_is_still_not_found()
+    {
+        RequireProvider();
+        var note = await SeedForTenantOneAsync();
+        var one = Db.ForTenant(1).Repository<TenantNote>();
+
+        // Same values, no snapshot: the full UPDATE runs and changes nothing (MySQL then reports 0 affected rows).
+        (await one.UpdateAsync(new TenantNote { Id = note.Id, Text = "one", Hits = 1 })).ValueOrThrow();
+        Assert.Equal(("one", 1), ((await ReadAsTenantOneAsync(note.Id)).Text, (await ReadAsTenantOneAsync(note.Id)).Hits));
+
+        Assert.Equal(DataErrors.NotFoundCode, (await one.UpdateAsync(new TenantNote { Id = Guid.NewGuid(), Text = "ghost" })).Error!.Code);
+        // Another tenant's row is not "found" by the match check either.
+        Assert.Equal(DataErrors.NotFoundCode, (await Db.ForTenant(2).Repository<TenantNote>().UpdateAsync(new TenantNote { Id = note.Id, Text = "one", Hits = 1 })).Error!.Code);
     }
 }

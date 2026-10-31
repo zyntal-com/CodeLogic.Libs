@@ -95,7 +95,7 @@ internal sealed class CommandExecutor(DataProvider provider, int defaultTimeoutS
     /// <summary>Sets the text, timeout and bound parameters of <paramref name="command"/> from <paramref name="spec"/>.</summary>
     public void Bind(DbCommand command, CommandSpec spec) => Prepare(command, spec);
 
-    private void Prepare(DbCommand command, CommandSpec spec)
+    internal void Prepare(DbCommand command, CommandSpec spec)
     {
         command.CommandText = spec.Sql;
         command.CommandType = CommandType.Text;

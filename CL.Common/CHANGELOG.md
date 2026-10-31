@@ -8,6 +8,7 @@ All notable changes to **CodeLogic.Common** are documented here. Versions follow
 ### Fixed
 
 - `FastHash.XxHash128` is about 10x faster (~70 ns instead of ~700 ns per call on .NET 11): `XxHash128.HashToUInt128` has a large fixed cost, so the hash is now computed into bytes and read back. The values are unchanged.
+- `StringHelper` (`ToSlug`, `ToPascalCase`, `ToSnakeCase`, `ToKebabCase`, `StripHtml`, `WordCount`, `ExtractNumbers`) uses source-generated regexes (`[GeneratedRegex]`) instead of looking each pattern up in the static `Regex` cache and running it through the interpreter on every call. Output is unchanged.
 
 ### Breaking
 

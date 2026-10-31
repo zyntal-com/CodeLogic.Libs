@@ -270,7 +270,7 @@ await manager.UnregisterRepositoryAsync("Docs");
 
 ### Caching
 
-When `EnableRepositoryCaching` is on, opened repositories are pooled and reused, then evicted after `CacheTimeoutMinutes` of inactivity (`0` = never expire). Inspect or clear the cache via the library or manager.
+When `EnableRepositoryCaching` is on, opened repositories are pooled and reused, then evicted after `CacheTimeoutMinutes` of inactivity (`0` = never expire). Inspect or clear the cache via the library or manager. An evicted repository is disposed once the operation running on it (if any) has finished.
 
 ```csharp
 CacheStats? stats = git.GetCacheStats();

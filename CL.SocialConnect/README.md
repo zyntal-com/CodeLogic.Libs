@@ -46,7 +46,8 @@ if (social.HasSteamOpenId)
 
     // 2. On the callback, verify against the exact return_to you sent.
     Result<SteamOpenIdResult> signIn = await social.OpenId.VerifyAsync(callbackQueryString, returnTo);
-    if (signIn.IsSuccess)
+    // 3. Refuse a nonce you have already accepted (replay); keep each one for OpenIdNonceMaxAgeSeconds.
+    if (signIn.IsSuccess && seenNonces.TryAdd(signIn.Value.ResponseNonce, signIn.Value.NonceIssuedAtUtc))
         Console.WriteLine($"Signed in as {signIn.Value.SteamId}");
 }
 ```
@@ -61,7 +62,7 @@ Accessing a disabled service throws `InvalidOperationException`. Guard with `Has
 - **Steam profiles** — `GetPlayerAsync`, `GetPlayerBansAsync`, `GetOwnedGamesAsync` return `Result<T>` with computed helpers (`IsPublic`, `IsInGame`, `HasAnyBan`, `TotalPlaytime`, `LastPlayed`).
 - **Built-in cache** — Steam reads are cached for `CacheTtlSeconds` (default 300); clear on demand with `Steam.ClearCache()`.
 - **Steam authentication** — `Auth.AuthenticateAsync` validates a session ticket (per-call `appId` override) and returns `Result<SteamTicketIdentity>`; a rejected ticket is an `UnauthorizedError`.
-- **Steam sign-in** — `OpenId.BuildLoginUrl` / `OpenId.VerifyAsync` implement "Sign in through Steam" (OpenID 2.0): local checks of the signed assertion (endpoint, `return_to`, identity, signed fields), then confirmation by Steam (`check_authentication`). Returns the 64-bit Steam ID.
+- **Steam sign-in** — `OpenId.BuildLoginUrl` / `OpenId.VerifyAsync` implement "Sign in through Steam" (OpenID 2.0): local checks of the signed assertion (endpoint, `return_to`, identity, signed fields, `response_nonce` age), then confirmation by Steam (`check_authentication`). Returns the 64-bit Steam ID and the assertion's `ResponseNonce` / `NonceIssuedAtUtc` for replay tracking.
 - **Events** — `WebhookSentEvent`, `SteamProfileFetchedEvent`, `SteamAuthenticatedEvent`, and `SteamOpenIdVerifiedEvent` on the CodeLogic event bus.
 
 ## Configuration
@@ -84,6 +85,7 @@ Auto-generated on first run as `config.socialconnect.json`:
     "authEnabled": false,
     "appId": "",
     "openIdEnabled": true,
+    "openIdNonceMaxAgeSeconds": 300,
     "cacheTtlSeconds": 300,
     "timeoutSeconds": 15,
     "apiBaseUrl": "https://api.steampowered.com"
@@ -104,6 +106,7 @@ Auto-generated on first run as `config.socialconnect.json`:
 | `Steam.AuthEnabled` | `false` | Enable ticket authentication; **requires `AppId`**. |
 | `Steam.AppId` | `""` | Your game's Steam App ID (used by auth). |
 | `Steam.OpenIdEnabled` | `true` | Enable "Sign in through Steam" (OpenID) while Steam is enabled. OpenID itself needs no key. |
+| `Steam.OpenIdNonceMaxAgeSeconds` | `300` | Oldest sign-in assertion accepted, by its `response_nonce` timestamp (`social.steam.openid_expired`); `0` = no age limit. |
 | `Steam.CacheTtlSeconds` | `300` | Profile cache lifetime in seconds (must be > 0). |
 | `Steam.TimeoutSeconds` | `15` | HTTP timeout for Steam calls (1–120). |
 | `Steam.ApiBaseUrl` | `https://api.steampowered.com` | Steam Web API base URL. |

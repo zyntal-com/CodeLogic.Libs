@@ -46,6 +46,14 @@ All notable changes to **CodeLogic.NetUtils** are documented here. Versions foll
 - `LookupIpAsync` reads the database reader under its lock, so a concurrent reload or dispose cannot
   race it.
 - Package versions are pinned (`MaxMind.GeoIP2` 6.1.0) instead of floating.
+- **DNSBL queries are built from the parsed address.** The IPv4 query label reversed the dot-separated input
+  text, so a shorthand that `IPAddress.TryParse` accepts (`1.2.3` = 1.2.0.3, hex `0x01.0x02.0x03.0x04`,
+  a single 32-bit number) queried the wrong name and was never found listed. The label now comes from the
+  address bytes, and an IPv4-mapped IPv6 address (`::ffff:a.b.c.d`) is checked against the IPv4 zones.
+- **More non-routable addresses skip the DNSBL query:** IPv4 `0.0.0.0/8`, link-local `169.254/16`, shared
+  address space (CGNAT) `100.64/10`, `192.0.0/24`, the documentation ranges (`192.0.2/24`, `198.51.100/24`,
+  `203.0.113/24`), benchmarking `198.18/15`, multicast `224/4`, reserved `240/4` and broadcast; IPv6 unspecified
+  `::` and documentation `2001:db8::/32`. Like the existing private ranges they return *not blacklisted*.
 
 ### Documentation
 

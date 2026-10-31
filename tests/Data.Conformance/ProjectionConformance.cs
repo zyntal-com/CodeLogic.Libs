@@ -37,6 +37,13 @@ public abstract class ProjectionConformance(ProviderFixture fixture) : Conforman
         Assert.Equal(["A", "B", "C"], (await q.Select(p => p.Sku).ToListAsync()).ValueOrThrow());
         Assert.Equal([2m, 5m], (await Db.Query<Product>().Select(p => p.Price).Distinct().ToListAsync()).ValueOrThrow().Order());
         Assert.Equal("ALPHA", (await q.Select(p => SqlFn.Upper(p.Name)).FirstOrDefaultAsync()).ValueOrThrow());
+
+        // Time buckets before and after 2038 (seconds since 1970 no longer fit an int then).
+        foreach (var at in new[] { new DateTimeOffset(2026, 10, 31, 12, 34, 56, TimeSpan.Zero), new DateTimeOffset(2040, 6, 1, 12, 34, 56, TimeSpan.Zero) })
+        {
+            var bucket = (await q.Select(p => SqlFn.BucketUtc(at, 60)).FirstOrDefaultAsync()).ValueOrThrow();
+            Assert.Equal(new DateTimeOffset(at.Year, at.Month, at.Day, 12, 34, 0, TimeSpan.Zero), bucket.ToUniversalTime());
+        }
     }
 
     [SkippableFact]

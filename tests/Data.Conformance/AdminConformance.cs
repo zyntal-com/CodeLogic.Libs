@@ -27,6 +27,18 @@ public sealed class RetentionLog
     [Column(Size = 50)] public string Message { get; set; } = "";
 }
 
+/// <summary>Tenant-scoped rows that expire after seven days.</summary>
+[Table(Name = "ret_tenant_logs")]
+public sealed class TenantRetentionLog
+{
+    /// <summary>Identity.</summary>
+    [Column(Primary = true, AutoIncrement = true)] public long Id { get; set; }
+    /// <summary>Tenant.</summary>
+    [TenantKey] public int TenantId { get; set; }
+    /// <summary>When the row was written.</summary>
+    [RetainDays(7)] public DateTimeOffset At { get; set; }
+}
+
 /// <summary>Database and table administration, and retention purges.</summary>
 public abstract class AdminConformance(ProviderFixture fixture) : ConformanceSuite(fixture)
 {
@@ -96,5 +108,22 @@ public abstract class AdminConformance(ProviderFixture fixture) : ConformanceSui
         Assert.Equal(["new1", "new2"], (await db.Query<RetentionLog>().OrderBy(r => r.Message).ToListAsync()).ValueOrThrow().Select(r => r.Message));
         Assert.Equal(5L, Assert.Single(events.OfType<RetentionPurgedEvent>()).Rows);
         Assert.Equal(0L, (await db.Retention.PurgeAsync<RetentionLog>()).ValueOrThrow());
+    }
+
+    [SkippableFact]
+    public async Task Retention_from_a_tenant_view_purges_only_that_tenant()
+    {
+        RequireProvider();
+        (await Db.Admin.DropTableAsync<TenantRetentionLog>()).ThrowIfFailure();
+        (await Db.Schema.SyncAsync<TenantRetentionLog>(new CL.Data.Schema.SchemaSyncOptions { Force = true })).ValueOrThrow();
+        var old = DateTimeOffset.UtcNow.AddDays(-30);
+        foreach (var tenant in new[] { 1, 2 })
+            (await Db.ForTenant(tenant).Repository<TenantRetentionLog>().InsertManyAsync([new TenantRetentionLog { At = old }, new TenantRetentionLog { At = old }])).ValueOrThrow();
+
+        Assert.Equal(2L, (await Db.ForTenant(1).Retention.PurgeAsync<TenantRetentionLog>()).ValueOrThrow());
+        Assert.Equal(2, (await Db.ForTenant(2).Query<TenantRetentionLog>().ToListAsync()).ValueOrThrow().Count);   // tenant 2 untouched
+
+        Assert.Equal(2L, (await Db.Retention.PurgeAsync<TenantRetentionLog>()).ValueOrThrow());                   // the system-wide job
+        Assert.Empty((await Db.ForTenant(2).Query<TenantRetentionLog>().ToListAsync()).ValueOrThrow());
     }
 }

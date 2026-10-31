@@ -34,7 +34,12 @@ public sealed record MailMessage
     /// <summary>Absolute file paths of attachments to include.</summary>
     public IReadOnlyList<string> Attachments { get; init; } = [];
 
-    /// <summary>Custom message headers (e.g., X-Mailer).</summary>
+    /// <summary>
+    /// Custom message headers (e.g., X-Mailer). Names must be printable US-ASCII without spaces or <c>:</c>, values
+    /// cannot contain a line break or NUL, and the headers the service writes itself (From, To, Cc, Bcc, Subject,
+    /// MIME-Version, Importance, Content-*) cannot be supplied; otherwise sending fails with
+    /// <see cref="MailErrorCodes.InvalidHeader"/>.
+    /// </summary>
     public IReadOnlyDictionary<string, string> Headers { get; init; } = new Dictionary<string, string>();
 
     /// <summary>Message importance / priority.</summary>

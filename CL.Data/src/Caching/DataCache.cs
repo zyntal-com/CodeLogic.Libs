@@ -52,11 +52,10 @@ public sealed class DataCache : IDisposable
     private IDisposable? _refreshJob;
 
     /// <summary>A result kept warm: how to read it again, and when it was last used.</summary>
-    private sealed class WarmEntry(CachePolicy policy, IReadOnlyList<string> tags, Func<CancellationToken, ValueTask<Result<(object Value, long Size)>>> load)
+    private sealed class WarmEntry(CachePolicy policy, Func<CancellationToken, ValueTask<Result<(object Value, long Size, IReadOnlyList<string> Tags)>>> load)
     {
         public CachePolicy Policy { get; } = policy;
-        public IReadOnlyList<string> Tags { get; } = tags;
-        public Func<CancellationToken, ValueTask<Result<(object Value, long Size)>>> Load { get; } = load;
+        public Func<CancellationToken, ValueTask<Result<(object Value, long Size, IReadOnlyList<string> Tags)>>> Load { get; } = load;
         public long LastHit;
         public long NextRefresh;
         public int Running;
@@ -134,12 +133,13 @@ public sealed class DataCache : IDisposable
     }
 
     /// <summary>The cached value for <paramref name="key"/>, or the result of <paramref name="load"/> (stored when it succeeds).</summary>
-    internal async ValueTask<Result<object>> GetOrLoadAsync(UInt128 key, CachePolicy policy, IReadOnlyList<string> tags,
-        Func<CancellationToken, ValueTask<Result<(object Value, long Size)>>> load, CancellationToken ct, Action<bool>? hit = null)
+    /// <remarks><paramref name="load"/> also returns the result's tags, so they are only computed on a miss.</remarks>
+    internal async ValueTask<Result<object>> GetOrLoadAsync(UInt128 key, CachePolicy policy,
+        Func<CancellationToken, ValueTask<Result<(object Value, long Size, IReadOnlyList<string> Tags)>>> load, CancellationToken ct, Action<bool>? hit = null)
     {
         if (policy.Refresh is not null)
         {
-            var warm = _warm.GetOrAdd(key, _ => new WarmEntry(policy, tags, load) { NextRefresh = Now() + Ticks(policy.Refresh.Value) });
+            var warm = _warm.GetOrAdd(key, _ => new WarmEntry(policy, load) { NextRefresh = Now() + Ticks(policy.Refresh.Value) });
             Interlocked.Exchange(ref warm.LastHit, Now());
         }
 
@@ -152,7 +152,7 @@ public sealed class DataCache : IDisposable
         }
 
         hit?.Invoke(false);
-        var loader = _loading.GetOrAdd(key, k => new Lazy<Task<Result<object>>>(() => LoadAsync(k, policy, tags, () => load(ct))));
+        var loader = _loading.GetOrAdd(key, k => new Lazy<Task<Result<object>>>(() => LoadAsync(k, policy, () => load(ct))));
         try
         {
             return await loader.Value.ConfigureAwait(false);
@@ -163,8 +163,8 @@ public sealed class DataCache : IDisposable
         }
     }
 
-    private async Task<Result<object>> LoadAsync(UInt128 key, CachePolicy policy, IReadOnlyList<string> tags,
-        Func<ValueTask<Result<(object Value, long Size)>>> load)
+    private async Task<Result<object>> LoadAsync(UInt128 key, CachePolicy policy,
+        Func<ValueTask<Result<(object Value, long Size, IReadOnlyList<string> Tags)>>> load)
     {
         Interlocked.Increment(ref _misses);
         CL.Data.Telemetry.DataTelemetry.CacheMisses.Add(1);
@@ -172,7 +172,7 @@ public sealed class DataCache : IDisposable
         var loaded = await load().ConfigureAwait(false);
         if (loaded.IsFailure) return loaded.Error!;
 
-        var (value, size) = loaded.Value;
+        var (value, size, tags) = loaded.Value;
         if (Interlocked.Read(ref _generation) == generation) Store(key, policy, tags, value, size);
         return Result<object>.Success(value);
     }
@@ -218,7 +218,7 @@ public sealed class DataCache : IDisposable
                 var loaded = await warm.Load(ct).ConfigureAwait(false);
                 if (loaded.IsSuccess && Interlocked.Read(ref _generation) == generation)
                 {
-                    Store(key, warm.Policy, warm.Tags, loaded.Value.Value, loaded.Value.Size);
+                    Store(key, warm.Policy, loaded.Value.Tags, loaded.Value.Value, loaded.Value.Size);
                     Interlocked.Increment(ref _refreshes);
                     refreshed++;
                 }

@@ -446,14 +446,15 @@ public sealed class QueryBuilder<T>
 
     /// <summary>
     /// Streams the rows without buffering them; one connection stays open until enumeration ends. Failures are thrown
-    /// as <see cref="DataQueryException"/>, because a stream cannot return a result. Streams bypass the cache.
+    /// as <see cref="DataQueryException"/>, because a stream cannot return a result. Streams bypass the cache, but otherwise
+    /// run like any read: interceptors, telemetry, read routing (<see cref="ReadFrom"/>) and retries of the open apply.
     /// </summary>
     public async IAsyncEnumerable<T> AsAsyncEnumerable([System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
     {
         var plan = BuildSelect();
         if (plan.IsFailure) throw new DataQueryException(plan.Error!);
-        var (select, accessor, _) = plan.Value!;
-        await foreach (var row in _db.StreamAsync(select, accessor, ct).ConfigureAwait(false))
+        var (select, accessor, table) = plan.Value!;
+        await foreach (var row in _db.StreamAsync(select, accessor, table, ct).ConfigureAwait(false))
             yield return row;
     }
 

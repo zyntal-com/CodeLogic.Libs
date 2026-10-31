@@ -370,15 +370,17 @@ if (result.IsSuccess)
 - `claimed_id` equals `identity` and is `https://steamcommunity.com/openid/id/7656119…` (a SteamID64).
 - `op_endpoint`, `claimed_id`, `identity`, `return_to` and `response_nonce` are among the signed fields, and a signature is present.
 - No `openid.*` parameter appears twice.
+- `response_nonce` starts with a `yyyy-MM-ddTHH:mm:ssZ` timestamp that is no more than a minute ahead and no older than `Steam.OpenIdNonceMaxAgeSeconds` (default 300; `0` turns the age check off).
 
-Because Steam signs `return_to`, putting a per-attempt state in it and checking it against a cookie stops a callback taken from someone else's login from being replayed into another browser.
+Because Steam signs `return_to`, putting a per-attempt state in it and checking it against a cookie stops a callback taken from someone else's login from being replayed into another browser. To stop the same callback being replayed into the same browser within the age window, record each accepted `ResponseNonce` until `NonceIssuedAtUtc + OpenIdNonceMaxAgeSeconds` and refuse a repeat.
 
 | Error code | Meaning |
 |------------|---------|
 | `social.steam.openid_cancelled` | The user cancelled at Steam. |
 | `social.steam.openid_return_to` | `return_to` does not match this sign-in. |
 | `social.steam.openid_identity` | Missing or malformed Steam identity. |
-| `social.steam.openid_invalid` | Not a valid Steam assertion (mode, endpoint, signed fields, repeated parameters). |
+| `social.steam.openid_invalid` | Not a valid Steam assertion (mode, endpoint, signed fields, repeated parameters, malformed or future nonce). |
+| `social.steam.openid_expired` | The assertion is older than `Steam.OpenIdNonceMaxAgeSeconds`. |
 | `social.steam.openid_rejected` | Steam did not confirm the assertion. |
 | `social.steam.openid_unavailable` / `social.steam.openid_timeout` | Steam could not be reached. |
 
@@ -389,6 +391,8 @@ public sealed class SteamOpenIdResult
 {
     public string SteamId { get; }    // "76561197960435530"
     public string ClaimedId { get; }  // "https://steamcommunity.com/openid/id/76561197960435530"
+    public string ResponseNonce { get; }       // "2026-10-31T12:00:00Z…", unique per assertion
+    public DateTime NonceIssuedAtUtc { get; }  // the nonce's timestamp
 }
 ```
 
@@ -420,6 +424,7 @@ The library writes `config.socialconnect.json` (section `socialconnect`) with de
     "authEnabled": false,
     "appId": "",
     "openIdEnabled": true,
+    "openIdNonceMaxAgeSeconds": 300,
     "cacheTtlSeconds": 300,
     "timeoutSeconds": 15,
     "apiBaseUrl": "https://api.steampowered.com"
@@ -440,6 +445,7 @@ The library writes `config.socialconnect.json` (section `socialconnect`) with de
 | `Steam.AuthEnabled` | `bool` | `false` | Create the Steam auth service. Requires `AppId`. |
 | `Steam.AppId` | `string` | `""` | Your game's Steam App ID (used by ticket auth). |
 | `Steam.OpenIdEnabled` | `bool` | `true` | Create the Steam sign-in (OpenID) service while Steam is enabled. OpenID itself needs no key. |
+| `Steam.OpenIdNonceMaxAgeSeconds` | `int` | `300` | Oldest sign-in assertion accepted, by its `response_nonce` timestamp. `0` = no age limit; negative is a config error. |
 | `Steam.CacheTtlSeconds` | `int` | `300` | Profile cache lifetime in seconds. Must be > 0. |
 | `Steam.TimeoutSeconds` | `int` | `15` | HTTP timeout for Steam requests (1–120). |
 | `Steam.ApiBaseUrl` | `string` | `https://api.steampowered.com` | Steam Web API base URL. |

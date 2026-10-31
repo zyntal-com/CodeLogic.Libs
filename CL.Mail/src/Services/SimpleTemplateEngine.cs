@@ -33,7 +33,7 @@ namespace CL.Mail.Services;
 /// inserted once: placeholders inside it are not expanded.
 /// </para>
 /// </summary>
-public sealed class SimpleTemplateEngine : IMailTemplateEngine
+public sealed partial class SimpleTemplateEngine : IMailTemplateEngine
 {
     private readonly ILogger? _logger;
     private readonly IMailTemplateProvider? _templateProvider;
@@ -141,11 +141,11 @@ public sealed class SimpleTemplateEngine : IMailTemplateEngine
     /// One render pass: substituted values are parked behind private-use markers and put back by
     /// <see cref="Resolve"/> at the end, so nothing inside a value is ever processed as template syntax.
     /// </summary>
-    private sealed class RenderState(bool html, ISet<string>? rawKeys)
+    private sealed partial class RenderState(bool html, ISet<string>? rawKeys)
     {
         private const string Open = "\uE000";
         private const string Close = "\uE001";
-        private static readonly Regex Marker = new("\uE000(\\d+)\uE001", RegexOptions.Compiled);
+        [GeneratedRegex("\uE000(\\d+)\uE001")] private static partial Regex Marker();
         private readonly List<string> _values = [];
 
         public string Insert(string key, object? value, bool raw)
@@ -158,7 +158,7 @@ public sealed class SimpleTemplateEngine : IMailTemplateEngine
         }
 
         public string Resolve(string text) =>
-            _values.Count == 0 ? text : Marker.Replace(text, m => _values[int.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture)]);
+            _values.Count == 0 ? text : Marker().Replace(text, m => _values[int.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture)]);
     }
 
     /// <summary>
@@ -169,9 +169,7 @@ public sealed class SimpleTemplateEngine : IMailTemplateEngine
         const int MaxIterations = 100;
         for (var i = 0; i < MaxIterations; i++)
         {
-            var match = Regex.Match(text,
-                @"\{\{#if\s+(\w+)\}\}((?:(?!\{\{#if\b).)*?)\{\{/if\}\}",
-                RegexOptions.Singleline);
+            var match = InnermostIf().Match(text);
 
             if (!match.Success) break;
 
@@ -198,9 +196,7 @@ public sealed class SimpleTemplateEngine : IMailTemplateEngine
         const int MaxIterations = 100;
         for (var i = 0; i < MaxIterations; i++)
         {
-            var match = Regex.Match(text,
-                @"\{\{#each\s+(\w+)\}\}(.*?)\{\{/each\}\}",
-                RegexOptions.Singleline);
+            var match = EachBlock().Match(text);
 
             if (!match.Success) break;
 
@@ -245,7 +241,7 @@ public sealed class SimpleTemplateEngine : IMailTemplateEngine
     {
         if (string.IsNullOrEmpty(text)) return text;
 
-        return Placeholder.Replace(text, m =>
+        return Placeholder().Replace(text, m =>
         {
             var raw = m.Groups["raw"].Success;
             var key = raw ? m.Groups["raw"].Value
@@ -256,9 +252,21 @@ public sealed class SimpleTemplateEngine : IMailTemplateEngine
         });
     }
 
-    private static readonly Regex Placeholder = new(
-        @"\{\{\{(?<raw>\w+)\}\}\}|\{\{(?<double>\w+)\}\}|\$\{(?<dollar>\w+)\}|(?<!\{)\{(?<single>\w+)\}(?!\})",
-        RegexOptions.Compiled);
+    // Source-generated regexes: parsed and compiled at build time, not on each render.
+    [GeneratedRegex(@"\{\{\{(?<raw>\w+)\}\}\}|\{\{(?<double>\w+)\}\}|\$\{(?<dollar>\w+)\}|(?<!\{)\{(?<single>\w+)\}(?!\})")]
+    private static partial Regex Placeholder();
+
+    [GeneratedRegex(@"\{\{#if\s+(\w+)\}\}((?:(?!\{\{#if\b).)*?)\{\{/if\}\}", RegexOptions.Singleline)]
+    private static partial Regex InnermostIf();
+
+    [GeneratedRegex(@"\{\{#each\s+(\w+)\}\}(.*?)\{\{/each\}\}", RegexOptions.Singleline)]
+    private static partial Regex EachBlock();
+
+    [GeneratedRegex(@"\{\{#section\s+(\w+)\}\}(.*?)\{\{/section\}\}", RegexOptions.Singleline)]
+    private static partial Regex SectionBlock();
+
+    [GeneratedRegex(@"\{\{#section\s+\w+\}\}.*?\{\{/section\}\}", RegexOptions.Singleline)]
+    private static partial Regex SectionBlockUnnamed();
 
     // ── Utilities ─────────────────────────────────────────────────────────────
 
@@ -295,11 +303,11 @@ public sealed class SimpleTemplateEngine : IMailTemplateEngine
     private static Dictionary<string, string> ExtractSections(string text)
     {
         var sections = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (Match m in Regex.Matches(text, @"\{\{#section\s+(\w+)\}\}(.*?)\{\{/section\}\}", RegexOptions.Singleline))
+        foreach (Match m in SectionBlock().Matches(text))
             sections[m.Groups[1].Value] = m.Groups[2].Value.Trim();
         return sections;
     }
 
     private static string StripSections(string text) =>
-        Regex.Replace(text, @"\{\{#section\s+\w+\}\}.*?\{\{/section\}\}", "", RegexOptions.Singleline).Trim();
+        SectionBlockUnnamed().Replace(text, "").Trim();
 }

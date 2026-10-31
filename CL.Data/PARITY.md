@@ -82,6 +82,7 @@ The 4.x code remains on `support/4.x`, and CodeLogic.MySQL2 4.9 stays on nuget.o
 - **Paging:** paged queries run `COUNT` only when asked (`withTotal: true`). Keyset paging (`ToCursorPageAsync`) is the documented default.
 - **Dates:** `DateTimeOffset` and UTC are the default. On SQLite, `DateTime` and `DateTimeOffset` are stored as UTC ISO-8601 text.
 - **SQLite storage:** decimals use NUMERIC affinity, and GUIDs are stored as 16-byte BLOBs.
+- **MySQL row counts:** CL.Data connects with `UseAffectedRows`, so MySQL counts rows *changed*, not rows matched. Entity saves are unaffected: an unchanged save is confirmed with a match check. But set-based `UpdateAsync` returns only the rows whose values changed, and `AdjustAsync(..., 0)` returns false.
 - **Config, state tables and errors:**
   - Config moves to the `data` and `data.cache` sections.
   - State tables are renamed: `cl_data_schema`, `cl_data_migrations`, `cl_data_seeds` and `cl_data_cache_bus`.
