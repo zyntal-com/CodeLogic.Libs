@@ -1,7 +1,9 @@
 using System.Data.Common;
 using CL.Data.Configuration;
 using CL.Data.Errors;
+using System.Diagnostics;
 using CL.Data.Mapping;
+using CL.Data.Pipeline;
 using CL.Data.Providers;
 using CL.Data.Sql;
 using CodeLogic.Core.Configuration;
@@ -14,6 +16,12 @@ public sealed record DatabaseOptions
 {
     /// <summary>Clock for timestamps, caching and scheduling.</summary>
     public TimeProvider Time { get; init; } = TimeProvider.System;
+
+    /// <summary>Application interceptors, run around every command (outermost).</summary>
+    public IReadOnlyList<IDataInterceptor> Interceptors { get; init; } = [];
+
+    /// <summary>Additional middleware, run inside the interceptors in this order.</summary>
+    public IReadOnlyList<ICommandMiddleware> Middleware { get; init; } = [];
 }
 
 /// <summary>
@@ -24,6 +32,7 @@ public sealed record DatabaseOptions
 public sealed class Database : IAsyncDisposable
 {
     private readonly CommandExecutor _executor;
+    private readonly CommandPipeline _pipeline;
 
     private Database(string name, DataProvider provider, DataConnectionConfig config, DatabaseOptions options,
         DataNode primary, IReadOnlyList<DataNode> replicas)
@@ -35,6 +44,10 @@ public sealed class Database : IAsyncDisposable
         Primary = primary;
         Replicas = replicas;
         _executor = new CommandExecutor(provider, config.CommandTimeoutSeconds);
+        List<ICommandMiddleware> middleware = [];
+        if (options.Interceptors.Count > 0) middleware.Add(new InterceptorMiddleware(options.Interceptors));
+        middleware.AddRange(options.Middleware);
+        _pipeline = new CommandPipeline(middleware);
     }
 
     /// <summary>Connection name.</summary>
@@ -59,6 +72,30 @@ public sealed class Database : IAsyncDisposable
     public NamingPolicy NamingPolicy => Config.NamingPolicy;
 
     internal CommandExecutor Executor => _executor;
+
+    /// <summary>The command pipeline of this database.</summary>
+    public CommandPipeline Pipeline => _pipeline;
+
+    /// <summary>
+    /// Runs a command through the pipeline and then on its node (the primary unless routing chose another),
+    /// recording the elapsed time.
+    /// </summary>
+    internal ValueTask<Result<TResult>> RunAsync<TState, TResult>(CommandContext context, TState state,
+        Func<DbCommand, TState, CancellationToken, ValueTask<TResult>> body, Func<TResult, long>? rows = null)
+    {
+        return _pipeline.ExecuteAsync(context, async ctx =>
+        {
+            var started = Stopwatch.GetTimestamp();
+            var result = await _executor.ExecuteAsync(ctx.Node ?? Primary, ctx.Spec, state, body, null, null, ctx.CancellationToken)
+                .ConfigureAwait(false);
+            ctx.Elapsed = Stopwatch.GetElapsedTime(started);
+            if (rows is not null && result.IsSuccess) ctx.Rows = rows(result.Value!);
+            return result;
+        });
+    }
+
+    private CommandContext Context(SqlText sql, CommandKind kind, CancellationToken ct, bool isWrite = false) =>
+        new(this, new CommandSpec(sql.Render(Provider.Dialect), sql.Parameters), kind, ct) { IsWrite = isWrite };
 
     /// <summary>Creates a database for <paramref name="config"/>, resolving its provider from <see cref="DataProviderRegistry"/>.</summary>
     public static Result<Database> Create(string name, DataConnectionConfig config, DatabaseOptions? options = null)
@@ -123,34 +160,29 @@ public sealed class Database : IAsyncDisposable
     public ValueTask<Result<List<T>>> SqlQueryAsync<T>(SqlText sql, CancellationToken ct = default) =>
         QueryCoreAsync<T>(sql, ct);
 
-    /// <summary>Runs a statement and returns the number of affected rows.</summary>
+    /// <summary>Runs a statement and returns the number of affected rows. Raw statements are treated as writes.</summary>
     public async ValueTask<Result<int>> ExecuteSqlAsync(SqlText sql, CancellationToken ct = default)
     {
-        var spec = new CommandSpec(sql.Render(Provider.Dialect), sql.Parameters);
-        return await _executor.ExecuteAsync(Primary, spec, 0,
+        return await RunAsync(Context(sql, CommandKind.NonQuery, ct, isWrite: true), 0,
             static async (cmd, _, token) => await cmd.ExecuteNonQueryAsync(token).ConfigureAwait(false),
-            null, null, ct).ConfigureAwait(false);
+            static affected => affected).ConfigureAwait(false);
     }
 
     /// <summary>Runs a query and returns the first column of the first row (default when there is no row or it is NULL).</summary>
-    public async ValueTask<Result<T?>> SqlScalarAsync<T>(SqlText sql, CancellationToken ct = default)
-    {
-        var spec = new CommandSpec(sql.Render(Provider.Dialect), sql.Parameters);
-        return await _executor.ExecuteAsync(Primary, spec, 0,
+    public ValueTask<Result<T?>> SqlScalarAsync<T>(SqlText sql, CancellationToken ct = default) =>
+        RunAsync(Context(sql, CommandKind.Scalar, ct), 0,
             static async (cmd, _, token) =>
             {
                 await using var reader = await cmd.ExecuteReaderAsync(token).ConfigureAwait(false);
                 return await reader.ReadAsync(token).ConfigureAwait(false) && !reader.IsDBNull(0)
                     ? ValueReader<T>.Read(reader, 0)
                     : default;
-            },
-            null, null, ct).ConfigureAwait(false);
-    }
+            });
 
     /// <summary>Checks that the primary answers (health checks).</summary>
     public async ValueTask<Result> PingAsync(CancellationToken ct = default) => await PingAsync(Primary, ct).ConfigureAwait(false);
 
-    /// <summary>Checks that <paramref name="node"/> answers.</summary>
+    /// <summary>Checks that <paramref name="node"/> answers. Bypasses the pipeline, so health checks see the node itself.</summary>
     public async ValueTask<Result> PingAsync(DataNode node, CancellationToken ct = default)
     {
         var result = await _executor.ExecuteAsync(node, new CommandSpec(Provider.PingSql, []), 0,
@@ -164,14 +196,13 @@ public sealed class Database : IAsyncDisposable
         var accessor = RowReader.AccessorFor<T>();
         if (accessor.IsFailure) return accessor.Error!;
 
-        var spec = new CommandSpec(sql.Render(Provider.Dialect), sql.Parameters);
-        return await _executor.ExecuteAsync(Primary, spec, (Accessor: accessor.Value, Policy: NamingPolicy),
+        return await RunAsync(Context(sql, CommandKind.Query, ct), (Accessor: accessor.Value, Policy: NamingPolicy),
             static async (cmd, state, token) =>
             {
                 await using var reader = await cmd.ExecuteReaderAsync(token).ConfigureAwait(false);
                 return await RowReader.ReadAllAsync(reader, state.Accessor, state.Policy, token).ConfigureAwait(false);
             },
-            null, null, ct).ConfigureAwait(false);
+            static list => list.Count).ConfigureAwait(false);
     }
 
     private static Result<DataNode> CreateNode(DataProvider provider, DataConnectionConfig config, NodeEndpoint endpoint)

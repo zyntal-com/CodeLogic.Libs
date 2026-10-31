@@ -50,3 +50,6 @@
     quoted identifiers. Values never reach the SQL text.
   - Failures and cancellation come back as `Result` errors, never exceptions.
 - **Data sources:** `InitializingDataSource` is a base for data sources that need per-connection setup.
+- **Command pipeline:** every command runs through one middleware chain (`ICommandMiddleware`, `CommandContext`,
+  allocation-free `CommandNext<T>`). Application `IDataInterceptor`s run outermost: they can rewrite the SQL,
+  refuse a command or observe its result. Caching, routing, resilience and telemetry plug into this chain.
