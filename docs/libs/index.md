@@ -11,11 +11,6 @@ your application or from other libraries after `StartAsync()`.
     <div class="lib-pkg">CodeLogic.MSSQL</div>
     <p class="lib-desc">SQL Server 2019+ / Azure SQL — typed LINQ, result cache, schema sync, migrations.</p>
   </a>
-  <a class="lib-card" href="postgresql/index.md">
-    <div class="lib-name">CL.PostgreSQL</div>
-    <div class="lib-pkg">CodeLogic.PostgreSQL</div>
-    <p class="lib-desc">PostgreSQL — multi-database, repository + query builder, table sync, backups.</p>
-  </a>
 </div>
 
 <div class="cl-group">Communication</div>
@@ -142,9 +137,10 @@ var status = await mysql.HealthCheckAsync();
 
 ### The database libraries
 
-`CL.MSSQL` and `CL.PostgreSQL` share the same shape: `GetRepository<T>()` for CRUD and a
-fluent query builder (`Query<T>()`) that translates LINQ-style expressions to SQL, plus attribute-driven
-table sync. In CodeLogic 5 they are being replaced by **CL.Data** (`CodeLogic.Data` plus one provider
-package per database); SQLite and MySQL are already served by `CodeLogic.Data.Sqlite` and `CodeLogic.Data.MySql`.
+`CL.MSSQL` offers `GetRepository<T>()` for CRUD and a fluent query builder (`Query<T>()`) that
+translates LINQ-style expressions to SQL, plus attribute-driven table sync. In CodeLogic 5 it is being
+replaced by **CL.Data** (`CodeLogic.Data` plus one provider
+package per database); SQLite, MySQL and PostgreSQL are already served by `CodeLogic.Data.Sqlite`, `CodeLogic.Data.MySql` and
+`CodeLogic.Data.PostgreSql`.
 
 See the [API Reference](../api/index.md) for the full generated type and member listing.

@@ -41,11 +41,6 @@ var mail = Libraries.Get<CL.Mail.MailLibrary>();
     <div class="lib-pkg">CodeLogic.MSSQL</div>
     <p class="lib-desc">SQL Server 2019+ and Azure SQL with typed LINQ, caching, schema synchronization, and migrations.</p>
   </a>
-  <a class="lib-card" href="libs/postgresql/index.md">
-    <div class="lib-name">CL.PostgreSQL</div>
-    <div class="lib-pkg">CodeLogic.PostgreSQL</div>
-    <p class="lib-desc">PostgreSQL with multi-database support, the <code>Repository&lt;T&gt;</code> + query-builder pattern, table sync, and backups.</p>
-  </a>
 </div>
 
 <div class="cl-group">Communication</div>

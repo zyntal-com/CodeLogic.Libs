@@ -57,7 +57,7 @@ jobs:
         run: |
           $allProjects = @(
             'CL.Common', 'CL.GameNetQuery', 'CL.GitHelper', 'CL.Imaging', 'CL.Mail',
-            'CL.MSSQL', 'CL.NetUtils', 'CL.PostgreSQL',
+            'CL.MSSQL', 'CL.NetUtils',
             'CL.SocialConnect', 'CL.Storage', 'CL.SystemStats', 'CL.TwoFactorAuth',
             'CL.Data', 'CL.Data.MySql', 'CL.Data.PostgreSql', 'CL.Data.SqlServer', 'CL.Data.Sqlite'
           )

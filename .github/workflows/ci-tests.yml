@@ -45,42 +45,6 @@ jobs:
           done
           exit $fail
 
-  # PostgreSQL has a large live suite that self-skips without a reachable server. Mirrors mssql-integration.
-  postgresql-integration:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    services:
-      postgres:
-        image: postgres:18
-        env:
-          POSTGRES_PASSWORD: cl_test_pw
-          POSTGRES_DB: cl_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd="pg_isready -U postgres"
-          --health-interval=5s
-          --health-timeout=5s
-          --health-retries=20
-    env:
-      CL_PG_TEST_HOST: 127.0.0.1
-      CL_PG_TEST_PORT: '5432'
-      CL_PG_TEST_DB: cl_test
-      CL_PG_TEST_USER: postgres
-      CL_PG_TEST_PASS: cl_test_pw
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      # SDK version comes from global.json (11.0 line; prerelease allowed until GA).
-      - name: Setup .NET 11
-        uses: actions/setup-dotnet@v6
-        with:
-          global-json-file: global.json
-
-      - name: Run PostgreSQL tests
-        run: dotnet test tests/PostgreSQL.Tests/PostgreSQL.Tests.csproj --configuration Release -p:CodeLogicFromNuGet=true --logger "console;verbosity=normal"
-
   mssql-integration:
     runs-on: ubuntu-latest
     timeout-minutes: 20

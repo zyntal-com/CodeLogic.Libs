@@ -63,3 +63,18 @@ The CodeLogic.MySQL2 4.9 package stays on nuget.org and on `support/4.x`. The WP
 | RetentionWorker (`[RetainDays]`) | retention on `DataScheduler` | **open, WP-75** |
 | Bulk insert (batched multi-row) | batched `InsertManyAsync`; native `MySqlBulkCopy` | batched done; native **open, WP-A1** |
 | Charset/engine/collation per table and column | `[MySqlTable]`/`[MySqlColumn]` hints (used by DDL in WP-72) | mapping done; DDL **open, WP-72** |
+
+## CL.PostgreSQL (removed 2026-10-31, after WP-51)
+
+CL.PostgreSQL had the same feature set as CL.MySQL2, minus `Exclude`, so the CL.MySQL2 table above applies.
+PostgreSQL-specific items:
+
+| CL.PostgreSQL feature | CL.Data | Status |
+|---|---|---|
+| `DefaultSchema` scoping | `PostgreSql.DefaultSchema`; tables are schema-qualified | done |
+| `ON CONFLICT` upserts, `RETURNING` identities | dialect and write planner | done |
+| jsonb, uuid, timestamptz, bytea | type mapper | done |
+| inet, interval, arrays, ranges | `[PostgresColumn(Type = ...)]` hints, values bound as-is | partly (no array/range translation) |
+| N+1 detector, EXPLAIN on slow queries (`SlowQueryExplain`) | telemetry middleware | **open, WP-A0** |
+| `pg_advisory_lock` schema-sync lock, `pg_catalog` introspection, DDL | schema management | **open, WP-71 to WP-73** |
+| Runtime options (`PostgreSqlRuntimeOptions`) | `PostgreSqlOptions` (auto-prepare, multiplexing) | done |

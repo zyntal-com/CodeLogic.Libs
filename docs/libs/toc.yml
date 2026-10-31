@@ -14,16 +14,6 @@
       href: mssql/performance.md
     - name: Capability Parity
       href: mssql/parity.md
-- name: CL.PostgreSQL
-  items:
-    - name: Overview
-      href: postgresql/index.md
-    - name: Query Builder
-      href: postgresql/queries.md
-    - name: Schema & Migrations
-      href: postgresql/schema-migrations.md
-    - name: Performance & Caching
-      href: postgresql/performance.md
 
 - name: Communication
 - name: CL.Mail
