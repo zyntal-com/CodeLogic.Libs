@@ -76,13 +76,15 @@ internal sealed class PlanEntry
 {
     private readonly Lock _gate = new();
 
-    public PlanVariant[] Variants { get; private set; } = [];
+    private PlanVariant[] _variants = [];
+
+    public PlanVariant[] Variants => Volatile.Read(ref _variants);
 
     public void Add(PlanVariant variant, int max)
     {
         lock (_gate)
         {
-            if (Variants.Length < max) Variants = [.. Variants, variant];
+            if (_variants.Length < max) Volatile.Write(ref _variants, [.. _variants, variant]);
         }
     }
 }

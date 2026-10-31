@@ -126,6 +126,26 @@ public sealed class Product
 | Provider hints | `[MySqlTable]`/`[MySqlColumn]`, `[PostgresTable]`/`[PostgresColumn]`, `[SqlServerTable]`/`[SqlServerColumn]`, `[SqliteTable]`/`[SqliteColumn]` |
 | Read-only rows | `[DataRow]` (query results that are not tables) |
 
+### Value converters
+
+A custom type (a typed ID, a value object) is stored through a value converter. Use `[Column(Converter = typeof(...))]` on one column, or register it for every column of that type:
+
+```csharp
+public readonly record struct CustomerId(long Value);
+
+sealed class CustomerIdConverter : ValueConverter<CustomerId, long>
+{
+    public override long ToStore(CustomerId value) => value.Value;
+    public override CustomerId FromStore(long value) => new(value);
+}
+
+ValueConverters.Register(new CustomerIdConverter());     // at startup
+```
+
+**Registration rules:**
+- `CustomerId` and `CustomerId?` share one registration, both for lookup and for `Unregister`.
+- Register converters at startup. A converter changed later doesn't rebuild entity maps, schema plans or compiled queries that already exist.
+
 **Analyzers:** mapping mistakes are build warnings, CLD001–CLD011 (for example no key, an unsupported type, or a composite key without `KeyOrder`). Lambdas CL.Data can't translate are CLD101–CLD103.
 
 ## Everyday use

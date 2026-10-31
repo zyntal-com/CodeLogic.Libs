@@ -38,7 +38,7 @@ var cheap = await db.Query<Product>().WithCache().Where(p => p.Price < 20m).Orde
 - **Entity behaviour:** auditing, optimistic concurrency, multi-tenancy, global filters and interceptors.
 - **Telemetry:** OpenTelemetry spans and metrics, slow-query plans and N+1 detection.
 - **Bulk copy:** native on every provider.
-- **Mapping:** a source generator (shipped in this package) writes it at build time, with no reflection, and CL.Data is Native AOT compatible.
+- **Mapping:** a source generator (shipped in this package) writes it at build time, with no reflection, and CL.Data is Native AOT compatible. Custom types (typed IDs, value objects) use value converters; see [Entities](../docs/libs/data/index.md#value-converters).
 
 **Measured:** within a few percent of raw ADO.NET and Dapper. Against CL.MySQL2 4.9 it uses 20–45% less memory, and cached reads take microseconds.
 

@@ -2,6 +2,18 @@
 
 ## 5.0 (unreleased)
 
+### Fixed
+
+- Float-to-decimal materialization preserves the float's shortest round-trip representation instead
+  of promoting it to double first (for example, `0.1f` now reads as `0.1m`).
+- Converter registry version increments are atomic under concurrent registration/removal. Removing a
+  nullable model type now removes the underlying registration, matching converter lookup.
+- Query plan variants use volatile publication so concurrent readers see fully initialized snapshots.
+
+### Changed
+
+- N+1 diagnostics use a dedicated `System.Threading.Lock` for each counting window.
+
 ### Added
 
 - New package, part of the CL.Data database framework that replaces CL.MySQL2, CL.MSSQL, CL.PostgreSQL and

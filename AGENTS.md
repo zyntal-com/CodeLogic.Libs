@@ -23,7 +23,7 @@ you are working on before changing anything.
 > **Current state (2026-10-31):** `main` is the 5.x line (net11, CodeLogic 5 `Result`/`Error`) and builds
 > against the newest CodeLogic 5.0 preview. **No library has been published as 5.x.** CL.Data, the redesigned
 > database framework, is complete on `feature/cl-data` (work packages `cl-data/<wp>` merged locally) and waits for
-> CodeLogic 5 to be published with `Result.ThrowIfFailure` and for the owner's release PR. See `CL.Data/FINDINGS.md`. The `Deploy Documentation` workflow is **disabled**, so the public
+> the owner's release PR. CodeLogic 5.0.30-preview is published with `Result.ThrowIfFailure` and strong-name signing. See `CL.Data/FINDINGS.md`. The `Deploy Documentation` workflow is **disabled**, so the public
 > docs site keeps showing 4.9 until the 5.x libraries are released. Do not run Promote or re-enable that
 > workflow without the owner's explicit go-ahead.
 

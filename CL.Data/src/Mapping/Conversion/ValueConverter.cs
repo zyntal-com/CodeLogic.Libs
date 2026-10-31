@@ -121,14 +121,16 @@ public static class ValueConverters
     private static readonly ConcurrentDictionary<Type, ValueConverter> Converters = new();
 
     /// <summary>Incremented on every registration, so caches can notice changes.</summary>
-    public static int Version { get; private set; }
+    public static int Version => Volatile.Read(ref _version);
+
+    private static int _version;
 
     /// <summary>Registers <paramref name="converter"/> for its model type, replacing an earlier one.</summary>
     public static void Register(ValueConverter converter)
     {
         ArgumentNullException.ThrowIfNull(converter);
         Converters[converter.ModelType] = converter;
-        Version++;
+        Interlocked.Increment(ref _version);
     }
 
     /// <summary>Registers the converter of a typed id or other <see cref="IDataValue{TSelf, TStore}"/>.</summary>
@@ -148,8 +150,8 @@ public static class ValueConverters
     /// <summary>Removes the converter for <paramref name="modelType"/> (tests).</summary>
     public static bool Unregister(Type modelType)
     {
-        var removed = Converters.TryRemove(modelType, out _);
-        if (removed) Version++;
+        var removed = Converters.TryRemove(Nullable.GetUnderlyingType(modelType) ?? modelType, out _);
+        if (removed) Interlocked.Increment(ref _version);
         return removed;
     }
 }

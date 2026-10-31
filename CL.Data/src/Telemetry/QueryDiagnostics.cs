@@ -90,6 +90,7 @@ internal sealed class QueryDiagnostics(Database db)
 
     private sealed class Window
     {
+        public readonly Lock Gate = new();
         public long Start;
         public int Count;
     }
@@ -145,7 +146,7 @@ internal sealed class QueryDiagnostics(Database db)
         if (_shapes.Count > 10_000) _shapes.Clear();   // bounded: shapes are SQL texts, which are few in a normal app
         var window = _shapes.GetOrAdd(context.Spec.Sql, static _ => new Window());
         int count;
-        lock (window)
+        lock (window.Gate)
         {
             if (now - window.Start > TimeSpan.TicksPerSecond)
             {

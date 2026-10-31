@@ -135,8 +135,10 @@ public static class ValueConversion
         {
             // .NET 11 converts double → decimal exactly (0.1 → 0.1000000000000000055511151231…); go through the
             // shortest round-trip text instead, which is what the value meant.
-            var d = Convert.ToDouble(value, CultureInfo.InvariantCulture);
-            return decimal.Parse(d.ToString("R", CultureInfo.InvariantCulture), NumberStyles.Float, CultureInfo.InvariantCulture);
+            var text = value is float single
+                ? single.ToString("R", CultureInfo.InvariantCulture)
+                : ((double)value).ToString("R", CultureInfo.InvariantCulture);
+            return decimal.Parse(text, NumberStyles.Float, CultureInfo.InvariantCulture);
         }
 
         if (target == typeof(string))
