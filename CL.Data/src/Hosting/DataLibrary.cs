@@ -34,6 +34,7 @@ public sealed class DataLibrary : ILibrary, IConfigReloadable
     private readonly ConcurrentDictionary<string, Error> _failed = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, bool> _lastHealth = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<IDisposable> _jobs = [];
+    private readonly ConcurrentDictionary<string, DataCache> _ownCaches = new(StringComparer.OrdinalIgnoreCase);
     private LibraryContext? _context;
     private DataConfig _config = new();
     private DataCacheConfig _cacheConfig = new();
@@ -91,7 +92,7 @@ public sealed class DataLibrary : ILibrary, IConfigReloadable
     // ── Initialize ──────────────────────────────────────────────────────────
 
     /// <inheritdoc />
-    public Task OnInitializeAsync(LibraryContext context)
+    public async Task OnInitializeAsync(LibraryContext context)
     {
         _context = context;
         _config = context.Configuration.Get<DataConfig>();
@@ -103,9 +104,28 @@ public sealed class DataLibrary : ILibrary, IConfigReloadable
         };
         BuildCache();
         foreach (var (name, connection) in _config.EnabledConnections) Open(name, connection);
+        await EnsureDatabasesAsync(_databases.Keys).ConfigureAwait(false);
         if (_databases.Count == 0 && _failed.IsEmpty) context.Logger.Warning(Strings.NoConnections);
         else context.Logger.Info(Format(Strings.Initialized, _databases.Count));
-        return Task.CompletedTask;
+    }
+
+    /// <summary>Creates the database of each named connection that sets <c>CreateDatabaseIfMissing</c>; a failure takes that connection down.</summary>
+    private async Task EnsureDatabasesAsync(IEnumerable<string> names)
+    {
+        foreach (var name in names.ToArray())
+        {
+            if (!_databases.TryGetValue(name, out var db) || !db.Config.CreateDatabaseIfMissing) continue;
+            var ensured = await db.Admin.EnsureDatabaseAsync().ConfigureAwait(false);
+            if (ensured.IsSuccess)
+            {
+                if (ensured.Value) _context?.Logger.Info($"CL.Data created database for connection '{name}'");
+                continue;
+            }
+            _failed[name] = ensured.Error!;
+            _databases.TryRemove(name, out _);
+            await db.DisposeAsync().ConfigureAwait(false);
+            _context?.Logger.Error($"CL.Data could not create the database of '{name}': {ensured.Error!.Message}");
+        }
     }
 
     private static readonly CL.Data.Localization.DataStrings DefaultStrings = new();
@@ -127,7 +147,15 @@ public sealed class DataLibrary : ILibrary, IConfigReloadable
 
     private void Open(string name, DataConnectionConfig connection)
     {
-        var created = Database.Create(name, connection, new DatabaseOptions { Time = Time, Cache = _cache, Events = Forward });
+        // A connection's CacheEnabled overrides data.cache.enabled: false opts it out of the shared cache, true opts it in
+        // even when the cache is off for everyone else (it then gets a cache of its own with the data.cache limits).
+        var cache = connection.CacheEnabled switch
+        {
+            false => null,
+            true => _cache ?? (_ownCaches[name] = new DataCache(_cacheConfig, Time)),
+            null => _cache,
+        };
+        var created = Database.Create(name, connection, new DatabaseOptions { Time = Time, Cache = cache, Events = Forward });
         if (created.IsFailure)
         {
             _failed[name] = created.Error!;
@@ -259,6 +287,7 @@ public sealed class DataLibrary : ILibrary, IConfigReloadable
                 foreach (var (name, connection) in diff.Added.Concat(diff.Changed.Select(c => KeyValuePair.Create(c.Key, c.Value.New))))
                 {
                     Open(name, connection);
+                    await EnsureDatabasesAsync([name]).ConfigureAwait(false);
                     if (diff.Changed.ContainsKey(name)) context.Logger.Info(Format(Strings.ConnectionReloaded, name));
                     if (_started && _databases.TryGetValue(name, out var db))
                     {
@@ -292,11 +321,13 @@ public sealed class DataLibrary : ILibrary, IConfigReloadable
     {
         _failed.TryRemove(name, out _);
         _lastHealth.TryRemove(name, out _);
+        _ownCaches.TryRemove(name, out var ownCache);
         if (!_databases.TryRemove(name, out var db)) return;
         _ = Task.Run(async () =>
         {
             await Task.Delay(TimeSpan.FromSeconds(Math.Min(db.Config.CommandTimeoutSeconds, 30)), Time).ConfigureAwait(false);
             await db.DisposeAsync().ConfigureAwait(false);
+            ownCache?.Dispose();
         });
     }
 
@@ -321,6 +352,8 @@ public sealed class DataLibrary : ILibrary, IConfigReloadable
         _databases.Clear();
         _cache?.Dispose();
         _cache = null;
+        foreach (var own in _ownCaches.Values) own.Dispose();
+        _ownCaches.Clear();
         _context?.Logger.Info(Strings.Stopped);
     }
 

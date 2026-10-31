@@ -154,7 +154,10 @@ public sealed partial class Database
     {
         try
         {
-            return SqlWriter.Render(statement, Provider.Dialect);
+            var rendered = SqlWriter.Render(statement, Provider.Dialect);
+            // A clear error instead of the driver's (SQL Server stops at 2100 parameters): split the IN list or use a join.
+            var limit = Provider.Capabilities.ParameterLimit;
+            return rendered.Parameters.Count > limit ? DataErrors.ParameterLimit(rendered.Parameters.Count, limit) : rendered;
         }
         catch (SqlRenderException ex)
         {
@@ -268,7 +271,9 @@ public sealed partial class Database
                     return await BufferedResultSet.CaptureAsync(reader, token).ConfigureAwait(false);
                 }, static set => set.Rows.Length).ConfigureAwait(false);
             return buffered.IsFailure ? buffered.Error! : Result<(object, long)>.Success((buffered.Value!, buffered.Value!.Size));
-        }, context.CancellationToken).ConfigureAwait(false);
+        }, context.CancellationToken, store.Config.PublishEvents ? hit => Publish(hit
+            ? new CL.Data.Events.CacheHitEvent(Name, Provider.Name, Options.Time.GetUtcNow(), context.Table)
+            : new CL.Data.Events.CacheMissEvent(Name, Provider.Name, Options.Time.GetUtcNow(), context.Table)) : null).ConfigureAwait(false);
         if (loaded.IsFailure) return loaded.Error!;
 
         await using var replay = ((BufferedResultSet)loaded.Value!).CreateReader();

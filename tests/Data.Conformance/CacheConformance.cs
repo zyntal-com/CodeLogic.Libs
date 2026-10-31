@@ -249,4 +249,18 @@ public abstract class CacheConformance(ProviderFixture fixture) : ConformanceSui
         (await nodeC.Repository<Product>().InsertAsync(new Product { Sku = "L-1", Name = "l", Price = 1, Stock = 1 })).ValueOrThrow();
         Assert.Equal(5L, (await nodeD.Query<Product>().WithCache().CountAsync()).ValueOrThrow());
     }
+
+    [SkippableFact]
+    public async Task Hit_and_miss_events_are_opt_in()
+    {
+        RequireProvider();
+        System.Collections.Concurrent.ConcurrentQueue<CL.Data.Events.DataEvent> events = new();
+        var cache = new DataCache(new DataCacheConfig { PublishEvents = true });
+        await using var db = Fixture.CreateDatabase(new DatabaseOptions { Cache = cache, Events = events.Enqueue });
+        await AllAsync(db);
+        await AllAsync(db);
+        Assert.Single(events.OfType<CL.Data.Events.CacheMissEvent>());
+        Assert.Single(events.OfType<CL.Data.Events.CacheHitEvent>());
+        Assert.Equal("conf_products", events.OfType<CL.Data.Events.CacheHitEvent>().Single().Table);
+    }
 }

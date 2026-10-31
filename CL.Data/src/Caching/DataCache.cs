@@ -135,7 +135,7 @@ public sealed class DataCache : IDisposable
 
     /// <summary>The cached value for <paramref name="key"/>, or the result of <paramref name="load"/> (stored when it succeeds).</summary>
     internal async ValueTask<Result<object>> GetOrLoadAsync(UInt128 key, CachePolicy policy, IReadOnlyList<string> tags,
-        Func<CancellationToken, ValueTask<Result<(object Value, long Size)>>> load, CancellationToken ct)
+        Func<CancellationToken, ValueTask<Result<(object Value, long Size)>>> load, CancellationToken ct, Action<bool>? hit = null)
     {
         if (policy.Refresh is not null)
         {
@@ -147,9 +147,11 @@ public sealed class DataCache : IDisposable
         {
             Interlocked.Increment(ref _hits);
             CL.Data.Telemetry.DataTelemetry.CacheHits.Add(1);
+            hit?.Invoke(true);
             return Result<object>.Success(cached);
         }
 
+        hit?.Invoke(false);
         var loader = _loading.GetOrAdd(key, k => new Lazy<Task<Result<object>>>(() => LoadAsync(k, policy, tags, () => load(ct))));
         try
         {

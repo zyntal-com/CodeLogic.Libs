@@ -36,13 +36,6 @@ public sealed class DataCacheConfig : ConfigModelBase
     [ConfigField(Label = "Default TTL (s)", Min = 1, Order = 3)]
     public int DefaultTtlSeconds { get; set; } = 60;
 
-    /// <summary>
-    /// Captured DateTime parameters close to "now" are rounded down to this many seconds so repeated
-    /// "recent rows" queries share a cache entry (0 = off).
-    /// </summary>
-    [ConfigField(Label = "Time Quantization (s)", Min = 0, Order = 4)]
-    public int TimeQuantizeSeconds { get; set; } = 5;
-
     /// <summary>Cache single-row lookups by key (<c>GetByKey</c>/<c>GetById</c>).</summary>
     [ConfigField(Label = "Entity Cache", Order = 5)]
     public bool EntityCache { get; set; }
@@ -74,7 +67,6 @@ public sealed class DataCacheConfig : ConfigModelBase
         if (MaxEntries < 0) errors.Add(new("maxEntries", "Max entries cannot be negative."));
         if (MaxMemoryMb < 0) errors.Add(new("maxMemoryMb", "Max memory cannot be negative."));
         if (DefaultTtlSeconds < 1) errors.Add(new("defaultTtlSeconds", "Default TTL must be at least 1 second."));
-        if (TimeQuantizeSeconds < 0) errors.Add(new("timeQuantizeSeconds", "Time quantization cannot be negative."));
         if (EntityCacheTtlSeconds < 1) errors.Add(new("entityCacheTtlSeconds", "Entity cache TTL must be at least 1 second."));
         if (BusPollIntervalMs < 50) errors.Add(new("busPollIntervalMs", "Bus poll interval must be at least 50 ms."));
         return errors.Count == 0 ? ConfigValidationResult.Valid() : ConfigValidationResult.Invalid(errors);

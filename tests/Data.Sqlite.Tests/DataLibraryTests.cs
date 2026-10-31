@@ -37,6 +37,8 @@ public sealed class DataLibraryTests : IAsyncLifetime
             {
                 ["Main"] = Connection("main"),
                 ["Reports"] = Connection("reports"),
+                ["Fresh"] = new JsonObject { ["provider"] = "sqlite", ["database"] = File("fresh"), ["createDatabaseIfMissing"] = true },
+                ["Uncached"] = new JsonObject { ["provider"] = "sqlite", ["database"] = File("uncached"), ["cacheEnabled"] = false },
                 ["Broken"] = new JsonObject { ["provider"] = "oracle", ["host"] = "x", ["database"] = "y" },
             },
         };
@@ -71,6 +73,9 @@ public sealed class DataLibraryTests : IAsyncLifetime
         Assert.Equal("Reports", _data.Db("reports").ValueOrThrow().Name);   // names are case-insensitive
 
         Assert.Equal(DataErrors.ProviderMissingCode, _data.Db("Broken").Error!.Code);
+        Assert.Same(_data.Cache, main.Options.Cache);
+        Assert.Null(_data.Db("Uncached").ValueOrThrow().Options.Cache);      // CacheEnabled = false opts out
+        Assert.True(System.IO.File.Exists(File("fresh")));                   // CreateDatabaseIfMissing ran at Initialize
         Assert.Equal(DataErrors.ConnectionUnknownCode, _data.Db("Nope").Error!.Code);
 
         var health = await _data.HealthCheckAsync();

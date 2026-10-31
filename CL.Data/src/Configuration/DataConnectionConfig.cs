@@ -155,10 +155,6 @@ public sealed class DataConnectionConfig
     [ConfigField(Label = "Bulk Threshold", Min = 0, Group = "Performance", Order = 62, Collapsed = true)]
     public int BulkThreshold { get; set; } = 5000;
 
-    /// <summary>Values per <c>IN (...)</c> list before it is split.</summary>
-    [ConfigField(Label = "Max IN-Clause Values", Min = 1, Max = 65000, Group = "Performance", Order = 63, Collapsed = true)]
-    public int MaxInClauseValues { get; set; } = 1000;
-
     /// <summary>Prepare frequently repeated statements on the server.</summary>
     [ConfigField(Label = "Prepare Statements", Group = "Performance", Order = 64, Collapsed = true)]
     public bool PrepareStatements { get; set; } = true;
@@ -278,8 +274,6 @@ public sealed class DataConnectionConfig
             errors.Add(new($"{path}.commandTimeoutSeconds", "Command timeout must be at least 1 second."));
         if (MaxBatchSize < 1)
             errors.Add(new($"{path}.maxBatchSize", "Max batch size must be at least 1."));
-        if (MaxInClauseValues < 1)
-            errors.Add(new($"{path}.maxInClauseValues", "Max IN-clause values must be at least 1."));
         if (DefaultStringSize < 1)
             errors.Add(new($"{path}.defaultStringSize", "Default string size must be at least 1."));
         if (RetryCount < 0 || RetryBaseDelayMs < 0 || CircuitBreakerThreshold < 0 || CircuitBreakSeconds < 1)

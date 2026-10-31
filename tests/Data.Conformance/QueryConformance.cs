@@ -76,6 +76,15 @@ public abstract class QueryConformance(ProviderFixture fixture) : ConformanceSui
     }
 
     [SkippableFact]
+    public async Task Queries_over_the_parameter_limit_fail_clearly_before_sending()
+    {
+        RequireProvider();
+        var ids = Enumerable.Range(1, Db.Provider.Capabilities.ParameterLimit + 1).Select(i => (long)i).ToArray();
+        var result = await Db.Query<Product>().Where(p => ids.Contains(p.Id)).ToListAsync();
+        Assert.Equal(DataErrors.ParameterLimitCode, result.Error!.Code);
+    }
+
+    [SkippableFact]
     public async Task Set_based_updates_refuse_key_columns()
     {
         RequireProvider();
