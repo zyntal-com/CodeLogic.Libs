@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  Thirteen production-ready .NET 11 library integrations for
+  Fourteen production-ready .NET 11 library integrations for
   <a href="https://github.com/zyntal-com/CodeLogic">CodeLogic 5</a>.
   Each is a self-contained <code>ILibrary</code> with auto-generated configuration,
   lifecycle management, and health checks.
