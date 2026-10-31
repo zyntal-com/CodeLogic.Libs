@@ -24,7 +24,8 @@
   surface from `Apply()` / `Encode()` as `imaging.invalid_argument`.
 - Encoding to JPEG, PNG and WebP (lossy and lossless) into pooled buffers (`EncodedImage`, with `ToArray`,
   `AsStream`, `WriteToAsync`, `SaveAsync`, `ToBase64`, `ToDataUri`); `ImageEncodeOptions` with `KeepIccProfile`
-  (original profile written back byte for byte), `KeepMetadata` (original EXIF written back, orientation updated) and
+  (original profile written back byte for byte), `KeepMetadata` (original EXIF written back, orientation updated), `RemoveGps` (drop only the GPS position from
+  kept EXIF) and
   `Background` for JPEG.
 - `ImageInfo.Probe` (format, size, orientation, alpha, frames from the header only) and
   `ImageFormatExtensions` (`Detect`, `MimeType`, `FileExtension`, `CanEncode`).

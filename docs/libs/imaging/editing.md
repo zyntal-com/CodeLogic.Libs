@@ -89,5 +89,6 @@ using var webp = doc.Edit().Encode(new ImageEncodeOptions
 | `Quality` | `ImagingDefaults` (85) | 1–100 for JPEG and lossy WebP (effort for lossless WebP). |
 | `Lossless` | `false` | Lossless WebP. |
 | `KeepIccProfile` | `false` | Write the source ICC profile back unchanged; otherwise pixels are converted to sRGB. |
-| `KeepMetadata` | `!StripMetadataByDefault` | Write the source EXIF back. |
+| `KeepMetadata` | `!StripMetadataByDefault` | Write the source EXIF back (GPS included). |
+| `RemoveGps` | `false` | With kept EXIF: remove the GPS position, keep the other tags. |
 | `Background` | white | JPEG flattens transparency onto it. |

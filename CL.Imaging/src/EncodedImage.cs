@@ -27,6 +27,12 @@ public sealed record ImageEncodeOptions
     /// </summary>
     public bool? KeepMetadata { get; init; }
 
+    /// <summary>
+    /// With <see cref="KeepMetadata"/>: remove the GPS position from the EXIF that is written back (all other tags are
+    /// kept). Default false: kept EXIF keeps its GPS. Without kept EXIF there is no GPS in the output anyway.
+    /// </summary>
+    public bool RemoveGps { get; init; }
+
     /// <summary>Colour transparent pixels are flattened onto when the format has no alpha (JPEG). Default: white.</summary>
     public Color Background { get; init; } = Color.White;
 }
