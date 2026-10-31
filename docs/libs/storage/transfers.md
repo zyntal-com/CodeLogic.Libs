@@ -425,7 +425,7 @@ await storage.CopyAsync("sftp", "exports", "s3", "archive", new StorageTransferO
 Speed limits are set per connection and shared by all of its concurrent transfers:
 
 ```json
-"TransferLimits": { "MaxUploadBytesPerSecond": 1048576, "MaxDownloadBytesPerSecond": 5242880 }
+"transferLimits": { "maxUploadBytesPerSecond": 1048576, "maxDownloadBytesPerSecond": 5242880 }
 ```
 
 `MaxTotalUploadBytesPerSecond` and `MaxTotalDownloadBytesPerSecond` in the `storage` section cap all

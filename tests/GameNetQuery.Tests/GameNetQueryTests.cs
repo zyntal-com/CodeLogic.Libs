@@ -9,7 +9,8 @@ namespace GameNetQuery.Tests;
 
 // Offline unit tests for CL.GameNetQuery. Everything here is pure: the status PARSERS
 // operate on raw console strings, and the RCON packet types are value serialization.
-// The live UDP/RCON query clients need a real game server and are intentionally NOT tested.
+// The live UDP query clients need a real game server and are not tested here; the RCON clients
+// are tested against a loopback fake server in RconFramingTests.cs.
 
 public class ValveStatusParserTests
 {

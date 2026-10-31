@@ -44,6 +44,12 @@ All notable changes to **CodeLogic.GitHelper** are documented here. Versions fol
 - Fetch now records `ObjectCount` and `BytesTransferred` in its diagnostics.
 - Failures of read operations (status, info, branches, log) are logged at debug level with the
   full exception; before, the exception was only on the result.
+- LibGit2Sharp is pinned to 0.32.0 instead of floating (`0.32.*`).
+
+### Documentation
+
+- Configuration examples in the README and the docs use the camelCase keys the CodeLogic loader reads.
+  The PascalCase keys shown before are matched case-sensitively and were ignored, leaving defaults active.
 
 ## 2026-10-24
 

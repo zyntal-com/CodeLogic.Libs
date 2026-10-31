@@ -16,10 +16,37 @@ public enum IpAddressType
 }
 
 /// <summary>
+/// Outcome of a DNSBL check.
+/// </summary>
+public enum DnsblCheckStatus
+{
+    /// <summary>Every queried zone answered and none lists the address (or the address was skipped as local/allowlisted).</summary>
+    NotBlacklisted,
+
+    /// <summary>At least one zone lists the address.</summary>
+    Blacklisted,
+
+    /// <summary>
+    /// No zone lists the address, but at least one zone could not be checked (timeout, resolver failure, or a
+    /// DNSBL error answer such as Spamhaus' <c>127.255.255.x</c>). The address is not known to be clean.
+    /// </summary>
+    Indeterminate,
+
+    /// <summary>The check could not run at all (invalid address, unexpected failure); see <see cref="DnsblCheckResult.ErrorMessage"/>.</summary>
+    Error
+}
+
+/// <summary>
 /// Result of a DNSBL blacklist check for a single IP address.
 /// </summary>
 public record DnsblCheckResult
 {
+    /// <summary>The outcome. Distinguishes a clean result from one where zones could not be checked.</summary>
+    public DnsblCheckStatus Status { get; init; }
+
+    /// <summary>Zones that could not be checked (timeout, resolver failure, DNSBL error answer). Empty when every zone answered.</summary>
+    public IReadOnlyList<string> FailedServices { get; init; } = [];
+
     /// <summary>The IP address that was checked.</summary>
     public required string IpAddress { get; init; }
 
@@ -39,16 +66,29 @@ public record DnsblCheckResult
     public DateTime CheckedAt { get; init; } = DateTime.UtcNow;
 
     /// <summary>Creates a result indicating the IP is blacklisted by the given service.</summary>
-    public static DnsblCheckResult Blacklisted(string ip, IpAddressType type, string service) =>
-        new() { IpAddress = ip, IsBlacklisted = true, MatchedService = service, AddressType = type };
+    public static DnsblCheckResult Blacklisted(string ip, IpAddressType type, string service, IReadOnlyList<string>? failedServices = null) =>
+        new()
+        {
+            IpAddress = ip, IsBlacklisted = true, MatchedService = service, AddressType = type,
+            Status = DnsblCheckStatus.Blacklisted, FailedServices = failedServices ?? []
+        };
 
     /// <summary>Creates a result indicating the IP passed all blacklist checks.</summary>
     public static DnsblCheckResult NotBlacklisted(string ip, IpAddressType type) =>
-        new() { IpAddress = ip, IsBlacklisted = false, AddressType = type };
+        new() { IpAddress = ip, IsBlacklisted = false, AddressType = type, Status = DnsblCheckStatus.NotBlacklisted };
+
+    /// <summary>Creates a result for a check where no zone listed the IP but some zones could not be checked.</summary>
+    public static DnsblCheckResult Indeterminate(string ip, IpAddressType type, IReadOnlyList<string> failedServices) =>
+        new()
+        {
+            IpAddress = ip, IsBlacklisted = false, AddressType = type, Status = DnsblCheckStatus.Indeterminate,
+            FailedServices = failedServices,
+            ErrorMessage = $"Could not check {failedServices.Count} DNSBL zone(s): {string.Join(", ", failedServices)}"
+        };
 
     /// <summary>Creates an error result when the check could not be completed.</summary>
     public static DnsblCheckResult Error(string ip, IpAddressType type, string error) =>
-        new() { IpAddress = ip, IsBlacklisted = false, AddressType = type, ErrorMessage = error };
+        new() { IpAddress = ip, IsBlacklisted = false, AddressType = type, ErrorMessage = error, Status = DnsblCheckStatus.Error };
 }
 
 /// <summary>

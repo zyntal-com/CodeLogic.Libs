@@ -155,18 +155,18 @@ public sealed record MailMessage
 
 ```json
 {
-  "Enabled": true,
-  "Smtp": {
-    "Host": "smtp.example.com",
-    "Port": 587,
-    "Username": "noreply@example.com",
-    "Password": "your-password-or-app-password",
-    "SecurityMode": "StartTls",
-    "TimeoutSeconds": 30
+  "enabled": true,
+  "smtp": {
+    "host": "smtp.example.com",
+    "port": 587,
+    "username": "noreply@example.com",
+    "password": "your-password-or-app-password",
+    "securityMode": "StartTls",
+    "timeoutSeconds": 30
   },
-  "DefaultFromEmail": "noreply@example.com",
-  "DefaultFromName": "My App",
-  "TemplateDirectory": "templates"
+  "defaultFromEmail": "noreply@example.com",
+  "defaultFromName": "My App",
+  "templateDirectory": "templates"
 }
 ```
 
@@ -231,6 +231,7 @@ Every failure is an `Error` whose `Code` is a `MailErrorCodes` constant, and eac
 | `InvalidSubject` | `mail.invalid_subject` | `ValidationError` |
 | `InvalidBody` (new) | `mail.invalid_body` | `ValidationError` |
 | `TemplateNotFound` | `mail.template_not_found` | `NotFoundError` |
+| `InvalidTemplateId` | `mail.invalid_template_id` | `ValidationError` |
 | `TemplateRenderingFailed` | `mail.template_rendering_failed` | `InternalError` |
 | `SmtpConfigInvalid` | `mail.smtp_config_invalid` | `ValidationError` |
 | `SmtpAuthenticationFailed` | `mail.smtp_authentication_failed` | `UnauthorizedError` |

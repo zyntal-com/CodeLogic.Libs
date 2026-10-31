@@ -39,3 +39,8 @@
 - `ImagingErrors` with `imaging.*` codes, `ImagingDefaults` / `ImagingSettings`, and an optional `ImagingLibrary`
   whose `imaging` config section (`DefaultMaxPixels`, `DefaultMaxBytes`, `DefaultQuality`, `DefaultFormat`,
   `StripMetadataByDefault`) sets the defaults, live on config changes.
+
+### Changed
+
+- Package versions are pinned (SkiaSharp and SkiaSharp.NativeAssets.Linux.NoDependencies 4.154.0) instead of floating (`4.*`).
+

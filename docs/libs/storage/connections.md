@@ -9,24 +9,24 @@ See the [overview](index.md) for the configuration sections and the mount model.
 
 ```json
 {
-  "Host": "sftp.internal",
-  "Username": "deploy",
-  "AuthenticationMode": "Auto",
-  "Password": "...",
-  "PrivateKeyPath": "/secrets/id_ed25519",
-  "PrivateKeyContent": null,
-  "AdditionalPrivateKeyPaths": [],
-  "PrivateKeyPassphrase": "...",
-  "KnownHostsPath": "/home/app/.ssh/known_hosts",
-  "HostKeyFingerprints": [],
-  "Ciphers": ["aes256-gcm@openssh.com", "aes256-ctr"],
-  "Encoding": "utf-8",
-  "BufferSize": 262144,
-  "JumpHost": {
-    "Host": "bastion.example.com",
-    "Username": "jump",
-    "PrivateKeyPath": "/secrets/bastion_ed25519",
-    "KnownHostsPath": "/home/app/.ssh/known_hosts"
+  "host": "sftp.internal",
+  "username": "deploy",
+  "authenticationMode": "Auto",
+  "password": "...",
+  "privateKeyPath": "/secrets/id_ed25519",
+  "privateKeyContent": null,
+  "additionalPrivateKeyPaths": [],
+  "privateKeyPassphrase": "...",
+  "knownHostsPath": "/home/app/.ssh/known_hosts",
+  "hostKeyFingerprints": [],
+  "ciphers": ["aes256-gcm@openssh.com", "aes256-ctr"],
+  "encoding": "utf-8",
+  "bufferSize": 262144,
+  "jumpHost": {
+    "host": "bastion.example.com",
+    "username": "jump",
+    "privateKeyPath": "/secrets/bastion_ed25519",
+    "knownHostsPath": "/home/app/.ssh/known_hosts"
   }
 }
 ```
@@ -49,22 +49,22 @@ See the [overview](index.md) for the configuration sections and the mount model.
 
 ```json
 {
-  "Host": "ftp.partner.example",
-  "EncryptionMode": "Explicit",
-  "TrustedPublicKeySha256": ["SHA256:..."],
-  "TlsProtocols": ["Tls12", "Tls13"],
-  "EncryptDataChannel": true,
-  "DataConnectionMode": "AutoPassive",
-  "ActivePortMin": 50000,
-  "ActivePortMax": 50100,
-  "ActiveExternalIp": "203.0.113.7",
-  "Encoding": "windows-1252",
-  "TransferType": "Binary",
-  "ListingParser": "Auto",
-  "ServerTimeZone": "Europe/Copenhagen",
-  "ReadTimeoutSeconds": 60,
-  "SocketKeepAlive": true,
-  "LoginCommands": ["SITE UMASK 022"]
+  "host": "ftp.partner.example",
+  "encryptionMode": "Explicit",
+  "trustedPublicKeySha256": ["SHA256:..."],
+  "tlsProtocols": ["Tls12", "Tls13"],
+  "encryptDataChannel": true,
+  "dataConnectionMode": "AutoPassive",
+  "activePortMin": 50000,
+  "activePortMax": 50100,
+  "activeExternalIp": "203.0.113.7",
+  "encoding": "windows-1252",
+  "transferType": "Binary",
+  "listingParser": "Auto",
+  "serverTimeZone": "Europe/Copenhagen",
+  "readTimeoutSeconds": 60,
+  "socketKeepAlive": true,
+  "loginCommands": ["SITE UMASK 022"]
 }
 ```
 
@@ -173,7 +173,7 @@ plain HTTP, so validation rejects that combination (every upload would fail whil
 Every remote provider can tunnel through an HTTP (`CONNECT`), SOCKS5, or SOCKS4 proxy:
 
 ```json
-"Proxy": { "Type": "Socks5", "Host": "proxy.corp.local", "Port": 1080, "Username": "me", "Password": "..." }
+"proxy": { "type": "Socks5", "host": "proxy.corp.local", "port": 1080, "username": "me", "password": "..." }
 ```
 
 SOCKS5 and HTTP proxies resolve the destination host name on the proxy side. SOCKS4 cannot, so
@@ -189,20 +189,20 @@ retry transient failures automatically. Both are tuned per connection:
 
 ```json
 {
-  "Session": {
-    "MaxSessions": 4,
-    "MaxIdleSessions": 2,
-    "IdleLifetimeSeconds": 120,
-    "AcquireTimeoutSeconds": 30,
-    "ValidateAfterIdleSeconds": 15,
-    "KeepAliveSeconds": 60,
-    "LingerSeconds": 0
+  "session": {
+    "maxSessions": 4,
+    "maxIdleSessions": 2,
+    "idleLifetimeSeconds": 120,
+    "acquireTimeoutSeconds": 30,
+    "validateAfterIdleSeconds": 15,
+    "keepAliveSeconds": 60,
+    "lingerSeconds": 0
   },
-  "Retry": {
-    "RetryCount": 3,
-    "BaseDelayMs": 100,
-    "MaxDelayMs": 30000,
-    "RetryNonIdempotent": false
+  "retry": {
+    "retryCount": 3,
+    "baseDelayMs": 100,
+    "maxDelayMs": 30000,
+    "retryNonIdempotent": false
   }
 }
 ```

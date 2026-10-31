@@ -35,12 +35,12 @@ New shape:
 
 ```json
 {
-  "Connections": {
+  "connections": {
     "media": {
-      "Bucket": "company-media",
-      "Prefix": "production",
-      "Region": "eu-north-1",
-      "AuthenticationMode": "DefaultCredentialChain"
+      "bucket": "company-media",
+      "prefix": "production",
+      "region": "eu-north-1",
+      "authenticationMode": "DefaultCredentialChain"
     }
   }
 }

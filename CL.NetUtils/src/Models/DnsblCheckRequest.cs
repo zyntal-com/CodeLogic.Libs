@@ -27,7 +27,13 @@ public sealed class DnsblCheckRequest
     /// </summary>
     public Func<string, CancellationToken, Task<bool>>? IsAllowedAsync { get; init; }
 
-    /// <summary>DNS query timeout. Defaults to 5s.</summary>
+    /// <summary>
+    /// Query the zones of a list (primaries, then fallbacks) concurrently. When <see langword="false"/>, zones are
+    /// queried one at a time and the check stops at the first listing. Defaults to <see langword="true"/>.
+    /// </summary>
+    public bool ParallelQueries { get; init; } = true;
+
+    /// <summary>DNS query timeout per zone. Defaults to 5s.</summary>
     public TimeSpan Timeout { get; init; } = TimeSpan.FromSeconds(5);
 
     /// <summary>Emit per-zone debug logs for each lookup.</summary>

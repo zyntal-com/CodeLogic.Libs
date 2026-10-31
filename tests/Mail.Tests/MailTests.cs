@@ -484,6 +484,53 @@ public sealed class MailErrorTests
             if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
         }
     }
+
+    public static TheoryData<string> UnsafeTemplateIds()
+    {
+        var rooted = OperatingSystem.IsWindows() ? @"C:\Windows\win" : "/etc/passwd";
+        return
+        [
+            "../outside", @"..\outside", "sub/inner", @"sub\inner", ".hidden", "..", "", " ", "a b",
+            "a:b", rooted, new string('a', FileMailTemplateProvider.MaxTemplateIdLength + 1)
+        ];
+    }
+
+    [Theory]
+    [MemberData(nameof(UnsafeTemplateIds))]
+    public async Task Unsafe_template_ids_are_rejected_for_load_and_save(string id)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "cl_mail_tpl_" + Guid.NewGuid().ToString("N"));
+        var dir = Path.Combine(root, "templates");
+        try
+        {
+            var provider = new FileMailTemplateProvider(dir);
+            // A JSON file just outside the template directory must stay unreachable.
+            await File.WriteAllTextAsync(Path.Combine(root, "outside.json"), """{"Id":"outside","Subject":"secret"}""");
+
+            var load = await provider.LoadTemplateAsync(id);
+            Assert.True(load.IsFailure);
+            Assert.IsType<ValidationError>(load.Error);
+            Assert.Equal(MailErrorCodes.InvalidTemplateId, load.Error!.Code);
+
+            var save = await provider.SaveTemplateAsync(MailTemplate.Create(id, "x", textBody: "y"));
+            Assert.True(save.IsFailure);
+            Assert.Equal(MailErrorCodes.InvalidTemplateId, save.Error!.Code);
+
+            Assert.Equal("""{"Id":"outside","Subject":"secret"}""", await File.ReadAllTextAsync(Path.Combine(root, "outside.json")));
+            Assert.Single(Directory.GetFiles(root, "*", SearchOption.AllDirectories));
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData("welcome")]
+    [InlineData("order-confirmation_v2.en")]
+    [InlineData("A1")]
+    public void Safe_template_ids_are_accepted(string id) =>
+        Assert.True(FileMailTemplateProvider.IsValidTemplateId(id));
 }
 
 // ── Gated live SMTP test ─────────────────────────────────────────────────────────

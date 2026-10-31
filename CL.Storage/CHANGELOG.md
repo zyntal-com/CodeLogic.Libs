@@ -12,6 +12,12 @@
   direct subtypes, so a `switch` over a connection is checked for exhaustiveness. Deriving your own
   connection type from it outside CL.Storage is no longer possible; use `RegisterBackend` for custom backends.
 
+### Documentation
+
+- Configuration examples in the README and the docs use the camelCase keys the CodeLogic loader reads.
+  The PascalCase keys shown before are matched case-sensitively and were ignored, leaving defaults active.
+- Local connections: the root-path checks are documented as traversal protection for caller-supplied paths, not a sandbox. A process that can modify the tree under the root at the same time can swap a checked path for a link before it is opened.
+
 ## 2026-10-27 (4.9.104)
 
 ### Fixed

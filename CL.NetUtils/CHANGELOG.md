@@ -9,8 +9,46 @@ All notable changes to **CodeLogic.NetUtils** are documented here. Versions foll
 
 - Targets **.NET 11** (`net11.0`) and requires **CodeLogic 5.0** (`[5.0.0, 6.0.0)`). On .NET 10, stay on
   4.9.x. CodeLogic 5 makes `Result<T>` / `Result` C# 15 unions and `Error` a closed record with
-  kind subtypes (`NotFoundError`, `ValidationError`, ...). This library's API is unchanged, and
-  its results can now be matched exhaustively with `switch`.
+  kind subtypes (`NotFoundError`, `ValidationError`, ...). Results can now be matched exhaustively
+  with `switch`.
+- **A DNSBL check that could not query a zone is no longer reported as clean.** Timeouts, resolver
+  failures and DNSBL error answers (Spamhaus `127.255.255.x`) used to end as `NotBlacklisted`. When no
+  zone lists the address but some zone failed, the result is now `Status = DnsblCheckStatus.Indeterminate`
+  with the zones in `FailedServices` and a message in `ErrorMessage`; `IsBlacklisted` stays `false`.
+  NXDOMAIN is still "not listed". Check `Status` where an unchecked address must not pass.
+- **`GeoIp.DownloadUrl` must be `https` on a trusted host.** The MaxMind credentials were sent to any
+  configured URL. The host must now be listed in the new `GeoIp.TrustedDownloadHosts` (default
+  `["download.maxmind.com"]`); otherwise the download is refused before any request and configuration
+  validation fails.
+- **SharpCompress dependency removed.** The GeoIP archive is read with the built-in `System.Formats.Tar`
+  and `System.IO.Compression` (`tar.gz` and `zip`).
+
+### Added
+
+- `DnsblCheckStatus` (`NotBlacklisted`, `Blacklisted`, `Indeterminate`, `Error`), `DnsblCheckResult.Status`,
+  `DnsblCheckResult.FailedServices` and `DnsblCheckResult.Indeterminate(...)`.
+- `DnsblCheckRequest.ParallelQueries` (default `true`).
+- `GeoIpConfig.TrustedDownloadHosts` and `GeoIpConfig.TryGetTrustedDownloadUri(...)`.
+
+### Fixed
+
+- **`Dnsbl.ParallelQueries` is honoured.** Zones were always queried one at a time. Now the zones of a
+  list are queried concurrently by default, and with `ParallelQueries = false` one at a time, stopping at
+  the first listing. DNS lookups use the asynchronous resolver, so the per-zone timeout is enforced.
+- **GeoIP database replacement is selective and atomic.** Every archive entry (licence, readme, ...) was
+  extracted straight into the database directory, over the live file. Now the archive is unpacked in a
+  private temporary directory, only the `.mmdb` entry is extracted (by content, never by entry path),
+  checked for the MaxMind metadata marker, and moved over the database in one rename; an open reader is
+  switched to the new file. A failed or invalid download leaves the existing database untouched. A custom
+  `DatabasePath` with a different file name than the archive's `.mmdb` now gets the database too.
+- `LookupIpAsync` reads the database reader under its lock, so a concurrent reload or dispose cannot
+  race it.
+- Package versions are pinned (`MaxMind.GeoIP2` 6.1.0) instead of floating.
+
+### Documentation
+
+- Configuration examples use the camelCase keys the CodeLogic loader reads (PascalCase keys were ignored).
+- The DNSBL guide describes the actual query order, fallback rule and failure handling.
 
 ## 2026-10-30
 

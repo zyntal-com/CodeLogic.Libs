@@ -38,23 +38,23 @@ if (check.IsValid) { /* grant access */ }
 ## Features
 
 - **Secret generation** — cryptographically random Base32 TOTP secrets (`GenerateSecretKey`).
-- **Provisioning** — `GenerateNewKey(issuer, user)` returns a `TwoFactorKey` with a standard `otpauth://` `ProvisioningUri`.
-- **Generate & validate** — `GenerateTotpCode` / `ValidateTotp` with a configurable time step and drift window; validation returns a `TotpValidationResult` including the matched window offset.
+- **Provisioning** — `GenerateNewKey(issuer, user)` returns a `TwoFactorKey` with a standard `otpauth://` `ProvisioningUri` that carries the configured `period`.
+- **Generate & validate** — `GenerateTotpCode` / `ValidateTotp` with a configurable time step and drift window; validation returns a `TotpValidationResult` with the matched absolute time step (`MatchedWindow`, a `long`, for replay tracking) and the drift in steps (`WindowOffset`).
 - **Lifetime helpers** — `GetSecondsUntilExpiry()` and `GetCurrentTimeWindow()`.
 - **QR rendering** — PNG / BMP bytes, Base64, data URI, and save-to-file, with configurable module size and error-correction level.
 - **Events** — `SecretKeyGeneratedEvent` and `TotpValidatedEvent` on the CodeLogic event bus.
 
 ## Configuration
 
-Auto-generated on first run as `config.twofactorauth.json`:
+Auto-generated on first run as `config.twofactorauth.json`. Keys are camelCase and matched case-sensitively, so a PascalCase key is ignored and its default stays active:
 
 ```json
 {
-  "Enabled": true,
-  "TimeStepSeconds": 30,
-  "WindowSize": 1,
-  "QrCodeModuleSize": 20,
-  "ErrorCorrectionLevel": "Q"
+  "enabled": true,
+  "timeStepSeconds": 30,
+  "windowSize": 1,
+  "qrCodeModuleSize": 20,
+  "errorCorrectionLevel": "q"
 }
 ```
 
@@ -64,6 +64,8 @@ Auto-generated on first run as `config.twofactorauth.json`:
 | `TimeStepSeconds` | `30` | TOTP time step (1–300); must match the authenticator app. |
 | `WindowSize` | `1` | Steps before/after the current window accepted (0–10); `1` ≈ ±30s drift. |
 | `QrCodeModuleSize` | `20` | Pixel size of each QR module (1–100). |
+
+Values outside these ranges fail configuration validation.
 | `ErrorCorrectionLevel` | `Q` | `L` (~7%), `M` (~15%), `Q` (~25%), `H` (~30%). |
 
 ## Documentation
