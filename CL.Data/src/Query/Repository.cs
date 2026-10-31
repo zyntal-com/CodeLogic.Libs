@@ -9,6 +9,15 @@ using CodeLogic.Core.Results;
 
 namespace CL.Data.Query;
 
+/// <summary>What an insert-ignore did.</summary>
+public enum InsertOutcome
+{
+    /// <summary>The row was inserted.</summary>
+    Inserted,
+    /// <summary>A row with the same key already existed; nothing changed.</summary>
+    Duplicate,
+}
+
 /// <summary>
 /// Key lookups and entity writes for <typeparamref name="T"/>. Reads hide soft-deleted rows and other tenants'
 /// rows; writes go through the shared write planner (auditing, concurrency, tenants, identity write-back).
@@ -107,6 +116,104 @@ public sealed class Repository<T>
         if (plan.IsFailure) return plan.Error!;
         var result = await _db.ExecuteWritesAsync([plan.Value!], Array.Empty<T>(), accessor.Value!, ct).ConfigureAwait(false);
         return result.IsSuccess ? Result<bool>.Success(result.Value > 0) : result.Error!;
+    }
+
+    // ── Upserts and counters ────────────────────────────────────────────────
+
+    /// <summary>
+    /// Inserts <paramref name="entity"/>, or updates the existing row with the same conflict key (the primary key by
+    /// default; see <see cref="UpsertOptions"/>). Generated identities are not written back by an upsert.
+    /// </summary>
+    public async ValueTask<Result<T>> UpsertAsync(T entity, UpsertOptions? options = null, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(entity);
+        var result = await UpsertManyAsync([entity], options, ct).ConfigureAwait(false);
+        return result.IsSuccess ? Result<T>.Success(entity) : result.Error!;
+    }
+
+    /// <summary>Upserts <paramref name="entities"/> in batches; returns the provider's affected-row count.</summary>
+    public async ValueTask<Result<int>> UpsertManyAsync(IEnumerable<T> entities, UpsertOptions? options = null, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(entities);
+        var accessor = Accessor();
+        if (accessor.IsFailure) return accessor.Error!;
+        var list = entities as IReadOnlyList<T> ?? entities.ToList();
+        var plan = WritePlanner.Upsert(accessor.Value!, list, _db.WriteContext, options);
+        if (plan.IsFailure) return plan.Error!;
+        return await _db.ExecuteWritesAsync(plan.Value!, list, accessor.Value!, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Upserts <paramref name="seed"/>; on conflict the <paramref name="increments"/> are added to the stored values and
+    /// every other property is overwritten. Typical for counters (<c>Hits</c>, <c>Total</c>).
+    /// </summary>
+    public ValueTask<Result<T>> UpsertWithIncrementsAsync(T seed, IReadOnlyCollection<Expression<Func<T, object?>>> increments,
+        CancellationToken ct = default)
+    {
+        var names = PropertyNames(increments);
+        return names.IsFailure
+            ? ValueTask.FromResult<Result<T>>(names.Error!)
+            : UpsertAsync(seed, new UpsertOptions { IncrementProperties = names.Value! }, ct);
+    }
+
+    /// <summary>Inserts <paramref name="entity"/> unless a row with the same key exists; says which happened.</summary>
+    public async ValueTask<Result<InsertOutcome>> InsertIgnoreAsync(T entity, CancellationToken ct = default)
+    {
+        var inserted = await InsertManyIgnoreAsync([entity], ct).ConfigureAwait(false);
+        return inserted.IsSuccess ? (inserted.Value > 0 ? InsertOutcome.Inserted : InsertOutcome.Duplicate) : inserted.Error!;
+    }
+
+    /// <summary>Inserts the entities whose key does not exist yet; returns how many were inserted.</summary>
+    public ValueTask<Result<int>> InsertManyIgnoreAsync(IEnumerable<T> entities, CancellationToken ct = default) =>
+        UpsertManyAsync(entities, new UpsertOptions { IgnoreOnConflict = true }, ct);
+
+    /// <summary>Atomically adds <paramref name="delta"/> to <paramref name="property"/> of the row with single-column key <paramref name="id"/>. False when no row matched.</summary>
+    public ValueTask<Result<bool>> AdjustAsync<TValue>(object id, Expression<Func<T, TValue>> property, TValue delta, CancellationToken ct = default)
+        where TValue : struct, System.Numerics.INumber<TValue> =>
+        AdjustCoreAsync(EntityKey.Of(id), property, delta, ct);
+
+    /// <summary>Atomically adds <paramref name="delta"/> to <paramref name="property"/> of the row with <paramref name="key"/>.</summary>
+    public ValueTask<Result<bool>> AdjustAsync<TValue>(EntityKey key, Expression<Func<T, TValue>> property, TValue delta, CancellationToken ct = default)
+        where TValue : struct, System.Numerics.INumber<TValue> =>
+        AdjustCoreAsync(key, property, delta, ct);
+
+    /// <summary>Atomically adds <paramref name="by"/> (default 1) to <paramref name="property"/>.</summary>
+    public ValueTask<Result<bool>> IncrementAsync<TValue>(object id, Expression<Func<T, TValue>> property, TValue? by = null, CancellationToken ct = default)
+        where TValue : struct, System.Numerics.INumber<TValue> =>
+        AdjustCoreAsync(EntityKey.Of(id), property, by ?? TValue.One, ct);
+
+    /// <summary>Atomically subtracts <paramref name="by"/> (default 1) from <paramref name="property"/>.</summary>
+    public ValueTask<Result<bool>> DecrementAsync<TValue>(object id, Expression<Func<T, TValue>> property, TValue? by = null, CancellationToken ct = default)
+        where TValue : struct, System.Numerics.INumber<TValue> =>
+        AdjustCoreAsync(EntityKey.Of(id), property, -(by ?? TValue.One), ct);
+
+    private async ValueTask<Result<bool>> AdjustCoreAsync<TValue>(EntityKey key, Expression<Func<T, TValue>> property, TValue delta, CancellationToken ct)
+        where TValue : struct
+    {
+        var accessor = Accessor();
+        if (accessor.IsFailure) return accessor.Error!;
+        var map = accessor.Value!.Map;
+        var body = property.Body is UnaryExpression { NodeType: ExpressionType.Convert } convert ? convert.Operand : property.Body;
+        if (body is not MemberExpression { Expression: ParameterExpression } member || map.FindProperty(member.Member.Name) is not { } column)
+            return DataErrors.Validation($"'{property}' is not a mapped property of {typeof(T).Name}.");
+
+        var plan = WritePlanner.Adjust(map, key, column, delta, _db.WriteContext);
+        if (plan.IsFailure) return plan.Error!;
+        var result = await _db.ExecuteWritesAsync([plan.Value!], Array.Empty<T>(), accessor.Value!, ct).ConfigureAwait(false);
+        return result.IsSuccess ? Result<bool>.Success(result.Value > 0) : result.Error!;
+    }
+
+    private static Result<IReadOnlyList<string>> PropertyNames(IReadOnlyCollection<Expression<Func<T, object?>>> properties)
+    {
+        List<string> names = [];
+        foreach (var property in properties)
+        {
+            var body = property.Body is UnaryExpression { NodeType: ExpressionType.Convert } convert ? convert.Operand : property.Body;
+            if (body is not MemberExpression { Expression: ParameterExpression } member)
+                return DataErrors.Validation($"'{property}' is not a property of {typeof(T).Name}.");
+            names.Add(member.Member.Name);
+        }
+        return names;
     }
 
     // ── Reads ───────────────────────────────────────────────────────────────

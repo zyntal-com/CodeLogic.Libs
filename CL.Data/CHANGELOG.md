@@ -103,3 +103,7 @@
 - **Write execution:** multi-statement upserts run in a serializable transaction. Generated values come from
   RETURNING/OUTPUT, or from the provider's last-insert-id. When the provider's RETURNING does not keep insert order,
   rows with generated keys are inserted one per statement.
+- **Upserts and counters:** `UpsertAsync`/`UpsertManyAsync` (conflict on the key, a unique index or chosen properties),
+  `UpsertWithIncrementsAsync`, `InsertIgnoreAsync` (`InsertOutcome.Inserted`/`Duplicate`) and `InsertManyIgnoreAsync`,
+  plus atomic `IncrementAsync`/`DecrementAsync`/`AdjustAsync` (generic math). Each update also writes the audit
+  columns and bumps the concurrency token.

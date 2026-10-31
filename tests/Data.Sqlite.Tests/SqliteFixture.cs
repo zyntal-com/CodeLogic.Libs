@@ -55,3 +55,6 @@ public sealed class SqliteCollection : ICollectionFixture<SqliteFixture>;
 
 [Collection("sqlite")]
 public sealed class SqliteRepositoryTests(SqliteFixture fixture) : RepositoryConformance(fixture);
+
+[Collection("sqlite")]
+public sealed class SqliteUpsertTests(SqliteFixture fixture) : UpsertConformance(fixture);

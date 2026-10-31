@@ -301,6 +301,40 @@ public static class WritePlanner
         return commands;
     }
 
+    // ── Counters ────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Plans an atomic <c>col = col + delta</c> on the row with <paramref name="key"/>, also writing <c>[UpdatedAt]</c>,
+    /// <c>[UpdatedBy]</c> and bumping an integer concurrency token. Soft-deleted rows are left alone.
+    /// </summary>
+    public static Result<WriteCommand> Adjust(EntityMap map, EntityKey key, ColumnMap column, object delta, WriteContext ctx)
+    {
+        if (map.Key.IsEmpty) return DataErrors.NoPrimaryKey(map.ClrType.Name);
+        if (key.Count != map.Key.Columns.Count)
+            return DataErrors.Validation($"'{map.ClrType.Name}' has a key of {map.Key.Columns.Count} column(s); {key.Count} value(s) were given.");
+        if (!IsNumeric(column.ValueType))
+            return DataErrors.Validation($"'{map.ClrType.Name}.{column.PropertyName}' is not numeric.");
+
+        var names = map.GetNames(ctx.Policy);
+        var name = names.Of(column);
+        var now = ctx.Time.GetUtcNow();
+        List<SetItem> set = [new SetItem(name, new BinaryExpr(SqlBinaryOperator.Add, new ColumnExpr(name),
+            new ParameterExpr(SqlParameterValue.ForColumn(delta, column))))];
+        if (map.UpdatedAt is { } updatedAt && updatedAt != column) set.Add(new SetItem(names.Of(updatedAt), TimeValue(updatedAt, now)));
+        if (map.UpdatedBy is { } updatedBy && ctx.User is not null)
+            set.Add(new SetItem(names.Of(updatedBy), new ParameterExpr(SqlParameterValue.ForColumn(ctx.User, updatedBy))));
+        if (map.ConcurrencyToken is { } token && token.ValueType != typeof(byte[]) && token != column)
+            set.Add(new SetItem(names.Of(token), new BinaryExpr(SqlBinaryOperator.Add, new ColumnExpr(names.Of(token)), new LiteralExpr(1))));
+
+        var where = And(KeyPredicate(map, names, key), TenantPredicate(map, names, ctx));
+        if (map.SoftDelete is { } soft) where = And(where, new IsNullExpr(new ColumnExpr(names.Of(soft))));
+        return new WriteCommand(new UpdateStatement(TableOf(map, names, ctx), set) { Where = where }, WriteKind.Update, names.Table, 1,
+            Tags(names.Table, key));
+    }
+
+    private static bool IsNumeric(Type type) =>
+        EntityMap.IsInteger(type) || type == typeof(decimal) || type == typeof(double) || type == typeof(float);
+
     // ── Helpers ─────────────────────────────────────────────────────────────
 
     /// <summary>The table reference of <paramref name="map"/>: declared schema, else the connection default when schemas exist.</summary>
