@@ -60,7 +60,7 @@ the current numbers) and for time relative to Dapper or raw ADO.NET in the same 
   - A failed publish leaves other nodes on their TTL; the local write is unaffected.
   - `DatabaseCacheBus` polls, so other nodes see an invalidation up to one poll interval late (500 ms by default).
 - **Reads inside a transaction never use the cache.** Invalidations from a transaction wait for commit, and a rollback drops nothing.
-- **SQL Server connection strings:** the `SqlServer` options (`Encrypt = true` by default, `TrustServerCertificate`) override `Encrypt` and `TrustServerCertificate` written in an explicit connection string. **Open decision:** should values in the connection string win?
+- **SQL Server connection strings:** `Encrypt` and `TrustServerCertificate` written in an explicit connection string win over the `SqlServer` option defaults, matching how `sslMode` works on the other providers. The owner decided this on 2026-10-31. An explicit `sslMode` (`Disable`, `VerifyCA`, `VerifyFull`) still applies.
 - **Bulk copy does not read back server-generated identities.** `InsertManyAsync` therefore switches to bulk at `BulkThreshold` (5,000 by default) only when nothing has to be read back: every row already carries its identity and the table has no row version.
   - Bulk copy skips entity save hooks and the command pipeline (interceptors, retries). It joins a transaction view, and it drops the table's cached results.
   - MySQL needs `MySql.AllowLoadLocalInfile` and the server's `local_infile`. Without both, CL.Data batches multi-row inserts, and it remembers when the server refuses.

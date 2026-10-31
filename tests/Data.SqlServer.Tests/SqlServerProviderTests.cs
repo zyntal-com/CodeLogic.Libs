@@ -38,6 +38,27 @@ public sealed class SqlServerProviderTests
         Assert.Equal(SqlAuthenticationMethod.ActiveDirectoryManagedIdentity, entra.Authentication);
     }
 
+    [Fact]
+    public void Tls_values_in_the_connection_string_win_over_option_defaults()
+    {
+        var written = new DataConnectionConfig
+        {
+            Provider = "sqlserver", ConnectionString = "Server=sql1;Database=app;Encrypt=False;TrustServerCertificate=True",
+        };
+        var cs = new SqlConnectionStringBuilder(Provider.BuildConnectionString(written, NodeEndpoint.Primary(written)).ValueOrThrow());
+        Assert.Equal(SqlConnectionEncryptOption.Optional, cs.Encrypt);
+        Assert.True(cs.TrustServerCertificate);
+
+        var defaults = new DataConnectionConfig { Provider = "sqlserver", ConnectionString = "Server=sql1;Database=app" };
+        cs = new SqlConnectionStringBuilder(Provider.BuildConnectionString(defaults, NodeEndpoint.Primary(defaults)).ValueOrThrow());
+        Assert.Equal(SqlConnectionEncryptOption.Mandatory, cs.Encrypt);   // option default: encrypt
+        Assert.False(cs.TrustServerCertificate);
+
+        written.SslMode = DataSslMode.VerifyFull;                         // an explicit sslMode still applies
+        cs = new SqlConnectionStringBuilder(Provider.BuildConnectionString(written, NodeEndpoint.Primary(written)).ValueOrThrow());
+        Assert.False(cs.TrustServerCertificate);
+    }
+
     [Table]
     private sealed class Typed
     {

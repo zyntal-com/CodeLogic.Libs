@@ -71,7 +71,7 @@ await db.Postgres.VacuumAnalyzeAsync<Product>();   // outside transactions only
 ```
 
 - **Authentication:** `SqlPassword`, `Integrated`, `EntraDefault`, `EntraManagedIdentity` or `EntraServicePrincipal`.
-- **TLS:** the `sqlServer` options set `Encrypt` and `TrustServerCertificate`, and they override those keys in an explicit connection string.
+- **TLS:** `Encrypt` and `TrustServerCertificate` written in a connection string win. Otherwise the `sqlServer` options apply (encrypted by default). An explicit `sslMode` overrides both.
 - **Replicas** are reached with `ApplicationIntent=ReadOnly` (an availability group listener). The lag probe needs `VIEW SERVER STATE`.
 - **Storage:** JSON columns are `nvarchar(max)` with `CHECK (ISJSON(col) = 1)`. `rowversion` concurrency tokens are native. Explicit identity values are inserted with `IDENTITY_INSERT`.
 - **SQL Server-only operations:**

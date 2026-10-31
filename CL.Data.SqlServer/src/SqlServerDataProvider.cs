@@ -145,8 +145,13 @@ public sealed class SqlServerDataProvider : DataProvider
         builder.LoadBalanceTimeout = config.ConnectionLifetimeSeconds;
         builder.ConnectTimeout = config.ConnectTimeoutSeconds;
         builder.CommandTimeout = config.CommandTimeoutSeconds;
-        builder.Encrypt = options.Encrypt ? SqlConnectionEncryptOption.Mandatory : SqlConnectionEncryptOption.Optional;
-        builder.TrustServerCertificate = options.TrustServerCertificate;
+        // Values written in the connection string win over the SqlServer option defaults (like sslMode on the other
+        // providers); an explicit sslMode below still applies.
+        var written = new System.Data.Common.DbConnectionStringBuilder { ConnectionString = node.ConnectionString ?? "" };
+        if (!written.ContainsKey("Encrypt"))
+            builder.Encrypt = options.Encrypt ? SqlConnectionEncryptOption.Mandatory : SqlConnectionEncryptOption.Optional;
+        if (!written.ContainsKey("TrustServerCertificate") && !written.ContainsKey("Trust Server Certificate"))
+            builder.TrustServerCertificate = options.TrustServerCertificate;
         builder.MultiSubnetFailover = options.MultiSubnetFailover;
         if (!string.IsNullOrWhiteSpace(options.FailoverPartner) && node.IsPrimary) builder.FailoverPartner = options.FailoverPartner;
         if (!string.IsNullOrWhiteSpace(options.ApplicationName)) builder.ApplicationName = options.ApplicationName;
