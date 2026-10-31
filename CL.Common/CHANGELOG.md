@@ -5,6 +5,10 @@ All notable changes to **CodeLogic.Common** are documented here. Versions follow
 
 ## 5.0 (unreleased)
 
+### Fixed
+
+- `FastHash.XxHash128` is about 10x faster (~70 ns instead of ~700 ns per call on .NET 11): `XxHash128.HashToUInt128` has a large fixed cost, so the hash is now computed into bytes and read back. The values are unchanged.
+
 ### Breaking
 
 - Targets **.NET 11** (`net11.0`) and requires **CodeLogic 5.0** (`[5.0.0, 6.0.0)`). On .NET 10, stay on

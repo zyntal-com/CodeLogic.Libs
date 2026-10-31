@@ -13,31 +13,51 @@ namespace CL.Data.Translation;
 /// </summary>
 public static class SqlTranslator
 {
+    private const int PredicateMode = 1;
+    private const int ValueMode = 2;
+
     /// <summary>Translates a condition (WHERE, HAVING, ON).</summary>
     public static Result<SqlExpr> TranslatePredicate(LambdaExpression lambda, TranslationScope scope)
     {
         ArgumentNullException.ThrowIfNull(lambda);
-        return Run(lambda.Body, scope, static (t, body) => t.Predicate(body));
+        return Run(lambda.Body, scope, PredicateMode);
     }
 
     /// <summary>Translates a value (projection, ORDER BY, SET).</summary>
     public static Result<SqlExpr> TranslateValue(LambdaExpression lambda, TranslationScope scope)
     {
         ArgumentNullException.ThrowIfNull(lambda);
-        return Run(lambda.Body, scope, static (t, body) => t.Value(body));
+        return Run(lambda.Body, scope, ValueMode);
     }
 
     /// <summary>Translates a value expression whose parameters are bound in <paramref name="scope"/> (a part of a larger lambda).</summary>
     public static Result<SqlExpr> TranslateValue(Expression body, TranslationScope scope) =>
-        Run(body, scope, static (t, b) => t.Value(b));
+        Run(body, scope, ValueMode);
 
-    private static Result<SqlExpr> Run(Expression body, TranslationScope scope, Func<ExpressionTranslator, Expression, SqlExpr> translate)
+    private static Result<SqlExpr> Run(Expression body, TranslationScope scope, int mode)
     {
         ArgumentNullException.ThrowIfNull(body);
         ArgumentNullException.ThrowIfNull(scope);
+
+        // Plan cache: the same shape with new captured values is bound, not translated.
+        UInt128? key = null;
+        ShapeHasher? hasher = null;
+        if (QueryPlanCache.Enabled)
+        {
+            hasher = ShapeHasher.ForThread();
+            key = hasher.Compute(body, scope, mode);
+            if (key is { } k && QueryPlanCache.TryGet(k, hasher.Slots, out var cached)) return cached;
+            if (key is null) QueryPlanCache.CountMiss();
+        }
+
+        var recorder = key is null ? null : new PlanRecorder();
+        IReadOnlyList<ConstantExpression> slots = key is null ? [] : [.. hasher!.Slots];   // the hasher is reused by nested translations
         try
         {
-            return translate(new ExpressionTranslator(scope), body);
+            var translator = new ExpressionTranslator(scope) { Recorder = recorder };
+            var result = mode == PredicateMode ? translator.Predicate(body) : translator.Value(body);
+            if (key is { } k && recorder!.Build(result, slots) is { } variant) QueryPlanCache.Add(k, variant);
+            return result;
         }
         catch (TranslationException ex)
         {
@@ -56,6 +76,42 @@ internal sealed partial class ExpressionTranslator(TranslationScope scope)
 {
     /// <summary>Most values in one IN list before it is split into OR'ed lists.</summary>
     public int MaxInListValues { get; init; } = 1000;
+
+    /// <summary>Records captured-value reads for the plan cache (null when the shape is not cached).</summary>
+    public PlanRecorder? Recorder { get; init; }
+
+    // ── Captured values (every client-side evaluation goes through these, so cached plans can replay it) ──
+
+    // Guard facts: compact numbers, so checking a cached plan allocates nothing.
+    private static readonly Func<object?, long> IsNullFact = static v => v is null ? 1 : 0;
+    private static readonly Func<object?, long> IsStringFact = static v => v is string ? 1 : 0;
+    private static readonly Func<object?, long> InShapeFact = static v => v is InValues i ? i.Values.Count * 2L + (i.HasNull ? 1 : 0) : -1;
+    private static readonly Func<object?, long> NullPatternFact = static v =>
+    {
+        // Which items of a params array are null: a bit mask plus the count (up to 56 items; longer lists are not cached).
+        if (v is not List<object?> list) return -1;
+        if (list.Count > 56) return PlanRecorder.Uncacheable;
+        long mask = list.Count;
+        for (var i = 0; i < list.Count; i++)
+            if (list[i] is null) mask |= 1L << (i + 7);
+        return mask;
+    };
+
+    private (object? Value, int Root) Evaluate(Expression expression, RootKind kind = RootKind.Raw) =>
+        Recorder is { } recorder ? recorder.Evaluate(expression, kind) : (PlanRecorder.Shape(ValueEvaluator.Evaluate(expression), kind), -1);
+
+    private void Guard(int root, Func<object?, long> fact, object? value)
+    {
+        if (root >= 0) Recorder!.Guard(root, fact, fact(value));
+    }
+
+    /// <summary>A parameter computed from a root value by <paramref name="binder"/> (given the whole shaped root value).</summary>
+    private ParameterExpr Slot(int root, object? rootValue, Func<object?, SqlParameterValue> binder)
+    {
+        var parameter = new ParameterExpr(binder(rootValue));
+        if (root >= 0) Recorder!.Slot(parameter, root, binder);
+        return parameter;
+    }
 
     // ── Entry points ────────────────────────────────────────────────────────
 
@@ -90,8 +146,9 @@ internal sealed partial class ExpressionTranslator(TranslationScope scope)
         if (expression is ConstantExpression { Value: { } constant } && IsInlineLiteral(constant) && context?.Converter is null)
             return new LiteralExpr(constant);
 
-        var value = ValueEvaluator.Evaluate(expression);
-        return value is null ? NullExpr.Instance : new ParameterExpr(SqlParameterValue.ForColumn(value, context));
+        var (value, root) = Evaluate(expression);
+        Guard(root, IsNullFact, value);
+        return value is null ? NullExpr.Instance : Slot(root, value, v => SqlParameterValue.ForColumn(v, context));
     }
 
     private static bool IsInlineLiteral(object value) =>
@@ -218,10 +275,15 @@ internal sealed partial class ExpressionTranslator(TranslationScope scope)
         return new BinaryExpr(negated ? SqlBinaryOperator.NotEqual : SqlBinaryOperator.Equal, l, r);
     }
 
-    private bool IsNullValue(Expression expression) =>
-        expression is ConstantExpression { Value: null } ||
-        (!expression.Type.IsValueType || Nullable.GetUnderlyingType(expression.Type) is not null) &&
-        !DependsOnParameters(expression) && ValueEvaluator.Evaluate(expression) is null;
+    private bool IsNullValue(Expression expression)
+    {
+        if (expression is ConstantExpression { Value: null }) return true;
+        if (expression.Type.IsValueType && Nullable.GetUnderlyingType(expression.Type) is null) return false;
+        if (DependsOnParameters(expression)) return false;
+        var (value, root) = Evaluate(expression);
+        Guard(root, IsNullFact, value);
+        return value is null;
+    }
 
     private SqlExpr Unary(UnaryExpression unary, ColumnMap? context) => unary.NodeType switch
     {

@@ -200,3 +200,10 @@
   - **Snapshot:** `SnapshotAsync(file)` makes a native whole-file copy (SQLite `VACUUM INTO`).
 - **Backup before alter:** with `BackupDirectory` set, table sync backs up a table before dropping or altering its columns. If the backup fails, nothing is changed.
 - **Provider hooks:** `DdlGenerator.IdentityInsertSetup`/`IdentityInsertTeardown`; `DataProvider.SnapshotSql`.
+- **Query plan cache (`QueryPlanCache`):** a lambda whose shape was translated before is not translated again.
+  - **How it works:** its captured values are read again and bound into the cached SQL tree.
+  - **Variants:** shapes that depend on a captured value (a null that becomes `IS NULL`, the length of an `IN` list, a null `LIKE` argument, nulls in a params array) keep one plan per variant.
+  - **Constants:** literals written in code are part of the shape. Values computed at call time (`DateTimeOffset.UtcNow`) are computed again on every use.
+  - **Not cached:** grouped-query lambdas and unusual expression nodes are translated every time.
+  - **Settings and stats:** `Enabled`, `Capacity`, `MaxVariantsPerShape`, `Hits`, `Misses`, `Count`, `Clear()`.
+  - **Effect on a typical predicate:** about 20% less translation time and 56% fewer allocations.

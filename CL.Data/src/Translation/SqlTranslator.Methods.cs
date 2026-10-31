@@ -106,10 +106,13 @@ internal sealed partial class ExpressionTranslator
         var operand = Value(target);
         if (!DependsOnParameters(argument))
         {
-            if (ValueEvaluator.Evaluate(argument) is not string text)
+            var (value, root) = Evaluate(argument);
+            Guard(root, IsStringFact, value);
+            if (value is not string text)
                 return new LiteralExpr(false);   // x.Contains(null) is never true
-            var pattern = (prefix ? "%" : "") + scope.Dialect.EscapeLike(text) + (suffix ? "%" : "");
-            return new LikeExpr(operand, new ParameterExpr(SqlParameterValue.Of(pattern)));
+            var dialect = scope.Dialect;
+            return new LikeExpr(operand, Slot(root, text,
+                v => SqlParameterValue.Of((prefix ? "%" : "") + dialect.EscapeLike((string)v!) + (suffix ? "%" : ""))));
         }
 
         SqlExpr patternExpr = Value(argument);
@@ -143,16 +146,25 @@ internal sealed partial class ExpressionTranslator
 
         var context = ContextColumn(item);
         var operand = Value(item);
-        var values = ValueEvaluator.Evaluate(collection) is IEnumerable source ? source.Cast<object?>().ToList() : [];
+        var (shaped, root) = Evaluate(collection, RootKind.InValues);
+        Guard(root, InShapeFact, shaped);
+        var (values, hasNull) = (InValues)shaped!;
 
         // NULL never matches IN; test it separately so ids.Contains(x.ParentId) with a null entry still finds NULL rows.
-        var hasNull = values.RemoveAll(v => v is null) > 0;
-        SqlExpr result = values.Count == 0
-            ? new InListExpr(operand, [])
-            : values.Chunk(Math.Max(1, MaxInListValues))
-                .Select(chunk => (SqlExpr)new InListExpr(operand,
-                    chunk.Select(v => (SqlExpr)new ParameterExpr(SqlParameterValue.ForColumn(v, context))).ToArray()))
-                .Aggregate((l, r) => new BinaryExpr(SqlBinaryOperator.Or, l, r));
+        SqlExpr? result = null;
+        var chunkSize = Math.Max(1, MaxInListValues);
+        for (var start = 0; start < values.Count; start += chunkSize)
+        {
+            var items = new SqlExpr[Math.Min(chunkSize, values.Count - start)];
+            for (var j = 0; j < items.Length; j++)
+            {
+                var index = start + j;
+                items[j] = Slot(root, shaped, v => SqlParameterValue.ForColumn(((InValues)v!).Values[index], context));
+            }
+            SqlExpr list = new InListExpr(operand, items);
+            result = result is null ? list : new BinaryExpr(SqlBinaryOperator.Or, result, list);
+        }
+        result ??= new InListExpr(operand, []);
         return hasNull ? new BinaryExpr(SqlBinaryOperator.Or, result, new IsNullExpr(operand)) : result;
     }
 
@@ -229,9 +241,18 @@ internal sealed partial class ExpressionTranslator
             return inline.Expressions.Select(e => Value(e)).ToArray();
         if (DependsOnParameters(array))
             throw Unsupported("A params array built from row values must be written inline.", array.ToString());
-        return ValueEvaluator.Evaluate(array) is IEnumerable values
-            ? values.Cast<object?>().Select(v => v is null ? (SqlExpr)NullExpr.Instance : new ParameterExpr(SqlParameterValue.ForColumn(v, null))).ToArray()
-            : [];
+        var (shaped, root) = Evaluate(array, RootKind.List);
+        Guard(root, NullPatternFact, shaped);
+        var items = (List<object?>)shaped!;
+        var result = new SqlExpr[items.Count];
+        for (var i = 0; i < result.Length; i++)
+        {
+            var index = i;
+            result[i] = items[i] is null
+                ? NullExpr.Instance
+                : Slot(root, shaped, v => SqlParameterValue.ForColumn(((List<object?>)v!)[index], null));
+        }
+        return result;
     }
 
     private static TranslationException Unsupported(string message, string details) => new(message, details);

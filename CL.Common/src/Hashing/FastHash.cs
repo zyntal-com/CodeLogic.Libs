@@ -25,8 +25,14 @@ public static class FastHash
     /// <param name="data">The bytes to hash.</param>
     /// <param name="seed">Optional seed; different seeds give unrelated hashes.</param>
     /// <returns>The hash.</returns>
-    public static UInt128 XxHash128(ReadOnlySpan<byte> data, long seed = 0) =>
-        System.IO.Hashing.XxHash128.HashToUInt128(data, seed);
+    public static UInt128 XxHash128(ReadOnlySpan<byte> data, long seed = 0)
+    {
+        // Same value as XxHash128.HashToUInt128, which costs ~0.7 µs per call regardless of length on
+        // .NET 11 (System.IO.Hashing 10.0.x); hashing into bytes and reading them back takes ~70 ns.
+        Span<byte> digest = stackalloc byte[16];
+        System.IO.Hashing.XxHash128.Hash(data, digest, seed);
+        return BinaryPrimitives.ReadUInt128BigEndian(digest);
+    }
 
     /// <summary>
     /// The 128-bit XXH128 hash of <paramref name="text"/>'s UTF-16 code units (little-endian bytes), without
@@ -36,8 +42,7 @@ public static class FastHash
     /// <param name="text">The characters to hash.</param>
     /// <param name="seed">Optional seed.</param>
     /// <returns>The hash.</returns>
-    public static UInt128 XxHash128(ReadOnlySpan<char> text, long seed = 0) =>
-        System.IO.Hashing.XxHash128.HashToUInt128(CharBytes(text), seed);
+    public static UInt128 XxHash128(ReadOnlySpan<char> text, long seed = 0) => XxHash128(CharBytes(text), seed);
 
     /// <summary>Formats a 128-bit hash as 32 lowercase hex characters, most significant byte first.</summary>
     /// <param name="hash">The hash.</param>
