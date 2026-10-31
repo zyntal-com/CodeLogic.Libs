@@ -15,6 +15,10 @@ All notable changes to **CodeLogic.SystemStats** are documented here. Versions f
 ### Changed
 
 - `System.Diagnostics.PerformanceCounter` and `System.Management` 11.0 (RC3 until .NET 11 GA).
+- **Cache refreshes are coalesced.** When a cached value (CPU info and stats, memory info and stats, uptime,
+  the process list) expired, every concurrent caller sampled the provider itself, so a burst of requests ran
+  as many CPU samplings or process enumerations at once. Concurrent callers now share one refresh per key; a
+  failed or throwing refresh is shared by the callers waiting on it and is not cached.
 
 ### Documentation
 
