@@ -82,3 +82,5 @@ public sealed class SqliteBatchTests(SqliteFixture fixture) : BatchConformance(f
 
 [Collection("sqlite")]
 public sealed class SqliteSchemaTests(SqliteFixture fixture) : SchemaConformance(fixture);
+[Collection("sqlite")]
+public sealed class SqliteSyncTests(SqliteFixture fixture) : SyncConformance(fixture);

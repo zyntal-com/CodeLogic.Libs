@@ -171,3 +171,12 @@
   - **Type normalization:** `StoreTypeNormalizer` converts the type names catalogs report into the names the type mappers write.
   - **New query method:** `Database.SqlReadAsync(sql, read)` builds each row of a raw query with your own reader function.
   - **Schema conformance:** generated DDL is run, the table is read back, and the diff against the model must be empty; changes apply with the rows kept.
+- **Table sync:** `db.Schema.SyncAsync` (and `SyncAsync<T>`, `PlanAsync<T>`) creates and alters tables to match their entity models.
+  - **Order:** tables referenced by foreign keys come first.
+  - **Fingerprint skip:** a table whose fingerprint matches its row in `cl_data_schema` is skipped. `Force` inspects every table.
+  - **Drift:** changes the sync level does not allow are reported as drift (`SchemaDriftDetectedEvent`) and are not recorded, so the next run looks again.
+  - **One transaction per table** where DDL is transactional. On SQLite, foreign keys are off during the change and checked before commit, so a rebuild never cascades.
+  - **One process at a time:** the run holds an advisory lock.
+- **Advisory locks:** `db.AcquireLockAsync(name, timeout)` returns a `DataLock`, held on its own connection. It uses GET_LOCK on MySQL, pg_try_advisory_lock on PostgreSQL and sp_getapplock on SQL Server; SQLite returns `data.unsupported`.
+- **Events:** `DatabaseOptions.Events` receives CL.Data events.
+- **Backup before alter:** moved to WP-75, together with backup and restore.

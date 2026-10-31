@@ -13,6 +13,9 @@ public sealed class MySqlDdlGenerator(SqlDialect dialect) : DdlGenerator(dialect
     protected override string IdentityClause(ColumnSchema column) => " AUTO_INCREMENT";
 
     /// <inheritdoc />
+    public override bool TransactionalDdl => false;   // MySQL commits implicitly around DDL
+
+    /// <inheritdoc />
     protected override bool SupportsInclude => false;
 
     /// <inheritdoc />

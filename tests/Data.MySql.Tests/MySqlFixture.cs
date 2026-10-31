@@ -58,3 +58,4 @@ public sealed class MySqlCollection : ICollectionFixture<MySqlFixture>;
 [Collection("mysql")] public sealed class MySqlBatchTests(MySqlFixture f) : BatchConformance(f);
 
 [Collection("mysql")] public sealed class MySqlSchemaTests(MySqlFixture f) : SchemaConformance(f);
+[Collection("mysql")] public sealed class MySqlSyncTests(MySqlFixture f) : SyncConformance(f);

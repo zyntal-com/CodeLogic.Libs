@@ -71,6 +71,12 @@ public sealed class PostgreSqlDataProvider : DataProvider
     public override CL.Data.Schema.SchemaIntrospector Introspector { get; } = new PostgreSqlSchemaIntrospector();
 
     /// <inheritdoc />
+    public override CL.Data.Sql.SqlText TryLockSql(string name) => $"SELECT pg_try_advisory_lock(hashtextextended({name}, 0))";
+
+    /// <inheritdoc />
+    public override CL.Data.Sql.SqlText UnlockSql(string name) => $"SELECT pg_advisory_unlock(hashtextextended({name}, 0))";
+
+    /// <inheritdoc />
     public override string? GetDefaultSchema(DataConnectionConfig config) => config.PostgreSql?.DefaultSchema ?? "public";
 
     /// <inheritdoc />

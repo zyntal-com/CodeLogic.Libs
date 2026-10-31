@@ -126,6 +126,15 @@ public abstract class DataProvider
     /// <summary>Exception classification.</summary>
     public abstract IErrorClassifier Errors { get; }
 
+    /// <summary>
+    /// A query that tries to take the advisory lock <paramref name="name"/> without waiting and returns a positive
+    /// number (or true) when it got it. Only called when <see cref="ProviderCapabilities.AdvisoryLocks"/> is set.
+    /// </summary>
+    public virtual CL.Data.Sql.SqlText TryLockSql(string name) => throw new NotSupportedException($"{Name} has no advisory locks.");
+
+    /// <summary>A statement that releases the advisory lock <paramref name="name"/>.</summary>
+    public virtual CL.Data.Sql.SqlText UnlockSql(string name) => throw new NotSupportedException($"{Name} has no advisory locks.");
+
     /// <summary>Catalog reader for schema sync and drift detection (null when the provider has none).</summary>
     public virtual CL.Data.Schema.SchemaIntrospector? Introspector => null;
 

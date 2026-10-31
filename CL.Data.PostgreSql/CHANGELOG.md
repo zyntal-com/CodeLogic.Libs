@@ -1,2 +1,2 @@
 
-- `PostgreSqlSchemaIntrospector` (pg_catalog, format_type, identity/serial, INCLUDE and DESC indexes); time-zone type names normalized.
+- Advisory locks through pg_try_advisory_lock(hashtextextended(name, 0)).

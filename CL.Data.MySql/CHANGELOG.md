@@ -1,2 +1,2 @@
 
-- `MySqlSchemaIntrospector` (information_schema); integer display widths and aliases normalized.
+- Advisory locks through GET_LOCK/RELEASE_LOCK; DDL marked non-transactional.

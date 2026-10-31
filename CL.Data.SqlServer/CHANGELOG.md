@@ -1,2 +1,2 @@
 
-- `SqlServerSchemaIntrospector` (sys.* views); sizes rebuilt from max_length/precision/scale.
+- Advisory locks through sp_getapplock (session owner).

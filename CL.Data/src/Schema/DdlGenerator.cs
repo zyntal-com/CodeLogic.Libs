@@ -26,6 +26,18 @@ public class DdlGenerator(SqlDialect dialect)
         DropForeignKeyChange d => DropForeignKey(d),
     };
 
+    /// <summary>True when DDL can run in a transaction (all but MySQL); a failed table plan then rolls back completely.</summary>
+    public virtual bool TransactionalDdl => true;
+
+    /// <summary>Statements run on the session before a table's changes, outside the transaction.</summary>
+    public virtual IReadOnlyList<string> SessionSetup => [];
+
+    /// <summary>Statements run on the session after a table's changes (also after a failure).</summary>
+    public virtual IReadOnlyList<string> SessionTeardown => [];
+
+    /// <summary>A query run before commit that must return no rows (SQLite <c>PRAGMA foreign_key_check</c>), or null.</summary>
+    public virtual string? IntegrityCheckSql => null;
+
     /// <summary>A quoted, possibly schema-qualified table name.</summary>
     protected string Table(string table, string? schema) => Dialect.QuoteTable(table, schema);
 

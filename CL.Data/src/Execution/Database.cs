@@ -28,6 +28,9 @@ public sealed record DatabaseOptions
 
     /// <summary>Current tenant for <c>[TenantKey]</c> entities.</summary>
     public CL.Data.Writes.IDataTenantAccessor? TenantAccessor { get; init; }
+
+    /// <summary>Receives CL.Data events (schema sync, drift, ...). <c>DataLibrary</c> forwards them to the CodeLogic event bus.</summary>
+    public Action<CL.Data.Events.DataEvent>? Events { get; init; }
 }
 
 /// <summary>
@@ -182,6 +185,24 @@ public sealed partial class Database : IAsyncDisposable
             return DataErrors.Validation($"Connection '{name}' could not be created.", $"{ex.GetType().Name}: {ex.Message}");
         }
     }
+
+    /// <summary>Sends <paramref name="event"/> to <see cref="DatabaseOptions.Events"/>; a failing handler never fails the operation.</summary>
+    internal void Publish(CL.Data.Events.DataEvent @event)
+    {
+        try { Options.Events?.Invoke(@event); }
+        catch { /* event handlers must not break data operations */ }
+    }
+
+    /// <summary>
+    /// Takes the named advisory lock, waiting up to <paramref name="timeout"/>. The lock lives on its own connection
+    /// until the returned <see cref="DataLock"/> is disposed. <c>data.unsupported</c> on providers without advisory
+    /// locks (SQLite), <c>data.lock_not_acquired</c> on timeout.
+    /// </summary>
+    public ValueTask<Result<DataLock>> AcquireLockAsync(string name, TimeSpan timeout, CancellationToken ct = default) =>
+        DataLock.AcquireAsync(this, name, timeout, ct);
+
+    /// <summary>Schema sync and drift detection for this connection.</summary>
+    public CL.Data.Schema.SchemaSync Schema => field ??= new CL.Data.Schema.SchemaSync(this);
 
     // ── Raw SQL ─────────────────────────────────────────────────────────────
 

@@ -13,6 +13,18 @@ public sealed class SqliteDdlGenerator(SqlDialect dialect) : DdlGenerator(dialec
 {
     private const string RebuildSuffix = "__cl_rebuild";
 
+    // A rebuild drops the old table; with foreign keys on, that would cascade into child tables. Keys are checked
+    // before commit instead.
+
+    /// <inheritdoc />
+    public override IReadOnlyList<string> SessionSetup => ["PRAGMA foreign_keys = OFF"];
+
+    /// <inheritdoc />
+    public override IReadOnlyList<string> SessionTeardown => ["PRAGMA foreign_keys = ON"];
+
+    /// <inheritdoc />
+    public override string? IntegrityCheckSql => "PRAGMA foreign_key_check";
+
     /// <inheritdoc />
     protected override bool SupportsInclude => false;
 

@@ -1,2 +1,2 @@
 
-- `SqliteSchemaIntrospector` (pragma table functions; foreign-key names from the CREATE statement). CREATE INDEX uses IF NOT EXISTS so rebuilds and index changes can share a plan.
+- Schema changes run with PRAGMA foreign_keys off and a foreign_key_check before commit.
