@@ -215,3 +215,15 @@
   - **Fallback:** generic, abstract, private nested and file-local types stay on reflection mapping.
 - **Shared mapping logic:** `GeneratedMapping.Column`/`Entity` hold the column and entity rules; reflection mapping uses them too, so both describe a type identically. A parity test compares them for every generated type.
 - **Performance (in-memory reader):** about 1.9x faster than reflection when materializing; parameter writes allocate nothing (reflection boxed every value).
+- **Mapping analyzer:** mapping mistakes in `[Table]`/`[DataRow]` types are build errors, reported at the offending member, instead of `InvalidOperationException` at first use.
+  - **CLD002** constructor cannot bind
+  - **CLD003** bad converter
+  - **CLD004** nullable key
+  - **CLD005** composite key without (or with repeated) KeyOrder
+  - **CLD006** column type doesn't fit its role
+  - **CLD007** role used twice
+  - **CLD008** unknown property in an index
+  - **CLD009** duplicate or unsafe name
+  - **CLD010** SET NULL on a non-nullable column
+  - **CLD011** table maps no columns
+  - **CLD001** (warning): the type cannot use generated mapping, so it falls back to reflection, which Native AOT doesn't support.

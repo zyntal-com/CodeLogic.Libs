@@ -76,53 +76,15 @@ internal readonly struct EmittedEntity : System.IEquatable<EmittedEntity>
 
 internal static class EntityEmitter
 {
-    private static readonly SymbolDisplayFormat Fqn = SymbolDisplayFormat.FullyQualifiedFormat
-        .WithMiscellaneousOptions(SymbolDisplayFormat.FullyQualifiedFormat.MiscellaneousOptions | SymbolDisplayMiscellaneousOptions.UseSpecialTypes);
-
-    private enum SetterKind { None, Set, Init }
-
-    private sealed class Property
-    {
-        public string Name = "";
-        public ITypeSymbol Type = null!;
-        public string TypeName = "";
-        public bool Nullable;
-        public SetterKind Setter;
-        public bool Required;
-        public List<string> Attributes = [];
-        public string? Converter;
-        public int CtorParameter = -1;
-        public string? CtorParameterType;
-    }
+    private static readonly SymbolDisplayFormat Fqn = EntityShape.Fqn;
 
     public static EmittedEntity Emit(INamedTypeSymbol type, CancellationToken ct)
     {
         var hint = HintName(type);
-        if (!IsSupported(type)) return new EmittedEntity(hint, null, null);
-
-        var properties = CollectProperties(type);
-        if (properties is null) return new EmittedEntity(hint, null, null);
-
-        // Constructor: public parameterless when present, else the public one with the most parameters.
-        var ctors = type.InstanceConstructors.Where(c => c.DeclaredAccessibility == Accessibility.Public).ToList();
-        var ctor = ctors.FirstOrDefault(c => c.Parameters.Length == 0) ?? ctors.OrderByDescending(c => c.Parameters.Length).FirstOrDefault();
-        if (ctor is null) return new EmittedEntity(hint, null, null);
-        var setsRequired = ctor.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == "System.Diagnostics.CodeAnalysis.SetsRequiredMembersAttribute");
-        for (var i = 0; i < ctor.Parameters.Length; i++)
-        {
-            var parameter = ctor.Parameters[i];
-            var match = properties.FirstOrDefault(p => string.Equals(p.Name, parameter.Name, System.StringComparison.OrdinalIgnoreCase));
-            if (match is null) return new EmittedEntity(hint, null, null);   // reflection would refuse this type too
-            match.CtorParameter = i;
-            match.CtorParameterType = parameter.Type.WithNullableAnnotation(NullableAnnotation.NotAnnotated).ToDisplayString(Fqn);
-        }
-
-        // Mapped: settable (set or init) or bound by the constructor; required members must be mapped.
-        var mapped = properties.Where(p => p.Setter != SetterKind.None || p.CtorParameter >= 0).ToList();
-        if (!setsRequired && properties.Any(p => p.Required && !mapped.Contains(p))) return new EmittedEntity(hint, null, null);
-        if (!setsRequired && AllMembers(type).OfType<IPropertySymbol>().Any(p => p.IsRequired && properties.All(m => m.Name != p.Name)))
-            return new EmittedEntity(hint, null, null);
-        if (!setsRequired && AllMembers(type).OfType<IFieldSymbol>().Any(f => f.IsRequired)) return new EmittedEntity(hint, null, null);
+        var shape = EntityShape.Analyze(type);
+        if (!shape.CanGenerate) return new EmittedEntity(hint, null, null);   // the analyzer reports why
+        var mapped = shape.Mapped;
+        var setsRequired = shape.SetsRequiredMembers;
 
         ct.ThrowIfCancellationRequested();
         var typeName = type.ToDisplayString(Fqn);
@@ -144,8 +106,8 @@ internal static class EntityEmitter
         foreach (var p in mapped)
         {
             sb.Append("            global::CL.Data.Mapping.GeneratedMapping.Column(\"").Append(p.Name).Append("\", typeof(").Append(p.TypeName).Append("), ")
-              .Append(p.Nullable ? "true" : "false").Append(", new global::System.Attribute[] { ").Append(string.Join(", ", p.Attributes)).Append(" }, ")
-              .Append(p.Converter is null ? "null" : "new " + p.Converter + "()").Append("),\n");
+              .Append(p.Nullable ? "true" : "false").Append(", new global::System.Attribute[] { ").Append(string.Join(", ", DataAttributes(p.Attributes.ToImmutableArray()))).Append(" }, ")
+              .Append(p.Converter is null ? "null" : "new " + p.Converter.ToDisplayString(Fqn) + "()").Append("),\n");
         }
         sb.Append("        });\n\n");
 
@@ -220,77 +182,8 @@ internal static class EntityEmitter
         return new EmittedEntity(hint, sb.ToString(), registration);
     }
 
-    private static string Read(Property p, int index, string type) =>
+    private static string Read(ShapeProperty p, int index, string type) =>
         "ordinals[" + index + "] >= 0 ? global::CL.Data.Mapping.GeneratedMapping.Read<" + type + ">(reader, ordinals[" + index + "], columns[" + index + "]) : default!";
-
-    /// <summary>Classes the generated accessor can name and construct; everything else stays on reflection.</summary>
-    private static bool IsSupported(INamedTypeSymbol type)
-    {
-        if (type.TypeKind != TypeKind.Class || type.IsAbstract || type.IsStatic || type.IsGenericType || type.IsFileLocal) return false;
-        for (var t = type; t is not null; t = t.ContainingType)
-            if (t.DeclaredAccessibility is not (Accessibility.Public or Accessibility.Internal or Accessibility.ProtectedOrInternal)) return false;
-        return true;
-    }
-
-    /// <summary>
-    /// Public instance properties with a public getter, most-derived first (the order reflection returns), minus
-    /// <c>[Ignore]</c>. Null when a property is public but not readable from generated code.
-    /// </summary>
-    private static List<Property>? CollectProperties(INamedTypeSymbol type)
-    {
-        var result = new List<Property>();
-        var seen = new HashSet<string>();
-        for (var t = type; t is not null && t.SpecialType != SpecialType.System_Object; t = t.BaseType)
-        {
-            foreach (var member in t.GetMembers())
-            {
-                if (member is not IPropertySymbol p || p.IsStatic || p.IsIndexer || p.DeclaredAccessibility != Accessibility.Public) continue;
-                if (!seen.Add(p.Name)) continue;
-                if (p.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == "CL.Data.IgnoreAttribute")) continue;
-                if (p.GetMethod is not { DeclaredAccessibility: Accessibility.Public }) return null;
-
-                var setter = p.SetMethod is { DeclaredAccessibility: Accessibility.Public } set
-                    ? set.IsInitOnly ? SetterKind.Init : SetterKind.Set
-                    : SetterKind.None;
-                var propertyType = p.Type;
-                var isNullableValue = propertyType.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T;
-                var nullable = propertyType.IsValueType ? isNullableValue : p.NullableAnnotation != NullableAnnotation.NotAnnotated;
-
-                var attributes = p.GetAttributes();
-                string? converter = null;
-                var column = attributes.FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == "CL.Data.ColumnAttribute");
-                if (column is not null)
-                {
-                    foreach (var named in column.NamedArguments)
-                    {
-                        if (named.Key != "Converter" || named.Value.Value is not INamedTypeSymbol converterType) continue;
-                        if (!converterType.InstanceConstructors.Any(c => c.Parameters.Length == 0 && c.DeclaredAccessibility == Accessibility.Public))
-                            return null;   // reflection reports the bad converter at runtime
-                        converter = converterType.ToDisplayString(Fqn);
-                    }
-                }
-
-                result.Add(new Property
-                {
-                    Name = p.Name,
-                    Type = propertyType,
-                    TypeName = propertyType.WithNullableAnnotation(NullableAnnotation.NotAnnotated).ToDisplayString(Fqn),
-                    Nullable = nullable,
-                    Setter = setter,
-                    Required = p.IsRequired,
-                    Attributes = DataAttributes(attributes).ToList(),
-                    Converter = converter,
-                });
-            }
-        }
-        return result;
-    }
-
-    private static IEnumerable<ISymbol> AllMembers(INamedTypeSymbol type)
-    {
-        for (var t = type; t is not null && t.SpecialType != SpecialType.System_Object; t = t.BaseType)
-            foreach (var member in t.GetMembers()) yield return member;
-    }
 
     /// <summary>C# expressions creating the CL.Data attributes in <paramref name="attributes"/>, exactly as declared.</summary>
     internal static IEnumerable<string> DataAttributes(ImmutableArray<AttributeData> attributes)
