@@ -141,7 +141,7 @@ public sealed record MailMessage
     public string? TextBody { get; init; }                  // >= 1 body required
     public string? HtmlBody { get; init; }
     public IReadOnlyList<string> Attachments { get; init; } // file paths
-    public IReadOnlyDictionary<string, string> Headers { get; init; }
+    public IReadOnlyDictionary<string, string> Headers { get; init; } // no CR/LF; not From/To/Subject/Content-*...
     public MailPriority Priority { get; init; }             // default Normal
     public DateTimeOffset CreatedAt { get; init; }
 }
@@ -230,6 +230,7 @@ Every failure is an `Error` whose `Code` is a `MailErrorCodes` constant, and eac
 | `InvalidSender` | `mail.invalid_sender` | `ValidationError` |
 | `InvalidSubject` | `mail.invalid_subject` | `ValidationError` |
 | `InvalidBody` (new) | `mail.invalid_body` | `ValidationError` |
+| `InvalidHeader` (new) | `mail.invalid_header` | `ValidationError` |
 | `TemplateNotFound` | `mail.template_not_found` | `NotFoundError` |
 | `InvalidTemplateId` | `mail.invalid_template_id` | `ValidationError` |
 | `TemplateRenderingFailed` | `mail.template_rendering_failed` | `InternalError` |
