@@ -281,6 +281,29 @@ public abstract class CacheConformance(ProviderFixture fixture) : ConformanceSui
     }
 
     [SkippableFact]
+    public async Task WithCache_after_select_and_group_select_caches_the_projection()
+    {
+        RequireProvider();
+        var (db, reads, _) = Cached();
+        await using var __ = db;
+        await SeedAsync(db);
+
+        async Task<int> Groups() => (await db.Query<Product>().GroupBy(p => p.Stock).Select(g => new { g.Key, N = g.Count() })
+            .WithCache().ToListAsync()).ValueOrThrow().Count;
+        async Task<int> Skus() => (await db.Query<Product>().Select(p => p.Sku).WithCache().ToListAsync()).ValueOrThrow().Count;
+
+        Assert.Equal(3, await Groups());
+        Assert.Equal(3, await Skus());
+        var before = reads.Count;
+        Assert.Equal(3, await Groups());
+        Assert.Equal(3, await Skus());
+        Assert.Equal(before, reads.Count);                                   // both served from the cache
+        (await db.Repository<Product>().InsertAsync(new Product { Sku = "G-1", Name = "g", Price = 1, Stock = 99 })).ValueOrThrow();
+        Assert.Equal(4, await Groups());                                     // and invalidated by writes
+        Assert.Equal(4, await Skus());
+    }
+
+    [SkippableFact]
     public async Task Raw_sql_with_tables_drops_only_those_tables()
     {
         RequireProvider();

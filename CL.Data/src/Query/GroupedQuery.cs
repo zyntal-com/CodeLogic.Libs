@@ -73,7 +73,8 @@ public sealed class GroupedQuery<T, TKey>
     public GroupProjection<TResult> Select<TResult>(Expression<Func<IDataGroup<TKey, T>, TResult>> selector)
     {
         ArgumentNullException.ThrowIfNull(selector);
-        return new GroupProjection<TResult>((take, ct) => RunAsync<TResult>(selector, take, ct));
+        return new GroupProjection<TResult>((take, ct) => RunAsync<TResult>(selector, take, ct),
+            policy => new GroupedQuery<T, TKey>(_source.WithCache(policy), _key, _having, _order, _take, _skip).Select(selector));
     }
 
     /// <summary>Builds and runs the grouped SELECT with <paramref name="selector"/> as its projection.</summary>
@@ -163,8 +164,20 @@ internal static class GroupKeys
 public sealed class GroupProjection<TResult>
 {
     private readonly Func<int?, CancellationToken, ValueTask<Result<List<TResult>>>> _run;
+    private readonly Func<CL.Data.Caching.CachePolicy?, GroupProjection<TResult>> _withCache;
 
-    internal GroupProjection(Func<int?, CancellationToken, ValueTask<Result<List<TResult>>>> run) => _run = run;
+    internal GroupProjection(Func<int?, CancellationToken, ValueTask<Result<List<TResult>>>> run,
+        Func<CL.Data.Caching.CachePolicy?, GroupProjection<TResult>> withCache)
+    {
+        _run = run;
+        _withCache = withCache;
+    }
+
+    /// <summary>Caches the grouped results (same as <c>WithCache</c> on the source query, before <c>GroupBy</c>).</summary>
+    public GroupProjection<TResult> WithCache(CL.Data.Caching.CachePolicy? policy = null) => _withCache(policy);
+
+    /// <summary>Caches the grouped results for <paramref name="ttl"/>.</summary>
+    public GroupProjection<TResult> WithCache(TimeSpan ttl) => _withCache(CL.Data.Caching.CachePolicy.For(ttl));
 
     /// <summary>Runs the query and returns every group's projection.</summary>
     public ValueTask<Result<List<TResult>>> ToListAsync(CancellationToken ct = default) => _run(null, ct);
