@@ -65,6 +65,9 @@ public sealed class PostgreSqlDataProvider : DataProvider
     public override IErrorClassifier Errors { get; } = new PostgreSqlErrorClassifier();
 
     /// <inheritdoc />
+    public override CL.Data.Schema.DdlGenerator Ddl => field ??= new PostgreSqlDdlGenerator(Dialect);
+
+    /// <inheritdoc />
     public override string? GetDefaultSchema(DataConnectionConfig config) => config.PostgreSql?.DefaultSchema ?? "public";
 
     /// <inheritdoc />

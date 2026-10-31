@@ -20,3 +20,4 @@
   - JSON through `json_extract`, `json_type` and `json_each`.
   - Row locks render nothing; transactions take the write lock instead.
   - Full-text search is not a capability, because it needs an FTS5 table.
+- `SqliteDdlGenerator`: INTEGER PRIMARY KEY AUTOINCREMENT, inline foreign keys, WITHOUT ROWID/STRICT; type, column-drop and foreign-key changes rebuild the table.

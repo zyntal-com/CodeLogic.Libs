@@ -25,3 +25,4 @@
   - **Identity:** the last-insert-id fills generated identities (consecutive for multi-row inserts).
   - **Registration:** `MySqlDataLibrary` registers the provider.
   - **Tests:** the full conformance suite is green on MySQL 8.4.
+- `MySqlDdlGenerator`: AUTO_INCREMENT, ENGINE/CHARSET/COLLATE from `[MySqlTable]` or the connection, MODIFY COLUMN, DROP INDEX ... ON, DROP FOREIGN KEY.

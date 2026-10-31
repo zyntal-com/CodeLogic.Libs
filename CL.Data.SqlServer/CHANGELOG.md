@@ -27,3 +27,4 @@
   - **Tests:** the full conformance suite is green on SQL Server 2019. Turning on `READ_COMMITTED_SNAPSHOT` is
     recommended so readers do not block on writers.
   - **Breaking:** Entra ID password authentication is not offered; Microsoft has deprecated it.
+- `SqlServerDdlGenerator`: IDENTITY(1,1), sp_rename, default constraints dropped before their column, NO ACTION for RESTRICT.

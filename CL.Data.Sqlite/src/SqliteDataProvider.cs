@@ -57,6 +57,19 @@ public sealed class SqliteDataProvider : DataProvider
     public override IErrorClassifier Errors { get; } = new SqliteErrorClassifier();
 
     /// <inheritdoc />
+    public override CL.Data.Schema.DdlGenerator Ddl => field ??= new SqliteDdlGenerator(Dialect);
+
+    /// <inheritdoc />
+    public override IReadOnlyDictionary<string, string> TableOptions(CL.Data.Mapping.EntityMap map, DataConnectionConfig config)
+    {
+        var hint = map.Hint<SqliteTableAttribute>();
+        var options = new Dictionary<string, string>();
+        if (hint?.WithoutRowId == true) options["without_rowid"] = "true";
+        if (hint?.Strict == true) options["strict"] = "true";
+        return options;
+    }
+
+    /// <inheritdoc />
     public override Result<string> BuildConnectionString(DataConnectionConfig config, NodeEndpoint node)
     {
         SqliteConnectionStringBuilder builder;

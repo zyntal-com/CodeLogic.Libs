@@ -164,3 +164,6 @@
     columns and narrow.
   - Indexes and foreign keys are matched by shape; indexes that back foreign keys are kept.
 - **Provider hooks:** `NormalizeStoreType` and `TableOptions`; PostgreSQL normalizes its type aliases.
+- **DDL generation:** `DdlGenerator` writes standard DDL for every `SchemaChange`; `DataProvider.Ddl` exposes it.
+  - **Implicit defaults:** a NOT NULL column added without a default gets one, so existing rows stay valid.
+  - **Covering columns:** where the provider has no `INCLUDE`, they are appended to the index key.

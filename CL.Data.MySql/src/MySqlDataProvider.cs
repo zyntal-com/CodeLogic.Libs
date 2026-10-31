@@ -63,6 +63,13 @@ public sealed class MySqlDataProvider : DataProvider
     public override IErrorClassifier Errors { get; } = new MySqlErrorClassifier();
 
     /// <inheritdoc />
+    public override CL.Data.Schema.DdlGenerator Ddl => field ??= new MySqlDdlGenerator(Dialect);
+
+    /// <inheritdoc />
+    public override IReadOnlyDictionary<string, string> TableOptions(EntityMap map, DataConnectionConfig config) =>
+        MySqlTableOptions.For(map, config);
+
+    /// <inheritdoc />
     public override Result<string> BuildConnectionString(DataConnectionConfig config, NodeEndpoint node)
     {
         MySqlConnectionStringBuilder builder;

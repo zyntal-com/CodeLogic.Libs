@@ -65,6 +65,9 @@ public sealed class SqlServerDataProvider : DataProvider
     public override IErrorClassifier Errors { get; } = new SqlServerErrorClassifier();
 
     /// <inheritdoc />
+    public override CL.Data.Schema.DdlGenerator Ddl => field ??= new SqlServerDdlGenerator(Dialect);
+
+    /// <inheritdoc />
     public override string? GetDefaultSchema(DataConnectionConfig config) => config.SqlServer?.DefaultSchema ?? "dbo";
 
     /// <inheritdoc />

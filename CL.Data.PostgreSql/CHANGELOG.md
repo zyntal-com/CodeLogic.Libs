@@ -18,3 +18,4 @@
   - **Registration:** `PostgreSqlDataLibrary` registers the provider. The default schema comes from
     `PostgreSql.DefaultSchema` (`public`).
   - **Tests:** the full conformance suite is green on PostgreSQL 18.
+- `PostgreSqlDdlGenerator`: identity columns, ALTER COLUMN ... TYPE ... USING, native INCLUDE.

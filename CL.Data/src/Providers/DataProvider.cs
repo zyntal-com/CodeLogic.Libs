@@ -126,6 +126,9 @@ public abstract class DataProvider
     /// <summary>Exception classification.</summary>
     public abstract IErrorClassifier Errors { get; }
 
+    /// <summary>DDL generation for schema sync. Default: standard SQL through <see cref="Dialect"/>.</summary>
+    public virtual CL.Data.Schema.DdlGenerator Ddl => field ??= new CL.Data.Schema.DdlGenerator(Dialect);
+
     /// <summary>Default server port (0 when not applicable).</summary>
     public virtual int DefaultPort => 0;
 
