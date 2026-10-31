@@ -27,6 +27,8 @@ internal sealed partial class ExpressionTranslator
                 return InList(args[0], args[1]);
         }
 
+        if (declaring == typeof(SqlFn) || declaring == typeof(SqlFn.Json) || declaring == typeof(SqlFn.FullText))
+            return SqlFnMethod(call);
         if (declaring == typeof(string)) return StringMethod(call);
         if (declaring == typeof(Math) || declaring == typeof(MathF)) return MathMethod(call);
 
@@ -178,6 +180,56 @@ internal sealed partial class ExpressionTranslator
 
         static bool IsSpan(Type type) => type.IsGenericType &&
             (type.GetGenericTypeDefinition() == typeof(ReadOnlySpan<>) || type.GetGenericTypeDefinition() == typeof(Span<>));
+    }
+
+    private SqlExpr SqlFnMethod(MethodCallExpression call)
+    {
+        var a = call.Arguments;
+        var json = call.Method.DeclaringType == typeof(SqlFn.Json);
+        var fullText = call.Method.DeclaringType == typeof(SqlFn.FullText);
+        return call.Method.Name switch
+        {
+            nameof(SqlFn.Json.Value) when json => Function(SqlFunction.JsonValue, a[0], a[1]),
+            nameof(SqlFn.Json.Exists) when json => Function(SqlFunction.JsonExists, a[0], a[1]),
+            nameof(SqlFn.Json.Contains) when json => Function(SqlFunction.JsonContains, a[0], a[1]),
+            nameof(SqlFn.FullText.Match) when fullText => Function(SqlFunction.FullTextMatch, a[0], a[1]),
+            nameof(SqlFn.Year) => Function(SqlFunction.Year, a[0]),
+            nameof(SqlFn.Month) => Function(SqlFunction.Month, a[0]),
+            nameof(SqlFn.Day) => Function(SqlFunction.Day, a[0]),
+            nameof(SqlFn.Hour) => Function(SqlFunction.Hour, a[0]),
+            nameof(SqlFn.Minute) => Function(SqlFunction.Minute, a[0]),
+            nameof(SqlFn.DayOfWeek) => Function(SqlFunction.DayOfWeek, a[0]),
+            nameof(SqlFn.Date) => Function(SqlFunction.Date, a[0]),
+            nameof(SqlFn.BucketUtc) => Function(SqlFunction.BucketUtc, a[0], a[1]),
+            nameof(SqlFn.UtcNow) => new FunctionExpr(SqlFunction.UtcNow, []),
+            nameof(SqlFn.Coalesce) => new FunctionExpr(SqlFunction.Coalesce, Expand(a[0])),
+            nameof(SqlFn.IfNull) => Function(SqlFunction.Coalesce, a[0], a[1]),
+            nameof(SqlFn.Least) => new FunctionExpr(SqlFunction.Least, Expand(a[0])),
+            nameof(SqlFn.Greatest) => new FunctionExpr(SqlFunction.Greatest, Expand(a[0])),
+            nameof(SqlFn.Lower) => Function(SqlFunction.Lower, a[0]),
+            nameof(SqlFn.Upper) => Function(SqlFunction.Upper, a[0]),
+            nameof(SqlFn.Trim) => Function(SqlFunction.Trim, a[0]),
+            nameof(SqlFn.Length) => Function(SqlFunction.Length, a[0]),
+            nameof(SqlFn.Concat) => Expand(a[0]).Aggregate((l, r) => new BinaryExpr(SqlBinaryOperator.Concat, l, r)),
+            nameof(SqlFn.Like) => new LikeExpr(Value(a[0]), Value(a[1])),
+            nameof(SqlFn.Round) => Function(SqlFunction.Round, a[0], a[1]),
+            nameof(SqlFn.Floor) => Function(SqlFunction.Floor, a[0]),
+            nameof(SqlFn.Ceiling) => Function(SqlFunction.Ceiling, a[0]),
+            nameof(SqlFn.Abs) => Function(SqlFunction.Abs, a[0]),
+            _ => throw Unsupported($"SqlFn.{call.Method.Name} is not supported.", call.ToString()),
+        };
+    }
+
+    /// <summary>Arguments of a <c>params</c> array: each element when written inline, else the evaluated array's items.</summary>
+    private SqlExpr[] Expand(Expression array)
+    {
+        if (array is NewArrayExpression { NodeType: ExpressionType.NewArrayInit } inline)
+            return inline.Expressions.Select(e => Value(e)).ToArray();
+        if (DependsOnParameters(array))
+            throw Unsupported("A params array built from row values must be written inline.", array.ToString());
+        return ValueEvaluator.Evaluate(array) is IEnumerable values
+            ? values.Cast<object?>().Select(v => v is null ? (SqlExpr)NullExpr.Instance : new ParameterExpr(SqlParameterValue.ForColumn(v, null))).ToArray()
+            : [];
     }
 
     private static TranslationException Unsupported(string message, string details) => new(message, details);

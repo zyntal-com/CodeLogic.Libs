@@ -77,3 +77,8 @@
     null entry in the list matches NULL rows.
   - **Converters:** compared values go through the column's converter (enums stored as text bind their names).
   - **Functions:** arithmetic, string, math and date/time functions, plus `??` and `?:`.
+- **SQL functions:** `SqlFn` holds query functions that work in `Where` too, not only in projections and updates.
+  - Date parts, `BucketUtc`, `UtcNow`, `Coalesce`/`IfNull`, `Least`/`Greatest`, string functions, `Like`, and generic-math
+    `Round`/`Floor`/`Ceiling`/`Abs`.
+  - `SqlFn.Json.Value/Exists/Contains` and `SqlFn.FullText.Match` translate to neutral function nodes that each
+    provider renders.
