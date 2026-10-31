@@ -13,3 +13,7 @@ docs-output/
 # DocFX generated API yml files (regenerated in CI)
 docs/api/*.yml
 docs/api/.manifest
+
+# Strong-name keys: only the public key is committed; the private key lives in the CL_STRONG_NAME_KEY secret.
+*.snk
+!build/codelogic.public.snk

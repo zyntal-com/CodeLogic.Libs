@@ -12,4 +12,5 @@
     <TargetFramework>net11.0</TargetFramework>
     <LangVersion>15</LangVersion>
   </PropertyGroup>
+  <Import Project="../build/StrongName.props" />
 </Project>

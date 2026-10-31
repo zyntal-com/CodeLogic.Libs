@@ -84,4 +84,5 @@
 Release notes truncated to fit NuGet's 35 000 character limit. The complete changelog ships inside this package as CHANGELOG.md.</PackageReleaseNotes>
     </PropertyGroup>
   </Target>
+  <Import Project="build/StrongName.targets" />
 </Project>

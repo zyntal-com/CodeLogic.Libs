@@ -83,4 +83,5 @@
          pipeline rewrites each published nuspec's CodeLogic dependency to the supported range. -->
     <CodeLogicPackageVersion Condition="'$(CodeLogicPackageVersion)' == ''">5.0.29-preview</CodeLogicPackageVersion>
   </PropertyGroup>
+  <Import Project="build/StrongName.props" />
 </Project>

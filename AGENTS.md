@@ -83,6 +83,18 @@ dotnet test tests/Storage.Tests -c Release -p:CodeLogicFromNuGet=true           
   - **Git:** `CL_GIT_TEST_REMOTE` (any public repository URL).
 - **CI** (`ci-tests.yml`) is the reference for the exact images, ports and variables.
 
+## Strong-name signing
+
+Every assembly in CodeLogic and CodeLogic.Libs is strong-named with one key pair, public key token
+`53a89305eedc5d98` (2048-bit RSA). This is assembly identity, not security.
+- **Shared build files:** `build/StrongName.props` and `build/StrongName.targets` are imported by the repo build files. Keep both repos' copies identical.
+- **Ordinary builds:** every local and CI build public-signs with the committed `build/codelogic.public.snk`, so it gets the final identity without the private key.
+- **Releases:** they're fully signed. `release.yml` writes the private key from the repository secret `CL_STRONG_NAME_KEY` (base64 of the `.snk`) to the runner's temp directory and passes `-p:CLStrongNameKeyFile=...`. Without the secret, the release fails.
+- **Verification:** `build/verify-strong-name.ps1` checks the token and a real signature in every packed assembly before anything is pushed.
+- **The private key:** it is never committed (`.gitignore` blocks every `*.snk` except the public key). The owner keeps the only copy offline. Losing it would mean a new identity, which is a breaking change for anyone binding to these assemblies.
+- **Friend assemblies:** test assemblies are signed too. Declare friends as `<InternalsVisibleTo Include="..." />` items in the project file, not as attributes; `StrongName.targets` adds the public key to them.
+- **Opting out:** a project that can't be signed sets `<CLStrongName>false</CLStrongName>`.
+
 ## Conventions (5.x)
 
 - **Results.** Return CodeLogic `Result<T>` / `Result` (C# 15 unions) for expected failures; throw only

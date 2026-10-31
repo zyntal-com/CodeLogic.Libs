@@ -343,3 +343,4 @@
   - Added the docfx table of contents and index cards, plus real READMEs for the core and each provider.
   - The docs build passes with 0 warnings. The generator's analyzer-release files are no longer included twice.
 - **Cleanup (WP-B2):** the last references to the 4.x database libraries are gone from the API index, AGENTS.md and the library index. AGENTS.md now records the CL.Data state, the replica, reflection and performance test commands, and the release preconditions. A check of the database branches found no unported fixes.
+- **Strong-named** with the CodeLogic key (public key token `53a89305eedc5d98`), like every CodeLogic assembly. Releases are fully signed and verified before push.

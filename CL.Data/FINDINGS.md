@@ -89,6 +89,17 @@ the current numbers) and for time relative to Dapper or raw ADO.NET in the same 
 | SQL Server live replica test | An availability group can't run in a local container. | Probe parsing is covered by canned results; a real AG test only if CI infrastructure allows. |
 | `benchmarks/MySql2.Baseline` | It's the 4.9 comparison, needed until bulk copy beats the 100-row insert. | Decide after WP-A1. |
 
+## Strong-name signing (2026-10-31)
+
+All CodeLogic and CodeLogic.Libs assemblies are strong-named with one key pair, token `53a89305eedc5d98` (see AGENTS.md).
+Ordinary builds public-sign; releases are fully signed from the `CL_STRONG_NAME_KEY` secret, and the release fails without it.
+`build/verify-strong-name.ps1` blocks a push when any packed assembly isn't fully signed.
+
+**Findings while setting it up:**
+- **Key type:** a key generated as a key-exchange key (`CALG_RSA_KEYX`) gave public-signed and fully signed builds different identities. Strong-name keys must be signature keys (`CALG_RSA_SIGN`), the way `sn -k` makes them. The generator script uses `KeyNumber.Signature`.
+- **Incremental builds:** an incremental build doesn't notice a changed `CLStrongNameKeyFile`, so packing over an old build ships public-signed DLLs. Release runners always build clean, and the verification step catches it regardless.
+- **Unsigned dependencies:** referencing unsigned assemblies produced no CS8002 warnings on .NET 11. The 15 libraries, their tests, the CodeLogic samples and the generator all build signed with 0 warnings.
+
 ## Local-only state (nothing pushed)
 
 - **Libs:** `feature/cl-data` with every WP branch (`cl-data/<wp>`) merged in locally.

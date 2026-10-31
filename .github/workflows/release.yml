@@ -166,6 +166,23 @@ jobs:
           "version=$version" >> $env:GITHUB_OUTPUT
           "has_changes=$($changedProjects.Count -gt 0)" >> $env:GITHUB_OUTPUT
 
+      # Strong-name signing (build/StrongName.props): releases are fully signed with the private key from the
+      # repository secret CL_STRONG_NAME_KEY (base64 of the .snk). No secret, no release: nothing unsigned or
+      # public-signed may reach nuget.org. The key only exists in the runner's temp directory.
+      - name: Strong-name key
+        if: steps.changes.outputs.has_changes == 'True'
+        shell: pwsh
+        env:
+          CL_STRONG_NAME_KEY: ${{ secrets.CL_STRONG_NAME_KEY }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:CL_STRONG_NAME_KEY)) {
+            Write-Host "::error::secret CL_STRONG_NAME_KEY is not set - refusing to release unsigned packages"
+            exit 1
+          }
+          $path = Join-Path $env:RUNNER_TEMP 'codelogic.snk'
+          [System.IO.File]::WriteAllBytes($path, [Convert]::FromBase64String($env:CL_STRONG_NAME_KEY.Trim()))
+          "CL_STRONG_NAME_KEY_FILE=$path" >> $env:GITHUB_ENV
+
       - name: Restore and pack changed libraries
         if: steps.changes.outputs.has_changes == 'True'
         shell: pwsh
@@ -189,7 +206,7 @@ jobs:
             dotnet restore $csproj /p:CodeLogicFromNuGet=true
             dotnet pack $csproj --configuration Release --no-restore --output artifacts `
               /p:PackageVersion=$version /p:Version=$version /p:InformationalVersion=$version `
-              /p:CodeLogicFromNuGet=true
+              /p:CodeLogicFromNuGet=true /p:CLStrongNameKeyFile=$env:CL_STRONG_NAME_KEY_FILE
           }
 
           $versionLines | Set-Content 'artifacts/package-versions.txt'
@@ -243,6 +260,16 @@ jobs:
       # CL.MySQL2 had grown release notes past nuget.org's 35 000 character cap and was
       # rejected with a 400 mid-loop. The five already up could not be withdrawn.
       # Validate every package BEFORE pushing any of them.
+      - name: Verify strong-name signatures
+        if: steps.changes.outputs.has_changes == 'True'
+        shell: pwsh
+        run: ./build/verify-strong-name.ps1 -Packages (Get-ChildItem artifacts -Filter '*.nupkg').FullName
+
+      - name: Remove strong-name key
+        if: always()
+        shell: pwsh
+        run: if ($env:CL_STRONG_NAME_KEY_FILE) { Remove-Item $env:CL_STRONG_NAME_KEY_FILE -Force -ErrorAction SilentlyContinue }
+
       - name: Pre-flight packages
         if: steps.changes.outputs.has_changes == 'True'
         shell: bash
