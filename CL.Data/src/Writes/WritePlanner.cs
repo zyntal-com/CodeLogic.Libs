@@ -69,6 +69,9 @@ public static class WritePlanner
             var generated = map.Columns.Where(c => (!explicitIdentity && c.Has(ColumnRoles.Identity)) || c.DataType == DataType.RowVersion).ToArray();
             var useReturning = generated.Length > 0 && ctx.Capabilities.Returning;
             var perStatement = RowsPerStatement(columns.Length, ctx, 1);
+            // Generated values are matched to entities by row order; one row per statement when the provider's
+            // RETURNING/OUTPUT does not keep insert order.
+            if (useReturning && !ctx.Capabilities.ReturningPreservesOrder) perStatement = 1;
             // Without RETURNING, generated identities come from the last-insert-id, which covers one statement at a time.
 
             foreach (var chunk in rows.Chunk(perStatement))

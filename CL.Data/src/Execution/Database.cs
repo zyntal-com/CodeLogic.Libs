@@ -22,6 +22,12 @@ public sealed record DatabaseOptions
 
     /// <summary>Additional middleware, run inside the interceptors in this order.</summary>
     public IReadOnlyList<ICommandMiddleware> Middleware { get; init; } = [];
+
+    /// <summary>Current user for <c>[CreatedBy]</c>/<c>[UpdatedBy]</c>.</summary>
+    public CL.Data.Writes.IDataUserAccessor? UserAccessor { get; init; }
+
+    /// <summary>Current tenant for <c>[TenantKey]</c> entities.</summary>
+    public CL.Data.Writes.IDataTenantAccessor? TenantAccessor { get; init; }
 }
 
 /// <summary>
@@ -29,7 +35,7 @@ public sealed record DatabaseOptions
 /// repositories, transactions and raw SQL. Obtain it from <c>DataLibrary.Db(name)</c>, or create it directly
 /// with <see cref="Create(string, DataConnectionConfig, DatabaseOptions?)"/> outside the CodeLogic framework.
 /// </summary>
-public sealed class Database : IAsyncDisposable
+public sealed partial class Database : IAsyncDisposable
 {
     private readonly CommandExecutor _executor;
     private readonly CommandPipeline _pipeline;
@@ -81,13 +87,16 @@ public sealed class Database : IAsyncDisposable
     /// recording the elapsed time.
     /// </summary>
     internal ValueTask<Result<TResult>> RunAsync<TState, TResult>(CommandContext context, TState state,
-        Func<DbCommand, TState, CancellationToken, ValueTask<TResult>> body, Func<TResult, long>? rows = null)
+        Func<DbCommand, TState, CancellationToken, ValueTask<TResult>> body, Func<TResult, long>? rows = null,
+        System.Data.IsolationLevel? transaction = null)
     {
         return _pipeline.ExecuteAsync(context, async ctx =>
         {
             var started = Stopwatch.GetTimestamp();
-            var result = await _executor.ExecuteAsync(ctx.Node ?? Primary, ctx.Spec, state, body, null, null, ctx.CancellationToken)
-                .ConfigureAwait(false);
+            var node = ctx.Node ?? Primary;
+            var result = transaction is { } isolation
+                ? await ExecuteInTransactionAsync(node, ctx, state, body, isolation).ConfigureAwait(false)
+                : await _executor.ExecuteAsync(node, ctx.Spec, state, body, null, null, ctx.CancellationToken).ConfigureAwait(false);
             ctx.Elapsed = Stopwatch.GetElapsedTime(started);
             if (rows is not null && result.IsSuccess) ctx.Rows = rows(result.Value!);
             return result;

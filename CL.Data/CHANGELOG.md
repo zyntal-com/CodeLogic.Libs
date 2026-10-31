@@ -93,3 +93,13 @@
   - batching by the provider's parameter limit;
   - cache tags (`table:` and `entity:`).
 - **Write context:** `IDataUserAccessor` and `IDataTenantAccessor` supply the current user and tenant.
+- **Repositories:** `db.Repository<T>()`.
+  - Writes: `InsertAsync`/`InsertManyAsync` write generated identities back, `UpdateAsync` (also for selected
+    properties), `DeleteAsync` (soft), `HardDeleteAsync`, `DeleteByIdAsync`/`DeleteByKeyAsync`.
+  - Reads: `GetByIdAsync`/`GetByKeyAsync` (composite keys), `GetAllAsync`, `FindAsync`, `CountAsync`, and
+    `GetPagedAsync`, which counts only when asked and always sets `HasMore`.
+  - Reads hide soft-deleted rows and other tenants' rows. A stale update fails with `data.concurrency`; a duplicate
+    unique value fails with `data.duplicate_key`.
+- **Write execution:** multi-statement upserts run in a serializable transaction. Generated values come from
+  RETURNING/OUTPUT, or from the provider's last-insert-id. When the provider's RETURNING does not keep insert order,
+  rows with generated keys are inserted one per statement.
