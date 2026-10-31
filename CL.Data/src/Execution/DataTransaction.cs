@@ -18,6 +18,7 @@ public sealed class DataTransaction : IAsyncDisposable
     private readonly DbTransaction _transaction;
     private readonly Database _owner;
     private readonly IReadOnlyList<string> _teardown;
+    private List<string>? _deferredInvalidations;
     private bool _completed;
 
     private DataTransaction(Database owner, DbConnection connection, DbTransaction transaction, IReadOnlyList<string> teardown)
@@ -79,6 +80,7 @@ public sealed class DataTransaction : IAsyncDisposable
         {
             await _transaction.CommitAsync(ct).ConfigureAwait(false);
             _completed = true;
+            if (_deferredInvalidations is { Count: > 0 } tags) _owner.Options.Cache?.Invalidate(tags.Distinct().ToArray());
             return Result.Success();
         }
         catch (Exception ex)
@@ -86,6 +88,9 @@ public sealed class DataTransaction : IAsyncDisposable
             return _owner.Executor.Map(ex, ct);
         }
     }
+
+    /// <summary>Queues cache invalidations until the transaction commits (a rollback changed nothing).</summary>
+    internal void DeferInvalidation(IEnumerable<string> tags) => (_deferredInvalidations ??= []).AddRange(tags);
 
     /// <summary>Rolls back.</summary>
     public async ValueTask<Result> RollbackAsync(CancellationToken ct = default)

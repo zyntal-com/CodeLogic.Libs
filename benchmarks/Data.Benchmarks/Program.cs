@@ -44,6 +44,7 @@ public class MySqlBenchmarks
     private static readonly CompiledQuery<BenchItem, decimal> Above = CompiledQuery.For<BenchItem, decimal>((q, min) => q.Where(i => i.Price > min).OrderBy(i => i.Id).Take(100));
 
     private Database _db = null!;
+    private Database _cached = null!;
     private MySqlDataSource _source = null!;
     private long _id;
     private BenchItem _row = null!;
@@ -54,6 +55,8 @@ public class MySqlBenchmarks
         var cs = Environment.GetEnvironmentVariable("CL_DATA_MYSQL_CS") ?? throw new InvalidOperationException("Set CL_DATA_MYSQL_CS.");
         _db = Database.Create("bench", MySqlDataProvider.Instance, new DataConnectionConfig { Provider = "mysql", ConnectionString = cs }).ValueOrThrow();
         _source = new MySqlDataSource(cs);
+        _cached = Database.Create("bench-cached", MySqlDataProvider.Instance, new DataConnectionConfig { Provider = "mysql", ConnectionString = cs },
+            new DatabaseOptions { Cache = new CL.Data.Caching.DataCache(new DataCacheConfig { EntityCache = true }) }).ValueOrThrow();
         (await _db.Schema.SyncAsync<BenchItem>(new CL.Data.Schema.SchemaSyncOptions { Force = true })).ValueOrThrow();
         (await _db.Admin.TruncateAsync<BenchItem>()).ThrowIfFailure();
         var rows = Enumerable.Range(1, 1000).Select(i => new BenchItem { Sku = $"SKU-{i}", Name = $"Item {i}", Price = i % 200, Stock = i, CreatedAt = DateTime.UtcNow }).ToList();
@@ -66,6 +69,7 @@ public class MySqlBenchmarks
     public async Task Cleanup()
     {
         await _db.DisposeAsync();
+        await _cached.DisposeAsync();
         await _source.DisposeAsync();
     }
 
@@ -99,6 +103,9 @@ public class MySqlBenchmarks
     [Benchmark, BenchmarkCategory("GetById")]
     public async Task<BenchItem?> CLData_Compiled_GetById() => (await ById.FirstOrDefaultAsync(_db, _id)).Value;
 
+    [Benchmark, BenchmarkCategory("GetById")]
+    public async Task<BenchItem?> CLData_Cached_GetById() => (await _cached.Repository<BenchItem>().GetByIdAsync(_id)).Value;
+
     // ── Filtered list of 100 ────────────────────────────────────────────────
 
     [Benchmark(Baseline = true), BenchmarkCategory("Filter100")]
@@ -117,6 +124,13 @@ public class MySqlBenchmarks
 
     [Benchmark, BenchmarkCategory("Filter100")]
     public async Task<int> CLData_Compiled_Filter100() => (await Above.ToListAsync(_db, 10m)).Value!.Count;
+
+    [Benchmark, BenchmarkCategory("Filter100")]
+    public async Task<int> CLData_Cached_Filter100()
+    {
+        var min = 10m;
+        return (await _cached.Query<BenchItem>().WithCache().Where(i => i.Price > min).OrderBy(i => i.Id).Take(100).ToListAsync()).Value!.Count;
+    }
 
     // ── Insert one ──────────────────────────────────────────────────────────
 

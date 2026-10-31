@@ -261,3 +261,10 @@
   - **Runner:** `db.Seeds(...).RunAsync()` runs seeds that are new or have a higher version than recorded, in order. Each seed commits in one transaction with its row in `cl_data_seeds`, under an advisory lock.
   - **Failures:** a failed seed rolls back and is retried on the next run.
 - **Internal:** schema sync, migrations and seeds share one helper for their bookkeeping tables and locks.
+- **Result cache:** `DataCache` (shareable, `DatabaseOptions.Cache`), built on CL.Common's `MemoryCache`.
+  - **Opting in:** `QueryBuilder.WithCache(policy | ttl)` caches lists, first-or-default, count/any and aggregates, plus projections, groups and joins built from that query. `DataCacheConfig.EntityCache` caches repository key lookups.
+  - **Fresh objects:** results are stored as raw rows and materialized fresh on every hit, so callers can't change the cache.
+  - **Invalidation:** every write through CL.Data drops the results of the tables it touches, including the tables a join or subquery reads. Raw `ExecuteSqlAsync` drops the connection's entries.
+  - **Transactions:** reads inside a transaction bypass the cache, and invalidations wait for commit; a rollback drops nothing.
+  - **Concurrency:** concurrent misses run once, and a write during a load keeps the stale result out of the cache.
+  - **Measured on MySQL:** a key lookup takes 1.66 µs from cache against 1.4 ms from the database; a 100-row filter takes 18 µs against 1.6 ms.

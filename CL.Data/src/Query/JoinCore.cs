@@ -28,7 +28,8 @@ internal sealed class JoinCore
 
     internal JoinState State { get; }
 
-    public static JoinCore Start(Database db, Func<Result<(SelectStatement, EntityMap)>> source) => new(db, source, JoinState.Empty);
+    public static JoinCore Start(Database db, Func<Result<(SelectStatement, EntityMap)>> source, CL.Data.Caching.CachePolicy? cache = null) =>
+        new(db, source, JoinState.Empty with { Cache = cache });
 
     public JoinCore With(JoinState state) => new(_db, _source, state);
 
@@ -116,7 +117,7 @@ internal sealed class JoinCore
         if (projection.IsFailure) return projection.Error!;
         var table = plan.Value.Maps[0].GetNames(_db.NamingPolicy).Table;
         return await _db.QueryProjectedAsync(plan.Value.Select with { Projection = projection.Value!.Columns }, projection.Value.Materialize,
-            table, Tags(plan.Value.Maps), ct).ConfigureAwait(false);
+            table, Tags(plan.Value.Maps), ct, State.Cache).ConfigureAwait(false);
     }
 
     /// <summary>Runs the query and builds each row from the entities of every table (null for an unmatched LEFT JOIN).</summary>
@@ -140,7 +141,7 @@ internal sealed class JoinCore
 
         var table = plan.Value.Maps[0].GetNames(_db.NamingPolicy).Table;
         return await _db.QueryProjectedAsync(plan.Value.Select with { Projection = projection }, reader => build(reader, ordinals),
-            table, Tags(plan.Value.Maps), ct).ConfigureAwait(false);
+            table, Tags(plan.Value.Maps), ct, State.Cache).ConfigureAwait(false);
     }
 
     /// <summary>Counts the joined rows (paging ignored).</summary>
@@ -150,7 +151,7 @@ internal sealed class JoinCore
         if (plan.IsFailure) return plan.Error!;
         var table = plan.Value!.Maps[0].GetNames(_db.NamingPolicy).Table;
         var statement = plan.Value.Select with { Projection = [new ProjectionItem(new AggregateExpr(SqlAggregate.Count, null))], OrderBy = [] };
-        var count = await _db.ScalarAsync<long>(statement, table, Tags(plan.Value.Maps), ct).ConfigureAwait(false);
+        var count = await _db.ScalarAsync<long>(statement, table, Tags(plan.Value.Maps), ct, State.Cache).ConfigureAwait(false);
         return count.IsSuccess ? Result<long>.Success(count.Value) : count.Error!;
     }
 
@@ -180,6 +181,7 @@ internal sealed class JoinCore
     internal sealed record JoinState
     {
         public static readonly JoinState Empty = new();
+        public CL.Data.Caching.CachePolicy? Cache { get; init; }
         public IReadOnlyList<JoinSpec> Joins { get; init; } = [];
         public IReadOnlyList<LambdaExpression> Filters { get; init; } = [];
         public IReadOnlyList<(LambdaExpression Key, bool Descending)> Order { get; init; } = [];

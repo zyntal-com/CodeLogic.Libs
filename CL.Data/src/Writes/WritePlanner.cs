@@ -80,6 +80,7 @@ public static class WritePlanner
                 var statement = new InsertStatement(table, columns.Select(names.Of).ToArray(), values)
                 {
                     Returning = useReturning ? generated.Select(names.Of).ToArray() : [],
+                    ExplicitIdentity = explicitIdentity && identity is not null,
                 };
                 commands.Add(new WriteCommand(statement, WriteKind.Insert, names.Table, chunk.Length, [DataTags.Table(names.Table)])
                 {
@@ -285,7 +286,10 @@ public static class WritePlanner
         foreach (var chunk in entities.Chunk(perStatement))
         {
             var values = chunk.Select(e => (IReadOnlyList<SqlExpr>)columns.Select(c => Value(accessor, e, c)).ToArray()).ToArray();
-            var insert = new InsertStatement(table, columns.Select(names.Of).ToArray(), values);
+            var insert = new InsertStatement(table, columns.Select(names.Of).ToArray(), values)
+            {
+                ExplicitIdentity = map.Identity is { } identityColumn && columns.Contains(identityColumn),
+            };
             var statement = new UpsertStatement(insert, conflict.Select(names.Of).ToArray())
             {
                 UpdateSet = updateSet,

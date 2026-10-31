@@ -1,5 +1,6 @@
 using System.Linq.Expressions;
 using System.Numerics;
+using CL.Data.Caching;
 using CL.Data.Errors;
 using CL.Data.Execution;
 using CL.Data.Mapping;
@@ -101,6 +102,18 @@ public sealed class QueryBuilder<T>
     public QueryBuilder<T> IncludeDeleted() => With(_state with { IncludeDeleted = true });
 
     /// <summary>
+    /// Serves this query from the result cache (<c>DatabaseOptions.Cache</c>) when possible. Writes through CL.Data to any
+    /// table the query reads drop the cached result. Projections, groups and joins built from this query are cached too.
+    /// </summary>
+    public QueryBuilder<T> WithCache(CachePolicy? policy = null) => With(_state with { Cache = policy ?? CachePolicy.Default });
+
+    /// <summary>Serves this query from the result cache for <paramref name="ttl"/>.</summary>
+    public QueryBuilder<T> WithCache(TimeSpan ttl) => WithCache(CachePolicy.For(ttl));
+
+    /// <summary>The cache policy of this query (null: not cached).</summary>
+    internal CachePolicy? CachePolicy => _state.Cache;
+
+    /// <summary>
     /// Leaves out the user filters (<c>DatabaseOptions.Filters</c>) for this query: all of them, or the ones named. Soft delete
     /// is lifted with <see cref="IncludeDeleted"/>; the tenant filter always applies.
     /// </summary>
@@ -196,7 +209,7 @@ public sealed class QueryBuilder<T>
     {
         ArgumentNullException.ThrowIfNull(on);
         InnerMaps.Ensure<T2>();
-        return new JoinedQuery<T, T2>(JoinCore.Start(_db, JoinSource()).Join(typeof(T2), SqlJoinKind.Inner, on));
+        return new JoinedQuery<T, T2>(JoinCore.Start(_db, JoinSource(), _state.Cache).Join(typeof(T2), SqlJoinKind.Inner, on));
     }
 
     /// <summary>Left-joins <typeparamref name="T2"/> on <paramref name="on"/> (the joined entity is null when nothing matched).</summary>
@@ -204,7 +217,7 @@ public sealed class QueryBuilder<T>
     {
         ArgumentNullException.ThrowIfNull(on);
         InnerMaps.Ensure<T2>();
-        return new JoinedQuery<T, T2>(JoinCore.Start(_db, JoinSource()).Join(typeof(T2), SqlJoinKind.Left, on));
+        return new JoinedQuery<T, T2>(JoinCore.Start(_db, JoinSource(), _state.Cache).Join(typeof(T2), SqlJoinKind.Left, on));
     }
 
     /// <summary>
@@ -251,7 +264,7 @@ public sealed class QueryBuilder<T>
         var plan = BuildSelect();
         if (plan.IsFailure) return plan.Error!;
         var (select, accessor, table) = plan.Value!;
-        return await _db.QueryAsync(select, accessor, table, [DataTags.Table(table)], ct).ConfigureAwait(false);
+        return await _db.QueryAsync(select, accessor, table, [DataTags.Table(table)], ct, _state.Cache).ConfigureAwait(false);
     }
 
     /// <summary>The first row, or null.</summary>
@@ -279,7 +292,7 @@ public sealed class QueryBuilder<T>
         if (plan.IsFailure) return plan.Error!;
         var (select, _, table) = plan.Value!;
         var rows = await _db.QueryAsync<long>(select with { Projection = [new ProjectionItem(new LiteralExpr(1))], Limit = LimitParam(1), OrderBy = [] },
-            null, table, [DataTags.Table(table)], ct).ConfigureAwait(false);
+            null, table, [DataTags.Table(table)], ct, _state.Cache).ConfigureAwait(false);
         return rows.IsSuccess ? Result<bool>.Success(rows.Value!.Count > 0) : rows.Error!;
     }
 
@@ -328,7 +341,7 @@ public sealed class QueryBuilder<T>
 
         var statement = select with { Projection = [new ProjectionItem(new AggregateExpr(aggregate, operand))], OrderBy = [] };
         // Read as TValue? so an aggregate over no rows (SQL NULL) stays null instead of becoming 0.
-        var result = await _db.ScalarAsync<TValue?>(statement, table, [DataTags.Table(table)], ct).ConfigureAwait(false);
+        var result = await _db.ScalarAsync<TValue?>(statement, table, [DataTags.Table(table)], ct, _state.Cache).ConfigureAwait(false);
         return result.IsSuccess ? Result<TValue?>.Success(result.Value) : result.Error!;
     }
 
@@ -415,7 +428,7 @@ public sealed class QueryBuilder<T>
             select = select with { Where = ReadPlanner.And(select.Where, seek) };
         }
 
-        var rows = await _db.QueryAsync(select, accessor.Value, table, [DataTags.Table(table)], ct).ConfigureAwait(false);
+        var rows = await _db.QueryAsync(select, accessor.Value, table, [DataTags.Table(table)], ct, _state.Cache).ConfigureAwait(false);
         if (rows.IsFailure) return rows.Error!;
         var items = rows.Value!;
         string? next = null;
@@ -745,6 +758,7 @@ public sealed class QueryBuilder<T>
         public int? Skip { get; init; }
         public bool IncludeDeleted { get; init; }
         public FilterSelection Ignore { get; init; }
+        public CachePolicy? Cache { get; init; }
         public bool Correlated { get; init; }
         public LockClause? Lock { get; init; }
     }

@@ -20,6 +20,16 @@ single-row scenario. Library overhead is in the tens of microseconds; the alloca
 
 ¹ Dapper executes one INSERT per row for a list; CL.Data and CL.MySQL2 send multi-row batches.
 
+## Result cache (WP-80–82)
+
+Same machine, cache hits (`DatabaseOptions.Cache`, `WithCache()` / the entity cache). Each hit materializes fresh objects
+from the buffered rows, so callers can never change what is cached.
+
+| Scenario | Database round trip (CL.Data) | **Cache hit** | Allocated (hit) |
+|---|---|---|---|
+| Get by key (entity cache) | 1,465 µs | **1.66 µs** (~880×) | 5.2 KB |
+| Filter, 100 rows (`WithCache()`) | 1,611 µs | **18.4 µs** (~87×) | 17.5 KB |
+
 ## Findings
 
 - **CL.Data runs at the speed of hand-written ADO.NET and Dapper** (within 1–2%) in every scenario; the database round

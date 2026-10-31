@@ -145,9 +145,30 @@ public sealed class SqlServerSqlDialect : SqlDialect
     /// <inheritdoc />
     public override void RenderInsert(SqlWriter w, InsertStatement insert)
     {
-        w.Append("INSERT INTO ").Table(insert.Table, withAlias: false).Append(" (").Identifiers(insert.Columns).Append(')');
-        Output(w, insert.Returning);
-        RenderInsertValues(w, insert);
+        var target = insert.Table with { Alias = null };
+        IdentityInsert(w, insert, target, () =>
+        {
+            w.Append("INSERT INTO ").Table(target).Append(" (").Identifiers(insert.Columns).Append(')');
+            Output(w, insert.Returning);
+            RenderInsertValues(w, insert);
+        });
+    }
+
+    /// <summary>
+    /// Writes <paramref name="body"/> (an INSERT); when the rows carry identity values, between <c>SET IDENTITY_INSERT ON/OFF</c>.
+    /// The setting is per session, so a failing insert switches it off again before rethrowing; otherwise the pooled
+    /// connection would keep it on and the next explicit insert into another table would fail.
+    /// </summary>
+    private static void IdentityInsert(SqlWriter w, InsertStatement insert, TableRef target, Action body)
+    {
+        if (!insert.ExplicitIdentity)
+        {
+            body();
+            return;
+        }
+        w.Append("SET IDENTITY_INSERT ").Table(target).Append(" ON;\nBEGIN TRY\n");
+        body();
+        w.Append(";\nEND TRY\nBEGIN CATCH\nSET IDENTITY_INSERT ").Table(target).Append(" OFF;\nTHROW;\nEND CATCH;\nSET IDENTITY_INSERT ").Table(target).Append(" OFF;");
     }
 
     /// <inheritdoc />
@@ -204,15 +225,19 @@ public sealed class SqlServerSqlDialect : SqlDialect
             w.Append(";\n");
         }
 
-        w.Append("INSERT INTO ").Table(target).Append(" (").Identifiers(insert.Columns).Append(')');
-        Output(w, insert.Returning);
-        w.Append(" SELECT ");
-        w.List(insert.Columns, static (writer, c) => writer.Identifier(ExcludedAlias).Append('.').Identifier(c));
-        w.Append(" FROM ");
-        Source(w, insert);
-        w.Append(" WHERE NOT EXISTS (SELECT 1 FROM ").Table(target).Append(" WITH (UPDLOCK, SERIALIZABLE) WHERE ");
-        KeyMatch(w, upsert.ConflictColumns, name);
-        w.Append(");");
+        IdentityInsert(w, insert, target, () =>
+        {
+            w.Append("INSERT INTO ").Table(target).Append(" (").Identifiers(insert.Columns).Append(')');
+            Output(w, insert.Returning);
+            w.Append(" SELECT ");
+            w.List(insert.Columns, static (writer, c) => writer.Identifier(ExcludedAlias).Append('.').Identifier(c));
+            w.Append(" FROM ");
+            Source(w, insert);
+            w.Append(" WHERE NOT EXISTS (SELECT 1 FROM ").Table(target).Append(" WITH (UPDLOCK, SERIALIZABLE) WHERE ");
+            KeyMatch(w, upsert.ConflictColumns, name);
+            w.Append(')');
+        });
+        w.Append(';');
     }
 
     private static void Source(SqlWriter w, InsertStatement insert)

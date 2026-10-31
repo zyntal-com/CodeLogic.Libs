@@ -1,2 +1,2 @@
 
-- Native AOT: CL.Data.SqlServer itself is AOT-clean, but Microsoft.Data.SqlClient 7 still reports about 57 trim/AOT warnings (Azure authentication provider loading, UDTs, System.Configuration). Test SQL Server apps under AOT before relying on it.
+- Fixed: inserts and upserts with explicit identity values failed (error 544). They now run between `SET IDENTITY_INSERT ON/OFF`, and the setting is switched off again when the insert fails, so pooled sessions are not left with it on.

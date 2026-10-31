@@ -29,6 +29,9 @@ public sealed record DatabaseOptions
     /// <summary>Current tenant for <c>[TenantKey]</c> entities.</summary>
     public CL.Data.Writes.IDataTenantAccessor? TenantAccessor { get; init; }
 
+    /// <summary>The result cache used by <c>WithCache</c> queries and the entity cache; null disables caching.</summary>
+    public CL.Data.Caching.DataCache? Cache { get; init; }
+
     /// <summary>Standing conditions applied to every read of the entities they target (see <see cref="CL.Data.Query.DataFilter"/>).</summary>
     public IReadOnlyList<CL.Data.Query.DataFilter> Filters { get; init; } = [];
 
@@ -250,10 +253,14 @@ public sealed partial class Database : IAsyncDisposable
     public CL.Data.Retention.DataRetention Retention => field ??= new CL.Data.Retention.DataRetention(this);
 
     /// <summary>Runs a pre-rendered write through the pipeline (retention batches, admin statements).</summary>
-    internal ValueTask<Result<int>> ExecuteSpecAsync(CommandSpec spec, string operation, string? table, CancellationToken ct) =>
-        RunAsync(new CommandContext(this, spec, CommandKind.NonQuery, ct) { IsWrite = true, Operation = operation, Table = table }, 0,
+    internal async ValueTask<Result<int>> ExecuteSpecAsync(CommandSpec spec, string operation, string? table, CancellationToken ct)
+    {
+        var result = await RunAsync(new CommandContext(this, spec, CommandKind.NonQuery, ct) { IsWrite = true, Operation = operation, Table = table }, 0,
             static async (cmd, _, token) => await cmd.ExecuteNonQueryAsync(token).ConfigureAwait(false),
-            static affected => affected);
+            static affected => affected).ConfigureAwait(false);
+        InvalidateCache([table is null ? "*" : CL.Data.Writes.DataTags.Table(table)]);
+        return result;
+    }
 
     /// <summary>A seed runner for <paramref name="seeds"/> on this connection (run it after schema sync).</summary>
     public CL.Data.Seeding.SeedRunner Seeds(IEnumerable<CL.Data.Seeding.IDataSeed> seeds, CL.Data.Seeding.SeedOptions? options = null) =>
@@ -289,9 +296,11 @@ public sealed partial class Database : IAsyncDisposable
     /// <summary>Runs a statement and returns the number of affected rows. Raw statements are treated as writes.</summary>
     public async ValueTask<Result<int>> ExecuteSqlAsync(SqlText sql, CancellationToken ct = default)
     {
-        return await RunAsync(Context(sql, CommandKind.NonQuery, ct, isWrite: true), 0,
+        var result = await RunAsync(Context(sql, CommandKind.NonQuery, ct, isWrite: true), 0,
             static async (cmd, _, token) => await cmd.ExecuteNonQueryAsync(token).ConfigureAwait(false),
             static affected => affected).ConfigureAwait(false);
+        InvalidateCache(["*"]);   // raw SQL may change any table
+        return result;
     }
 
     /// <summary>Runs a query and returns the first column of the first row (default when there is no row or it is NULL).</summary>

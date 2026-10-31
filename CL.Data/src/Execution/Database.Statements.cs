@@ -1,5 +1,6 @@
 using System.Data;
 using System.Data.Common;
+using CL.Data.Caching;
 using CL.Data.Errors;
 using CL.Data.Mapping;
 using CL.Data.Pipeline;
@@ -131,19 +132,19 @@ public sealed partial class Database
         }
     }
 
-    /// <summary>Runs a SELECT and materializes every row.</summary>
+    /// <summary>Runs a SELECT and materializes every row; with <paramref name="cache"/>, through the result cache.</summary>
     internal async ValueTask<Result<List<T>>> QueryAsync<T>(SqlStatement statement, IEntityAccessor<T>? accessor, string? table,
-        IReadOnlyList<string> tags, CancellationToken ct)
+        IReadOnlyList<string> tags, CancellationToken ct, CachePolicy? cache = null)
     {
         var rendered = Render(statement);
         if (rendered.IsFailure) return rendered.Error!;
         return await QuerySpecAsync(new CommandSpec(rendered.Value!.Text, rendered.Value.Parameters), statement is not SelectStatement,
-            accessor, table, tags, ct).ConfigureAwait(false);
+            accessor, table, tags, ct, cache, cache is null ? null : SqlTables.Of(statement)).ConfigureAwait(false);
     }
 
     /// <summary>Runs a pre-rendered query and materializes every row (compiled queries).</summary>
     internal async ValueTask<Result<List<T>>> QuerySpecAsync<T>(CommandSpec spec, bool isWrite, IEntityAccessor<T>? accessor, string? table,
-        IReadOnlyList<string> tags, CancellationToken ct)
+        IReadOnlyList<string> tags, CancellationToken ct, CachePolicy? cache = null, IReadOnlyList<string>? cacheTables = null)
     {
         var context = new CommandContext(this, spec, CommandKind.Query, ct)
         {
@@ -152,18 +153,16 @@ public sealed partial class Database
             Tags = tags,
             IsWrite = isWrite,
         };
-        return await RunAsync(context, (Accessor: accessor, Policy: NamingPolicy),
-            static async (cmd, state, token) =>
-            {
-                await using var reader = await cmd.ExecuteReaderAsync(token).ConfigureAwait(false);
-                return await RowReader.ReadAllAsync(reader, state.Accessor, state.Policy, token).ConfigureAwait(false);
-            },
-            static list => list.Count).ConfigureAwait(false);
+        var policy = NamingPolicy;
+        var result = await ReadAsync(context, isWrite ? null : cache, cacheTables ?? (table is null ? [] : [table]),
+            (reader, token) => RowReader.ReadAllAsync(reader, accessor, policy, token), static list => list.Count).ConfigureAwait(false);
+        if (isWrite) InvalidateCache(tags);
+        return result;
     }
 
-    /// <summary>Runs a SELECT and builds each row with <paramref name="materialize"/> (projections).</summary>
+    /// <summary>Runs a SELECT and builds each row with <paramref name="materialize"/> (projections, joins, groups).</summary>
     internal async ValueTask<Result<List<TResult>>> QueryProjectedAsync<TResult>(SelectStatement statement, Func<DbDataReader, TResult> materialize,
-        string? table, IReadOnlyList<string> tags, CancellationToken ct)
+        string? table, IReadOnlyList<string> tags, CancellationToken ct, CachePolicy? cache = null)
     {
         var rendered = Render(statement);
         if (rendered.IsFailure) return rendered.Error!;
@@ -173,27 +172,29 @@ public sealed partial class Database
             Table = table,
             Tags = tags,
         };
-        return await RunAsync(context, materialize,
-            static async (cmd, build, token) =>
+        return await ReadAsync(context, cache, cache is null ? [] : SqlTables.Of(statement),
+            async (reader, token) =>
             {
                 List<TResult> rows = [];
-                await using var reader = await cmd.ExecuteReaderAsync(token).ConfigureAwait(false);
-                while (await reader.ReadAsync(token).ConfigureAwait(false)) rows.Add(build(reader));
+                while (await reader.ReadAsync(token).ConfigureAwait(false)) rows.Add(materialize(reader));
                 return rows;
             },
             static list => list.Count).ConfigureAwait(false);
     }
 
     /// <summary>Runs a statement that returns one value (aggregates, EXISTS).</summary>
-    internal async ValueTask<Result<T?>> ScalarAsync<T>(SqlStatement statement, string? table, IReadOnlyList<string> tags, CancellationToken ct)
+    internal async ValueTask<Result<T?>> ScalarAsync<T>(SqlStatement statement, string? table, IReadOnlyList<string> tags, CancellationToken ct,
+        CachePolicy? cache = null)
     {
         var rendered = Render(statement);
         if (rendered.IsFailure) return rendered.Error!;
-        return await ScalarSpecAsync<T>(new CommandSpec(rendered.Value!.Text, rendered.Value.Parameters), table, tags, ct).ConfigureAwait(false);
+        return await ScalarSpecAsync<T>(new CommandSpec(rendered.Value!.Text, rendered.Value.Parameters), table, tags, ct,
+            cache, cache is null ? null : SqlTables.Of(statement)).ConfigureAwait(false);
     }
 
     /// <summary>Runs a pre-rendered statement that returns one value (compiled queries).</summary>
-    internal async ValueTask<Result<T?>> ScalarSpecAsync<T>(CommandSpec spec, string? table, IReadOnlyList<string> tags, CancellationToken ct)
+    internal async ValueTask<Result<T?>> ScalarSpecAsync<T>(CommandSpec spec, string? table, IReadOnlyList<string> tags, CancellationToken ct,
+        CachePolicy? cache = null, IReadOnlyList<string>? cacheTables = null)
     {
         var context = new CommandContext(this, spec, CommandKind.Scalar, ct)
         {
@@ -201,12 +202,88 @@ public sealed partial class Database
             Table = table,
             Tags = tags,
         };
-        return await RunAsync(context, 0,
-            static async (cmd, _, token) =>
+        return await ReadAsync(context, cache, cacheTables ?? (table is null ? [] : [table]),
+            static async (reader, token) => await reader.ReadAsync(token).ConfigureAwait(false) && !reader.IsDBNull(0) ? ValueReader<T>.Read(reader, 0) : default,
+            null).ConfigureAwait(false);
+    }
+
+    // ── Result cache ────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Runs a reading command and builds its result with <paramref name="read"/>. With a cache policy (outside transactions,
+    /// when <see cref="DatabaseOptions.Cache"/> is set) the result set is buffered once and replayed through
+    /// <paramref name="read"/> on every hit, so callers always get fresh objects.
+    /// </summary>
+    private async ValueTask<Result<TResult>> ReadAsync<TResult>(CommandContext context, CachePolicy? cache, IReadOnlyList<string> tables,
+        Func<DbDataReader, CancellationToken, ValueTask<TResult>> read, Func<TResult, long>? rows)
+    {
+        if (cache is null || Options.Cache is not { } store || _transaction is not null)
+        {
+            return await RunAsync(context, read,
+                static async (cmd, build, token) =>
+                {
+                    await using var reader = await cmd.ExecuteReaderAsync(token).ConfigureAwait(false);
+                    return await build(reader, token).ConfigureAwait(false);
+                }, rows).ConfigureAwait(false);
+        }
+
+        var loaded = await store.GetOrLoadAsync(CacheKey(context), cache, CacheTags(tables), async () =>
+        {
+            var buffered = await RunAsync(context, 0,
+                static async (cmd, _, token) =>
+                {
+                    await using var reader = await cmd.ExecuteReaderAsync(token).ConfigureAwait(false);
+                    return await BufferedResultSet.CaptureAsync(reader, token).ConfigureAwait(false);
+                }, static set => set.Rows.Length).ConfigureAwait(false);
+            return buffered.IsFailure ? buffered.Error! : Result<(object, long)>.Success((buffered.Value!, buffered.Value!.Size));
+        }).ConfigureAwait(false);
+        if (loaded.IsFailure) return loaded.Error!;
+
+        await using var replay = ((BufferedResultSet)loaded.Value!).CreateReader();
+        return Result<TResult>.Success(await read(replay, context.CancellationToken).ConfigureAwait(false));
+    }
+
+    /// <summary>The cache key of a command: connection, kind, SQL and parameter values.</summary>
+    private UInt128 CacheKey(CommandContext context)
+    {
+        var sb = new System.Text.StringBuilder(context.Spec.Sql.Length + 64);
+        sb.Append(Name).Append('\u0001').Append((int)context.Kind).Append('\u0001').Append(context.Spec.Sql);
+        foreach (var parameter in context.Spec.Parameters)
+        {
+            sb.Append('\u0001');
+            switch (parameter.BoxedValue)
             {
-                await using var reader = await cmd.ExecuteReaderAsync(token).ConfigureAwait(false);
-                return await reader.ReadAsync(token).ConfigureAwait(false) && !reader.IsDBNull(0) ? ValueReader<T>.Read(reader, 0) : default;
-            }).ConfigureAwait(false);
+                case null: sb.Append('\u0002'); break;
+                case byte[] bytes: sb.Append("b:").Append(Convert.ToBase64String(bytes)); break;
+                case DateTimeOffset dto: sb.Append("o:").Append(dto.ToString("O", System.Globalization.CultureInfo.InvariantCulture)); break;
+                case DateTime dt: sb.Append("d:").Append(dt.ToString("O", System.Globalization.CultureInfo.InvariantCulture)); break;
+                case IFormattable f: sb.Append(parameter.BoxedValue.GetType().Name).Append(':').Append(f.ToString(null, System.Globalization.CultureInfo.InvariantCulture)); break;
+                case var other: sb.Append(other.GetType().Name).Append(':').Append(other); break;
+            }
+        }
+        return CL.Common.Hashing.FastHash.XxHash128(sb.ToString().AsSpan());
+    }
+
+    /// <summary>Tags of a cached result: one per table read, plus the connection-wide tag.</summary>
+    private string[] CacheTags(IReadOnlyList<string> tables)
+    {
+        var tags = new string[tables.Count + 1];
+        for (var i = 0; i < tables.Count; i++) tags[i] = Name + "|" + DataTags.Table(tables[i]);
+        tags[^1] = Name + "|*";
+        return tags;
+    }
+
+    /// <summary>
+    /// Drops cached results tagged with any of <paramref name="tags"/> (<c>table:...</c>, <c>entity:...</c>, or <c>*</c> for the whole
+    /// connection). Inside a transaction the invalidation waits for commit.
+    /// </summary>
+    internal void InvalidateCache(IReadOnlyList<string> tags)
+    {
+        if (Options.Cache is null || tags.Count == 0) return;
+        var prefixed = new string[tags.Count];
+        for (var i = 0; i < tags.Count; i++) prefixed[i] = Name + "|" + tags[i];
+        if (_transaction is { } transaction) transaction.DeferInvalidation(prefixed);
+        else Options.Cache.Invalidate(prefixed);
     }
 
     /// <summary>
@@ -215,6 +292,20 @@ public sealed partial class Database
     /// <c>data.concurrency</c> or <c>data.not_found</c>; success hooks run after each statement succeeds.
     /// </summary>
     internal async ValueTask<Result<int>> ExecuteWritesAsync<T>(IReadOnlyList<WriteCommand> commands, IReadOnlyList<T> entities,
+        IEntityAccessor<T> accessor, CancellationToken ct)
+    {
+        try
+        {
+            return await ExecuteWritesCoreAsync(commands, entities, accessor, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            // Even a partly failed batch may have changed rows (outside a transaction): drop what it touched.
+            InvalidateCache([.. commands.SelectMany(c => c.Tags).Distinct()]);
+        }
+    }
+
+    private async ValueTask<Result<int>> ExecuteWritesCoreAsync<T>(IReadOnlyList<WriteCommand> commands, IReadOnlyList<T> entities,
         IEntityAccessor<T> accessor, CancellationToken ct)
     {
         var total = 0;

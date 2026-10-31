@@ -308,8 +308,12 @@ public sealed class Repository<T>
 
         var select = ReadPlanner.Select(_db, map, keyWhere.Value, includeDeleted: false);
         if (select.IsFailure) return select.Error!;
+        // The entity cache (DataCacheConfig.EntityCache) serves repeated key lookups; any write to the table drops them.
+        var entityCache = _db.Options.Cache is { Config.EntityCache: true } cache
+            ? CL.Data.Caching.CachePolicy.For(TimeSpan.FromSeconds(cache.Config.EntityCacheTtlSeconds))
+            : null;
         var rows = await _db.QueryAsync(select.Value! with { Limit = Limit(1) }, accessor.Value, names.Table,
-            [DataTags.Entity(names.Table, key)], ct).ConfigureAwait(false);
+            [DataTags.Entity(names.Table, key)], ct, entityCache).ConfigureAwait(false);
         return rows.IsSuccess ? Result<T?>.Success(rows.Value!.Count > 0 ? rows.Value[0] : default) : rows.Error!;
     }
 

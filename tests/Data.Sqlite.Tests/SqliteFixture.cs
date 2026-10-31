@@ -100,3 +100,5 @@ public sealed class SqliteAuditTests(SqliteFixture fixture) : AuditConformance(f
 public sealed class SqliteFilterTests(SqliteFixture fixture) : FilterConformance(fixture);
 [Collection("sqlite")]
 public sealed class SqliteSeedTests(SqliteFixture fixture) : SeedConformance(fixture);
+[Collection("sqlite")]
+public sealed class SqliteCacheTests(SqliteFixture fixture) : CacheConformance(fixture);

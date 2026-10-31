@@ -265,6 +265,9 @@ public sealed record InsertStatement(TableRef Table, IReadOnlyList<string> Colum
 {
     /// <summary>Columns to return from the inserted rows (identity, server defaults).</summary>
     public IReadOnlyList<string> Returning { get; init; } = [];
+
+    /// <summary>True when the rows bring their own values for the table's identity column (SQL Server needs IDENTITY_INSERT).</summary>
+    public bool ExplicitIdentity { get; init; }
 }
 
 /// <summary><c>UPDATE</c>.</summary>

@@ -198,6 +198,26 @@ public abstract class RepositoryConformance(ProviderFixture fixture) : Conforman
         Assert.False((await tenant2.Repository<TenantNote>().DeleteByIdAsync(note.Id)).ValueOrThrow());
     }
 
+    [SkippableFact]
+    public async Task Explicit_identity_values_insert_and_a_failure_does_not_leak_session_state()
+    {
+        RequireProvider();
+        var repo = Db.Repository<Product>();
+        (await repo.InsertAsync(new Product { Id = 9001, Sku = "EXP-1", Name = "explicit", Price = 1, Stock = 1 })).ValueOrThrow();
+        Assert.Equal("EXP-1", (await repo.GetByIdAsync(9001L)).ValueOrThrow()!.Sku);
+
+        var duplicate = await repo.InsertAsync(new Product { Id = 9001, Sku = "EXP-2", Name = "dup", Price = 1, Stock = 1 });
+        Assert.True(duplicate.IsFailure);
+
+        // The same pooled session must accept an explicit insert into another identity table afterwards
+        // (SQL Server: IDENTITY_INSERT is switched off again after the failure).
+        (await Db.Schema.SyncAsync<AdminItem>()).ValueOrThrow();
+        (await Db.Admin.TruncateAsync<AdminItem>()).ThrowIfFailure();
+        (await Db.Repository<AdminItem>().InsertAsync(new AdminItem { Id = 77, Name = "explicit" })).ValueOrThrow();
+        (await repo.UpsertAsync(new Product { Id = 9002, Sku = "EXP-3", Name = "upserted", Price = 1, Stock = 1 })).ValueOrThrow();
+        Assert.Equal("upserted", (await repo.GetByIdAsync(9002L)).ValueOrThrow()!.Name);
+    }
+
     private sealed class FixedTenant(int tenant) : IDataTenantAccessor
     {
         public object? CurrentTenant => tenant;
