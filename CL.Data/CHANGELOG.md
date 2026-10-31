@@ -323,3 +323,9 @@
   - **Live reload:** applied per connection.
   - **Health:** checked per node, with `NodeHealthChangedEvent` published on each change.
   - **Provider libraries:** they now declare `Dependencies = [Required("CL.Data")]`.
+- **Provider extensions (WP-A3):** C# extension members expose provider-only operations. Each fails with `data.unsupported` on another provider.
+  - `db.MySql`: `OptimizeTableAsync<T>` and `AnalyzeTableAsync<T>`, which return the per-table messages.
+  - `db.Postgres`: `NotifyAsync`, `ListenAsync` (on a dedicated connection, until disposed) and `VacuumAnalyzeAsync<T>`.
+  - `db.SqlServer`: `UpdateStatisticsAsync<T>(fullScan)`.
+  - `DataAdmin.QuotedTable<T>()` is now public for provider-specific statements.
+  - Maintenance runs as a read, so cached results stay valid.

@@ -98,6 +98,13 @@ public sealed class DataAdmin
         return target.IsFailure ? target.Error! : await TruncateAsync(target.Value.Table, target.Value.Schema, ct).ConfigureAwait(false);
     }
 
+    /// <summary>The quoted (and schema-qualified) table of <typeparamref name="T"/>, for provider-specific statements.</summary>
+    public Result<string> QuotedTable<T>()
+    {
+        var target = Target<T>();
+        return target.IsFailure ? target.Error! : _db.Provider.Dialect.QuoteTable(target.Value.Table, target.Value.Schema);
+    }
+
     private Result<(string Table, string? Schema)> Target<T>()
     {
         var accessor = EntityAccessorRegistry.Get<T>();
