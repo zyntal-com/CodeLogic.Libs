@@ -74,7 +74,10 @@ public sealed class DataAdmin
     public async ValueTask<Result> DropTableAsync(string table, string? schema = null, CancellationToken ct = default)
     {
         var dropped = await _db.ExecuteSqlAsync(SqlText.Raw("DROP TABLE IF EXISTS " + _db.Provider.Dialect.QuoteTable(table, schema)), ct).ConfigureAwait(false);
-        return dropped.IsFailure ? dropped.Error! : Result.Success();
+        if (dropped.IsFailure) return dropped.Error!;
+        // The schema sync records tables by their schema-qualified name; forget this one so the next sync recreates it.
+        var syncedSchema = _db.Provider.Capabilities.Schemas ? schema ?? _db.Provider.GetDefaultSchema(_db.Config) : null;
+        return await _db.Schema.ForgetAsync(table, syncedSchema, ct).ConfigureAwait(false);
     }
 
     /// <summary>Drops the table of <typeparamref name="T"/> if it exists.</summary>
