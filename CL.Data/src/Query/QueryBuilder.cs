@@ -100,6 +100,13 @@ public sealed class QueryBuilder<T>
     /// <summary>Also returns soft-deleted rows.</summary>
     public QueryBuilder<T> IncludeDeleted() => With(_state with { IncludeDeleted = true });
 
+    /// <summary>
+    /// Leaves out the user filters (<c>DatabaseOptions.Filters</c>) for this query: all of them, or the ones named. Soft delete
+    /// is lifted with <see cref="IncludeDeleted"/>; the tenant filter always applies.
+    /// </summary>
+    public QueryBuilder<T> IgnoreFilters(params string[] names) =>
+        With(_state with { Ignore = names.Length == 0 ? FilterSelection.All : new FilterSelection(false, names) });
+
     /// <summary>Sorts by <paramref name="key"/> ascending (replacing earlier sorts).</summary>
     public QueryBuilder<T> OrderBy<TKey>(Expression<Func<T, TKey>> key) => With(_state with { Order = [new Sort(key, false)] });
 
@@ -539,7 +546,7 @@ public sealed class QueryBuilder<T>
         var command = new WriteCommand(update, WriteKind.Update, names.Table, 0, [DataTags.Table(names.Table)]);
         var updated = await _db.ExecuteWritesAsync([command], Array.Empty<T>(), accessor.Value!, ct).ConfigureAwait(false);
         if (updated.IsFailure) return updated.Error!;
-        var reread = ReadPlanner.Select(_db, map, byKeys, includeDeleted: true);
+        var reread = ReadPlanner.Select(_db, map, byKeys, includeDeleted: true, ignore: FilterSelection.All);   // show the updated rows even if they no longer match
         if (reread.IsFailure) return reread.Error!;
         return await _db.QueryAsync(reread.Value!, accessor.Value, table, [DataTags.Table(table)], ct).ConfigureAwait(false);
     }
@@ -691,7 +698,7 @@ public sealed class QueryBuilder<T>
             where = ReadPlanner.And(where, new InSubqueryExpr(outerKey.Value!, subquery, sub.Negated));
         }
 
-        var standing = ReadPlanner.Filters(_db, map, _state.IncludeDeleted, outer);
+        var standing = ReadPlanner.Filters(_db, map, _state.IncludeDeleted, outer, _state.Ignore);
         if (standing.IsFailure) return standing.Error!;
         return Result<SqlExpr?>.Success(ReadPlanner.And(where, standing.Value));
     }
@@ -737,6 +744,7 @@ public sealed class QueryBuilder<T>
         public int? Take { get; init; }
         public int? Skip { get; init; }
         public bool IncludeDeleted { get; init; }
+        public FilterSelection Ignore { get; init; }
         public bool Correlated { get; init; }
         public LockClause? Lock { get; init; }
     }

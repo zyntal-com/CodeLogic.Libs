@@ -29,6 +29,9 @@ public sealed record DatabaseOptions
     /// <summary>Current tenant for <c>[TenantKey]</c> entities.</summary>
     public CL.Data.Writes.IDataTenantAccessor? TenantAccessor { get; init; }
 
+    /// <summary>Standing conditions applied to every read of the entities they target (see <see cref="CL.Data.Query.DataFilter"/>).</summary>
+    public IReadOnlyList<CL.Data.Query.DataFilter> Filters { get; init; } = [];
+
     /// <summary>Receives CL.Data events (schema sync, drift, ...). <c>DataLibrary</c> forwards them to the CodeLogic event bus.</summary>
     public Action<CL.Data.Events.DataEvent>? Events { get; init; }
 }
@@ -78,6 +81,38 @@ public sealed partial class Database : IAsyncDisposable
     public DataTransaction? Transaction => _transaction;
 
     internal Database BoundTo(DataTransaction transaction) => new(this, transaction);
+
+    /// <summary>A view of <paramref name="parent"/> with other host options; it shares the connection pools and owns none.</summary>
+    private Database(Database parent, DatabaseOptions options)
+    {
+        Name = parent.Name;
+        Provider = parent.Provider;
+        Config = parent.Config;
+        Options = options;
+        Primary = parent.Primary;
+        Replicas = parent.Replicas;
+        _executor = parent._executor;
+        _pipeline = parent._pipeline;
+        _transaction = parent._transaction;
+        _isView = true;
+    }
+
+    private readonly bool _isView;
+
+    /// <summary>
+    /// This database scoped to <paramref name="tenant"/>: <c>[TenantKey]</c> entities are filtered and stamped with it. A cheap
+    /// view that shares this database's connection pools (disposing it does nothing).
+    /// </summary>
+    public Database ForTenant(object tenant)
+    {
+        ArgumentNullException.ThrowIfNull(tenant);
+        return new Database(this, Options with { TenantAccessor = new FixedTenant(tenant) });
+    }
+
+    private sealed class FixedTenant(object tenant) : CL.Data.Writes.IDataTenantAccessor
+    {
+        public object? CurrentTenant => tenant;
+    }
 
     /// <summary>Connection name.</summary>
     public string Name { get; }
@@ -308,7 +343,7 @@ public sealed partial class Database : IAsyncDisposable
     /// <inheritdoc />
     public async ValueTask DisposeAsync()
     {
-        if (_transaction is not null) return;   // a transaction view owns no data sources
+        if (_transaction is not null || _isView) return;   // views own no data sources
         await Primary.DisposeAsync().ConfigureAwait(false);
         foreach (var replica in Replicas) await replica.DisposeAsync().ConfigureAwait(false);
     }

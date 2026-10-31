@@ -25,8 +25,15 @@ public enum ProductStatus
 }
 
 /// <summary>The main conformance entity: identity key, unique SKU, decimals, booleans, audit, token, soft delete.</summary>
+/// <summary>Anything with a stock level (global filters can target interfaces).</summary>
+public interface IHasStock
+{
+    /// <summary>Units in stock.</summary>
+    int Stock { get; }
+}
+
 [Table(Name = ConformanceTables.Products)]
-public sealed class Product
+public sealed class Product : IHasStock
 {
     /// <summary>Identity.</summary>
     [Column(Primary = true, AutoIncrement = true)] public long Id { get; set; }

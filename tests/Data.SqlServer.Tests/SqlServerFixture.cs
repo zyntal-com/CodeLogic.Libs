@@ -68,3 +68,4 @@ public sealed class SqlServerCollection : ICollectionFixture<SqlServerFixture>;
 [Collection("sqlserver")] public sealed class SqlServerChangedUpdateTests(SqlServerFixture f) : ChangedUpdateConformance(f);
 [Collection("sqlserver")] public sealed class SqlServerCompiledQueryTests(SqlServerFixture f) : CompiledQueryConformance(f);
 [Collection("sqlserver")] public sealed class SqlServerAuditTests(SqlServerFixture f) : AuditConformance(f);
+[Collection("sqlserver")] public sealed class SqlServerFilterTests(SqlServerFixture f) : FilterConformance(f);

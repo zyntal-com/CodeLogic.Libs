@@ -2,6 +2,7 @@ using CL.Data.Errors;
 using CL.Data.Execution;
 using CL.Data.Mapping;
 using CL.Data.Sql;
+using CL.Data.Translation;
 using CL.Data.Writes;
 using CodeLogic.Core.Results;
 
@@ -27,9 +28,10 @@ public sealed record PagedResult<T>(IReadOnlyList<T> Items, int Page, int PageSi
 internal static class ReadPlanner
 {
     /// <summary>A SELECT of all mapped columns of <paramref name="map"/>, filtered.</summary>
-    public static Result<SelectStatement> Select(Database db, EntityMap map, SqlExpr? where, bool includeDeleted, string? alias = null)
+    public static Result<SelectStatement> Select(Database db, EntityMap map, SqlExpr? where, bool includeDeleted, string? alias = null,
+        FilterSelection ignore = default)
     {
-        var filters = Filters(db, map, includeDeleted, alias);
+        var filters = Filters(db, map, includeDeleted, alias, ignore);
         if (filters.IsFailure) return filters.Error!;
 
         var names = map.GetNames(db.NamingPolicy);
@@ -41,8 +43,8 @@ internal static class ReadPlanner
         };
     }
 
-    /// <summary>The standing filters of <paramref name="map"/> (soft delete, tenant), or null when there are none.</summary>
-    public static Result<SqlExpr?> Filters(Database db, EntityMap map, bool includeDeleted, string? alias)
+    /// <summary>The standing filters of <paramref name="map"/> (soft delete, tenant, user filters), or null when there are none.</summary>
+    public static Result<SqlExpr?> Filters(Database db, EntityMap map, bool includeDeleted, string? alias, FilterSelection ignore = default)
     {
         var names = map.GetNames(db.NamingPolicy);
         SqlExpr? filter = null;
@@ -55,6 +57,16 @@ internal static class ReadPlanner
             if (current is null) return DataErrors.TenantMissing(map.ClrType.Name);
             filter = And(filter, new BinaryExpr(SqlBinaryOperator.Equal, new ColumnExpr(names.Of(tenant), alias),
                 new ParameterExpr(SqlParameterValue.ForColumn(current, tenant))));
+        }
+
+        foreach (var user in db.Options.Filters)
+        {
+            if (!user.AppliesTo(map.ClrType) || ignore.Ignores(user.Name)) continue;
+            var scope = new TranslationScope(db.Provider.Dialect, db.NamingPolicy).Bind(user.Predicate.Parameters[0], map, alias);
+            var condition = SqlTranslator.TranslatePredicate(user.Predicate, scope);
+            if (condition.IsFailure)
+                return DataErrors.TranslationFailed($"Filter '{user.Name}' cannot be applied to '{map.ClrType.Name}'.", condition.Error!.Message);
+            filter = And(filter, condition.Value);
         }
         return Result<SqlExpr?>.Success(filter);
     }

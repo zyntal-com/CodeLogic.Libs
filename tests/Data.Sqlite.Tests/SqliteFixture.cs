@@ -96,3 +96,5 @@ public sealed class SqliteChangedUpdateTests(SqliteFixture fixture) : ChangedUpd
 public sealed class SqliteCompiledQueryTests(SqliteFixture fixture) : CompiledQueryConformance(fixture);
 [Collection("sqlite")]
 public sealed class SqliteAuditTests(SqliteFixture fixture) : AuditConformance(fixture);
+[Collection("sqlite")]
+public sealed class SqliteFilterTests(SqliteFixture fixture) : FilterConformance(fixture);

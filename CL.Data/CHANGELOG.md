@@ -252,3 +252,8 @@
   - **Before planning:** `OnSavingAsync` runs first, so changes it makes to the entities are saved, and returning an error cancels the save.
   - **Cost:** nothing extra without interceptors.
 - **Auditing conformance:** `[CreatedAt]`/`[UpdatedAt]` (from `DatabaseOptions.Time`) and `[CreatedBy]`/`[UpdatedBy]` (from `IDataUserAccessor`) are verified on insert, update, both upsert paths, set-based updates and counters. An update never writes the created columns.
+- **Global filters:** `DataFilter.For<T>(predicate, name)` in `DatabaseOptions.Filters` adds standing conditions to every read of the targeted entities.
+  - **Targets:** `T` can be an entity, a base class or an interface; one filter covers every mapped type that implements it.
+  - **Where they apply:** queries, key lookups, joins, subqueries, set-based updates and deletes, and compiled queries. Entity writes by key aren't filtered, and `UpdateAndGet` returns the rows it updated even if they no longer match.
+  - **`QueryBuilder.IgnoreFilters()`** lifts all user filters, or only the named ones. The tenant filter always applies.
+- **`Database.ForTenant(tenant)`:** a cheap view scoped to one tenant (filters and stamps `[TenantKey]` entities). It shares the connection pools; disposing the view does nothing.
