@@ -68,6 +68,28 @@ public sealed class PostgreSqlDataProvider : DataProvider
     public override string? GetDefaultSchema(DataConnectionConfig config) => config.PostgreSql?.DefaultSchema ?? "public";
 
     /// <inheritdoc />
+    public override string NormalizeStoreType(string storeType)
+    {
+        var type = base.NormalizeStoreType(storeType);
+        foreach (var (alias, canonical) in TypeAliases)
+        {
+            if (type == alias) return canonical;
+            if (type.StartsWith(alias + "(", StringComparison.Ordinal)) return canonical + type[alias.Length..];
+        }
+        return type;
+    }
+
+    // Identity pseudo-types and the long names pg_catalog reports, mapped to the names the type mapper writes.
+    private static readonly (string Alias, string Canonical)[] TypeAliases =
+    [
+        ("bigserial", "bigint"), ("serial", "integer"), ("smallserial", "smallint"),
+        ("int8", "bigint"), ("int4", "integer"), ("int2", "smallint"), ("int", "integer"),
+        ("character varying", "varchar"), ("character", "char"), ("bool", "boolean"),
+        ("timestamp with time zone", "timestamptz"), ("timestamp without time zone", "timestamp"),
+        ("time without time zone", "time"), ("float8", "double precision"), ("float4", "real"), ("decimal", "numeric"),
+    ];
+
+    /// <inheritdoc />
     public override Result<string> BuildConnectionString(DataConnectionConfig config, NodeEndpoint node)
     {
         NpgsqlConnectionStringBuilder builder;

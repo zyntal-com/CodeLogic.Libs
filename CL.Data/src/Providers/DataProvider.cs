@@ -144,6 +144,16 @@ public abstract class DataProvider
     /// <summary>Statement that checks a connection works (health checks).</summary>
     public virtual string PingSql => "SELECT 1";
 
+    /// <summary>
+    /// Normalizes a native type for comparison between the entity model and the database (lower case, single spaces,
+    /// provider aliases such as <c>character varying</c> → <c>varchar</c>).
+    /// </summary>
+    public virtual string NormalizeStoreType(string storeType) =>
+        string.Join(' ', storeType.Trim().ToLowerInvariant().Split(' ', StringSplitOptions.RemoveEmptyEntries)).Replace(", ", ",", StringComparison.Ordinal);
+
+    /// <summary>Provider table options for <paramref name="map"/> (engine, charset, ...), stored in <c>TableSchema.Options</c>.</summary>
+    public virtual IReadOnlyDictionary<string, string> TableOptions(EntityMap map, DataConnectionConfig config) => new Dictionary<string, string>();
+
     /// <summary>Schema for tables without an explicit one (null when the provider has no schemas).</summary>
     public virtual string? GetDefaultSchema(DataConnectionConfig config) => null;
 

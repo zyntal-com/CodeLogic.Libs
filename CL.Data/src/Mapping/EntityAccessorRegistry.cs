@@ -18,6 +18,10 @@ namespace CL.Data.Mapping;
 public static class EntityAccessorRegistry
 {
     private static readonly ConcurrentDictionary<Type, object> Accessors = new();
+    private static readonly ConcurrentDictionary<Type, EntityMap> Maps = new();
+
+    /// <summary>The map of <paramref name="type"/> when its accessor has been resolved before (schema sync, foreign keys).</summary>
+    public static EntityMap? FindMap(Type type) => Maps.GetValueOrDefault(type);
 
     /// <summary>
     /// True when types without a generated accessor are mapped by reflection. Off when the app switch
@@ -38,6 +42,7 @@ public static class EntityAccessorRegistry
     {
         ArgumentNullException.ThrowIfNull(accessor);
         Accessors[typeof(T)] = accessor;
+        Maps[typeof(T)] = accessor.Map;
         Cache<T>.Instance = accessor;
     }
 
@@ -49,7 +54,11 @@ public static class EntityAccessorRegistry
     {
         if (Cache<T>.Instance is { } cached) return Result<IEntityAccessor<T>>.Success(cached);
         if (Accessors.TryGetValue(typeof(T), out var registered))
-            return Result<IEntityAccessor<T>>.Success(Cache<T>.Instance = (IEntityAccessor<T>)registered);
+        {
+            var typed = (IEntityAccessor<T>)registered;
+            Maps.TryAdd(typeof(T), typed.Map);
+            return Result<IEntityAccessor<T>>.Success(Cache<T>.Instance = typed);
+        }
 
         if (IsReflectionSupported && AllowReflection)
             return CreateReflection<T>();
@@ -74,6 +83,7 @@ public static class EntityAccessorRegistry
         {
             var accessor = new ReflectionEntityAccessor<T>();
             Accessors.TryAdd(typeof(T), accessor);
+            Maps.TryAdd(typeof(T), accessor.Map);
             return Result<IEntityAccessor<T>>.Success(Cache<T>.Instance = accessor);
         }
         catch (InvalidOperationException ex)

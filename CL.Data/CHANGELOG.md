@@ -156,3 +156,11 @@
 - **Grouping fix (found on SQL Server):** a condition used as a group key is grouped as a CASE value, because SQL
   Server cannot group by a predicate.
 - **Breaking:** `SqlServerAuthentication.EntraPassword` was removed (deprecated by Microsoft).
+- **Schema model:** `TableSchema` (columns, keys, indexes, foreign keys, options), `SchemaBuilder.FromMap` (the
+  desired table per provider and naming policy, generated index and key names cut to the provider's identifier
+  limit with a hash) and `SchemaBuilder.Fingerprint`.
+  - `SchemaDiff.Compare` plans closed `SchemaChange`s by sync level. Safe: create, add, rename through
+    `PreviousName`, widen, add indexes and foreign keys. Additive: also drop indexes and foreign keys. Full: also drop
+    columns and narrow.
+  - Indexes and foreign keys are matched by shape; indexes that back foreign keys are kept.
+- **Provider hooks:** `NormalizeStoreType` and `TableOptions`; PostgreSQL normalizes its type aliases.
