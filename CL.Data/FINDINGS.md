@@ -21,6 +21,11 @@ and the allocation column shows library overhead better than the time column doe
 | Telemetry | With no listener, telemetry adds nothing (GetById allocations unchanged: 14.42 → 14.43 KB, time equal to raw ADO.NET). Spans and metrics are only built when a listener is attached. Slow-query and N+1 checks are integer comparisons when they are off. |
 | Plan cache | Hashing query shapes with `XxHash128` at first took about 700 ns per lookup. Hashing into a byte buffer in CL.Common `FastHash` brought it to about 70 ns. |
 
+**Budgets (WP-A4):** `benchmarks/budgets.json` holds a ceiling per benchmark for allocations per operation (about 12% above
+the current numbers) and for time relative to Dapper or raw ADO.NET in the same run.
+- **Running it:** `dotnet run -c Release --project benchmarks/Data.Benchmarks -- --check-budgets benchmarks/budgets.json`. The CI job `data-perf` runs it but isn't required yet.
+- **First local run:** every benchmark is within budget (for example GetById 13,980 B against 15,700 B, at 1.02× ADO.NET).
+
 ## Bugs found and fixed
 
 | Where | Bug | Found by | Fix |
@@ -81,6 +86,7 @@ and the allocation column shows library overhead better than the time column doe
 - **Libs:** `feature/cl-data` with every WP branch (`cl-data/<wp>`) merged in locally.
 - **CodeLogic:** `feature/result-throw-if-failure` adds `Result.ThrowIfFailure()` and `ResultFailedException`, and moves the README and docs to 5.x. The libraries build against this local source (`CodeLogicFromNuGet=false`). At the end: publish CodeLogic and switch the libraries back to NuGet.
 - **4.x fix:** see the table above.
+- **CI cannot pass until CodeLogic 5 is published.** CI builds with `-p:CodeLogicFromNuGet=true`, but the libraries and tests use `Result.ThrowIfFailure()` and `ResultFailedException`. Those exist only on the local CodeLogic branch, not in `CodeLogic 5.0.29-preview` on nuget.org. Publish CodeLogic and bump `CodeLogicPackageVersion` before any CI run means anything.
 
 ## Test environment notes
 

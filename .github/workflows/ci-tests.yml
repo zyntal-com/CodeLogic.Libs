@@ -109,6 +109,42 @@ jobs:
           dotnet test tests/Data.MySql.Tests/Data.MySql.Tests.csproj --configuration Release -p:CodeLogicFromNuGet=true --filter "FullyQualifiedName~LiveReplica" --logger "console;verbosity=normal"
           dotnet test tests/Data.PostgreSql.Tests/Data.PostgreSql.Tests.csproj --configuration Release -p:CodeLogicFromNuGet=true --filter "FullyQualifiedName~LiveReplica" --logger "console;verbosity=normal"
 
+  data-perf:
+    # Performance budgets (benchmarks/budgets.json): allocations per operation and time relative to Dapper/ADO.NET.
+    # Not required yet: shared CI runners are noisy; allocations are the reliable signal.
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    continue-on-error: true
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ALLOW_EMPTY_PASSWORD: 'yes'
+          MYSQL_DATABASE: cl_data
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    env:
+      CL_DATA_MYSQL_CS: Server=127.0.0.1;Port=3306;Database=cl_data;User ID=root;Password=;AllowLoadLocalInfile=true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup .NET 11
+        uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+
+      - name: Enable local_infile (bulk copy)
+        run: docker exec $(docker ps -q --filter ancestor=mysql:8.4) mysql -uroot -e "SET GLOBAL local_infile = 1"
+
+      - name: Check performance budgets
+        run: dotnet run -c Release --project benchmarks/Data.Benchmarks -p:CodeLogicFromNuGet=true -- --check-budgets benchmarks/budgets.json
+
   data-postgresql:
     runs-on: ubuntu-latest
     timeout-minutes: 20

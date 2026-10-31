@@ -18,12 +18,16 @@ using CodeLogic.Core.Results;
 using Dapper;
 using MySqlConnector;
 
+if (args is ["--check-budgets", ..])
+    return Data.Benchmarks.BudgetCheck.Run(args.Length > 1 ? args[1] : "benchmarks/budgets.json");
+
 var config = ManualConfig.CreateMinimumViable()
     .AddDiagnoser(MemoryDiagnoser.Default)
     .AddJob(Job.Default.WithToolchain(InProcessEmitToolchain.Instance).WithWarmupCount(3).WithIterationCount(10).WithLaunchCount(1))
     .WithOrderer(new BenchmarkDotNet.Order.DefaultOrderer(BenchmarkDotNet.Order.SummaryOrderPolicy.Declared))
     .AddLogicalGroupRules(BenchmarkLogicalGroupRule.ByCategory);
 BenchmarkSwitcher.FromAssembly(typeof(MySqlBenchmarks).Assembly).Run(args, config);
+return 0;
 
 /// <summary>The benchmark row (same shape as the 4.x baseline's).</summary>
 [Table(Name = "bench_items")]

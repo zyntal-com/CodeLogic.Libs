@@ -314,3 +314,6 @@
   - **Transactions and cache:** a copy joins a transaction view and drops the table's cached results.
   - **`InsertManyAsync`** switches to bulk at `BulkThreshold` when nothing has to be read back.
 - **Faster write path:** placeholder names are cached per dialect, and the SQL writer is reused on each thread. Inserting 100 rows went from 5.90 ms / 298 KB to 5.51 ms / 226 KB, which beats CL.MySQL2 4.9.
+- **Performance budgets (WP-A4):** `benchmarks/budgets.json` sets limits per benchmark: allocations per operation, and time as a ratio to the category's Dapper or ADO.NET baseline.
+  - `Data.Benchmarks --check-budgets` runs a short BenchmarkDotNet pass and exits 1 when a benchmark is over budget.
+  - It runs in the CI job `data-perf` (MySQL, not required yet).

@@ -1,0 +1,20 @@
+{
+  // Performance budgets checked by `dotnet run -c Release --project benchmarks/Data.Benchmarks -- --check-budgets benchmarks/budgets.json`
+  // (CI job data-perf). maxAllocatedBytes: per operation, ~12% above the 2026-10-31 measurements (benchmarks/baseline).
+  // maxRatio: mean time relative to the category baseline in the same run (Dapper or raw ADO.NET), so it holds across machines.
+  // Lower a budget when an optimization lands; raise one only with a reason in the commit message.
+  "benchmarks": {
+    "CLData_GetById":            { "maxAllocatedBytes": 15700,   "maxRatio": 1.15 },
+    "CLData_Compiled_GetById":   { "maxAllocatedBytes": 12800,   "maxRatio": 1.15 },
+    "CLData_Cached_GetById":     { "maxAllocatedBytes": 5200,    "maxRatio": 0.05 },
+    "CLData_Filter100":          { "maxAllocatedBytes": 47400,   "maxRatio": 1.15 },
+    "CLData_Compiled_Filter100": { "maxAllocatedBytes": 40900,   "maxRatio": 1.15 },
+    "CLData_Cached_Filter100":   { "maxAllocatedBytes": 19300,   "maxRatio": 0.10 },
+    "CLData_Insert":             { "maxAllocatedBytes": 15500,   "maxRatio": 1.15 },
+    "CLData_InsertMany100":      { "maxAllocatedBytes": 259000,  "maxRatio": 0.10 },
+    "CLData_Bulk5000":           { "maxAllocatedBytes": 6200000, "maxRatio": 0.80 },
+    "CLData_Update":             { "maxAllocatedBytes": 14700,   "maxRatio": 1.15 },
+    "CLData_UpdateChanged":      { "maxAllocatedBytes": 12200,   "maxRatio": 1.15 },
+    "CLData_Count":              { "maxAllocatedBytes": 13500,   "maxRatio": 1.15 }
+  }
+}
