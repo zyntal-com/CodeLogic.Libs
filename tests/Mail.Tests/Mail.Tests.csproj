@@ -3,7 +3,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <LangVersion>13</LangVersion>
+    <LangVersion>14</LangVersion>
     <IsPackable>false</IsPackable>
     <!-- Test projects must not inherit the libs' composed-version / NuGet packaging. -->
     <Version>1.0.0</Version>

@@ -3,6 +3,15 @@
 All notable changes to **CodeLogic.PostgreSQL** are documented here. Versions follow
 [Semantic Versioning](https://semver.org/).
 
+## 2026-10-31
+
+### Fixed
+
+- `array.Contains(x.Column)` in a `Where` predicate threw `NotSupportedException` when the caller
+  compiles with C# 14, which is the default on .NET 10. C# 14 binds the call to
+  `MemoryExtensions.Contains(ReadOnlySpan<T>, T)`. The translator now reads the array through the
+  span conversion and emits `IN (...)` again. `List<T>` and `HashSet<T>` were not affected.
+
 ## 2026-10-26
 
 ### Security

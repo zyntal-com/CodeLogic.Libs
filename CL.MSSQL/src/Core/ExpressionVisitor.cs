@@ -298,6 +298,33 @@ internal sealed class SqlServerExpressionVisitor : ExpressionVisitor
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
+    // C# 14+ ("first-class spans") binds array.Contains(x) to MemoryExtensions.Contains(ReadOnlySpan<T>, T),
+    // so the collection arrives wrapped in an implicit array -> span conversion. A span can't be boxed, so
+    // evaluating that expression through reflection throws NotSupportedException. Read the array instead.
+    private static Expression UnwrapSpanConversion(Expression expr)
+    {
+        while (true)
+        {
+            switch (expr)
+            {
+                case MethodCallExpression { Method.Name: "op_Implicit", Arguments.Count: 1 } call when IsSpanType(call.Type):
+                    expr = call.Arguments[0];
+                    continue;
+                case UnaryExpression { NodeType: ExpressionType.Convert } convert when IsSpanType(convert.Type):
+                    expr = convert.Operand;
+                    continue;
+                case NewExpression { Arguments.Count: 1 } ctor when IsSpanType(ctor.Type):
+                    expr = ctor.Arguments[0];
+                    continue;
+                default:
+                    return expr;
+            }
+        }
+    }
+
+    private static bool IsSpanType(Type type) =>
+        type.IsGenericType
+        && (type.GetGenericTypeDefinition() == typeof(ReadOnlySpan<>) || type.GetGenericTypeDefinition() == typeof(Span<>));
     private void AddParameter(object? value)
     {
         var paramName = $"@p{_paramCounter++}";
@@ -382,7 +409,7 @@ internal sealed class SqlServerExpressionVisitor : ExpressionVisitor
     private void EmitInClause(Expression collectionExpr, Expression itemExpr)
     {
         // Static Enumerable.Contains(collection, item) or IList.Contains
-        var collection = GetValue(collectionExpr);
+        var collection = GetValue(UnwrapSpanConversion(collectionExpr));
         var entityMember = GetEntityMember(itemExpr);
         var prevStorageType = _currentComparisonStorageType;
         if (entityMember is not null)
