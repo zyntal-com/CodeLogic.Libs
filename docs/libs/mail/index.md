@@ -231,6 +231,7 @@ Every failure is an `Error` whose `Code` is a `MailErrorCodes` constant, and eac
 | `InvalidSubject` | `mail.invalid_subject` | `ValidationError` |
 | `InvalidBody` (new) | `mail.invalid_body` | `ValidationError` |
 | `TemplateNotFound` | `mail.template_not_found` | `NotFoundError` |
+| `InvalidTemplateId` | `mail.invalid_template_id` | `ValidationError` |
 | `TemplateRenderingFailed` | `mail.template_rendering_failed` | `InternalError` |
 | `SmtpConfigInvalid` | `mail.smtp_config_invalid` | `ValidationError` |
 | `SmtpAuthenticationFailed` | `mail.smtp_authentication_failed` | `UnauthorizedError` |
