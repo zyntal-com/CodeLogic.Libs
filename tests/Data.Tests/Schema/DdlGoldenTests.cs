@@ -40,6 +40,14 @@ public sealed class DdlKey
     [Column(Size = 64)] public string Plain { get; set; } = "";
 }
 
+[Table(Name = "ddl_people")]
+public sealed class DdlPerson
+{
+    [Column(Primary = true, Size = 64)] public string Id { get; set; } = "";
+    [Column(Size = 320, Unique = true)] public string? Email { get; set; }
+    [Column(Size = 64, Unique = true)] public string Handle { get; set; } = "";
+}
+
 public sealed class DdlGoldenTests
 {
     private static TableSchema Desired(DataProvider provider)
@@ -138,5 +146,17 @@ public sealed class DdlGoldenTests
         Assert.Equal("Latin1_General_100_BIN2", Collation(SqlServerDataProvider.Instance, "Key"));
         Assert.Equal("BINARY", Collation(SqliteDataProvider.Instance, "Key"));
         Assert.Null(Collation(SqlServerDataProvider.Instance, "Plain"));
+    }
+
+    [Fact]
+    public void Unique_index_over_a_nullable_column_allows_many_nulls_on_every_provider()
+    {
+        // Regression: SQL Server treats NULLs as equal in a unique index, so only one row could have no value.
+        static IReadOnlyList<string> Ddl(DataProvider provider) => provider.Ddl.Generate(new CreateTableChange(
+            SchemaBuilder.FromMap(EntityAccessorRegistry.Get<DdlPerson>().ValueOrThrow().Map, provider, new DataConnectionConfig()).ValueOrThrow()));
+
+        Assert.Contains("CREATE UNIQUE INDEX [ux_ddl_people_Email] ON [dbo].[ddl_people] ([Email]) WHERE [Email] IS NOT NULL", Ddl(SqlServerDataProvider.Instance));
+        Assert.Contains("CREATE UNIQUE INDEX [ux_ddl_people_Handle] ON [dbo].[ddl_people] ([Handle])", Ddl(SqlServerDataProvider.Instance));
+        Assert.Contains("CREATE UNIQUE INDEX `ux_ddl_people_Email` ON `ddl_people` (`Email`)", Ddl(MySqlDataProvider.Instance));
     }
 }

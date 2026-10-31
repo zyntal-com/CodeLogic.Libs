@@ -55,7 +55,19 @@ public sealed class SqlServerDdlGenerator(SqlDialect dialect) : DdlGenerator(dia
         ];
     }
 
-    /// <inheritdoc />
+    /// <summary>
+    /// A unique index over nullable columns is filtered (<c>WHERE col IS NOT NULL</c>): SQL Server otherwise treats NULLs
+    /// as equal and allows one row without a value, unlike the other providers.
+    /// </summary>
+    protected override string CreateIndex(string table, string? schema, IndexSchema index)
+    {
+        var sql = base.CreateIndex(table, schema, index);
+        return index.Unique && index.NullableColumns.Count > 0
+            ? sql + " WHERE " + string.Join(" AND ", index.NullableColumns.Select(c => Q(c) + " IS NOT NULL"))
+            : sql;
+    }
+
+    /// <inheritdoc/>
     protected override string DropIndex(DropIndexChange change) => $"DROP INDEX {Q(change.Name)} ON {Table(change.Table, change.Schema)}";
 
     /// <inheritdoc />

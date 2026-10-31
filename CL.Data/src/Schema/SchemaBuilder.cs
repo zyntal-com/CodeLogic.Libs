@@ -39,6 +39,7 @@ public static class SchemaBuilder
             {
                 Descending = i.Columns.Any(c => c.Direction == SortOrder.Descending) ? i.Columns.Select(c => c.Direction == SortOrder.Descending).ToArray() : [],
                 Include = i.Include.Select(names.Of).ToArray(),
+                NullableColumns = i.Columns.Where(c => c.Column.IsNullable).Select(c => names.Of(c.Column)).ToArray(),
             })
             .ToArray();
 
