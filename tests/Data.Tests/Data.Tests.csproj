@@ -18,6 +18,8 @@
     <ProjectReference Include="..\..\CL.Data.PostgreSql\CL.Data.PostgreSql.csproj" />
     <ProjectReference Include="..\..\CL.Data.SqlServer\CL.Data.SqlServer.csproj" />
     <ProjectReference Include="..\..\CL.Data.Sqlite\CL.Data.Sqlite.csproj" />
+    <ProjectReference Include="..\Data.Conformance\Data.Conformance.csproj" />
+    <ProjectReference Include="..\..\CL.Data\generator\CL.Data.Generator\CL.Data.Generator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
   </ItemGroup>
   <ItemGroup>
     <Using Include="Xunit" />

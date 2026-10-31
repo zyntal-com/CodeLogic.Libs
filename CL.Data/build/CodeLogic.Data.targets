@@ -2,7 +2,8 @@
   <!--
     CLDataReflectionMapping controls whether CL.Data maps types without generated mapping by reflection.
     Native AOT publishes turn it off by default, so the trimmer removes the reflection path and every
-    entity must be a partial [Table]/[DataRow] type (the source generator reports CLD001 otherwise).
+    entity must have generated mapping: a non-generic, non-abstract [Table]/[DataRow] class that generated code
+    can see (public or internal, not private nested or file-local).
   -->
   <PropertyGroup Condition="'$(CLDataReflectionMapping)' == '' And '$(PublishAot)' == 'true'">
     <CLDataReflectionMapping>false</CLDataReflectionMapping>

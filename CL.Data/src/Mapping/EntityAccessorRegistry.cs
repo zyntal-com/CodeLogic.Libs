@@ -41,19 +41,37 @@ public static class EntityAccessorRegistry
     public static void Register<T>(IEntityAccessor<T> accessor)
     {
         ArgumentNullException.ThrowIfNull(accessor);
+        // The map is built on first use (generated accessors build it lazily), not at registration.
         Accessors[typeof(T)] = accessor;
-        Maps[typeof(T)] = accessor.Map;
-        Cache<T>.Instance = accessor;
+        Maps.TryRemove(typeof(T), out _);
+        Cache<T>.Instance = null;   // the next Get caches it and records its map
     }
+
+    /// <summary>Types with a generated (not reflection) accessor registered (tests: mapping parity).</summary>
+    internal static IEnumerable<Type> GeneratedTypes() =>
+        Accessors.Where(kv => !kv.Value.GetType().IsGenericType || kv.Value.GetType().GetGenericTypeDefinition() != typeof(ReflectionEntityAccessor<>))
+            .Select(kv => kv.Key).ToArray();
+
+    /// <summary>The map of the generated accessor of <paramref name="type"/>, or null (tests: mapping parity).</summary>
+    internal static EntityMap? GeneratedMap(Type type) =>
+        Accessors.TryGetValue(type, out var accessor) && GeneratedTypes().Contains(type)
+            ? (EntityMap?)accessor.GetType().GetProperty("Map")!.GetValue(accessor)
+            : null;
 
     /// <summary>True when a generated accessor is registered for <typeparamref name="T"/>.</summary>
     public static bool HasGenerated<T>() => Accessors.TryGetValue(typeof(T), out var a) && a is not ReflectionEntityAccessor<T>;
+
+    /// <summary>
+    /// Tests: ignore generated accessors and map everything by reflection (conformance runs both ways). Set before
+    /// the first <see cref="Get{T}"/>; the environment variable <c>CL_DATA_FORCE_REFLECTION=1</c> sets it too.
+    /// </summary>
+    internal static bool ForceReflection { get; set; } = Environment.GetEnvironmentVariable("CL_DATA_FORCE_REFLECTION") == "1";
 
     /// <summary>The accessor of <typeparamref name="T"/>, or <c>data.entity_not_mapped</c>.</summary>
     public static Result<IEntityAccessor<T>> Get<T>()
     {
         if (Cache<T>.Instance is { } cached) return Result<IEntityAccessor<T>>.Success(cached);
-        if (Accessors.TryGetValue(typeof(T), out var registered))
+        if (!ForceReflection && Accessors.TryGetValue(typeof(T), out var registered))
         {
             var typed = (IEntityAccessor<T>)registered;
             Maps.TryAdd(typeof(T), typed.Map);

@@ -17,7 +17,13 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\CL.Data\CL.Data.csproj" />
+    <!-- The conformance models use generated mapping (set CL_DATA_FORCE_REFLECTION=1 to run them on reflection). -->
+    <ProjectReference Include="..\..\CL.Data\generator\CL.Data.Generator\CL.Data.Generator.csproj"
+                      OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
   </ItemGroup>
+  <PropertyGroup>
+    <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
+  </PropertyGroup>
   <ItemGroup>
     <Using Include="Xunit" />
   </ItemGroup>

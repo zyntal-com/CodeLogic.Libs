@@ -241,18 +241,27 @@ public sealed class MappingTests
     [Fact]
     public void Reflection_can_be_switched_off()
     {
-        EntityAccessorRegistry.ResetReflectionCache<TestGroup>();
+        EntityAccessorRegistry.ResetReflectionCache<NoGeneratedMapping>();
         EntityAccessorRegistry.AllowReflection = false;
         try
         {
-            var result = EntityAccessorRegistry.Get<TestGroup>();
+            // A type without generated mapping (private nested: the generator leaves it to reflection) is refused...
+            var result = EntityAccessorRegistry.Get<NoGeneratedMapping>();
             Assert.True(result.IsFailure);
             Assert.Equal(CL.Data.Errors.DataErrors.EntityNotMappedCode, result.Error!.Code);
+            // ...while a [Table] type with generated mapping still works.
+            Assert.True(EntityAccessorRegistry.Get<TestGroup>().IsSuccess);
         }
         finally
         {
             EntityAccessorRegistry.AllowReflection = true;
         }
+    }
+
+    [Table]
+    private sealed class NoGeneratedMapping
+    {
+        [Column(Primary = true)] public int Id { get; set; }
     }
 
     private sealed class RecordingWriter : IColumnValueWriter

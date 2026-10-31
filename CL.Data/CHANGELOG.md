@@ -207,3 +207,11 @@
   - **Not cached:** grouped-query lambdas and unusual expression nodes are translated every time.
   - **Settings and stats:** `Enabled`, `Capacity`, `MaxVariantsPerShape`, `Hits`, `Misses`, `Count`, `Clear()`.
   - **Effect on a typical predicate:** about 20% less translation time and 56% fewer allocations.
+- **Source generator:** every `[Table]` / `[DataRow]` class gets a generated `IEntityAccessor<T>`, registered by a module initializer.
+  - **Map:** built on first use, from the same attribute instances reflection reads.
+  - **Typed access:** materialization uses `GeneratedMapping.Read<T>`. Columns that aren't selected keep their property initializers.
+  - **Constructors and members:** positional records bind through the constructor, `required` members are set in the object initializer, and init-only setters go through `UnsafeAccessor` (no reflection).
+  - **Writes:** column writes are typed and don't allocate.
+  - **Fallback:** generic, abstract, private nested and file-local types stay on reflection mapping.
+- **Shared mapping logic:** `GeneratedMapping.Column`/`Entity` hold the column and entity rules; reflection mapping uses them too, so both describe a type identically. A parity test compares them for every generated type.
+- **Performance (in-memory reader):** about 1.9x faster than reflection when materializing; parameter writes allocate nothing (reflection boxed every value).
