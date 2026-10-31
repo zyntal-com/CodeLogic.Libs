@@ -63,7 +63,29 @@ public sealed partial class Database : IAsyncDisposable
         List<ICommandMiddleware> middleware = [];
         if (options.Interceptors.Count > 0) middleware.Add(new InterceptorMiddleware(options.Interceptors));
         middleware.AddRange(options.Middleware);
+        if (Resilience(config, options.Time) is { } resilience) middleware.Add(resilience);
         _pipeline = new CommandPipeline(middleware);
+        if (config.CircuitBreakerThreshold > 0)
+            foreach (var node in replicas.Prepend(primary))
+                node.Breaker = new CL.Common.Resilience.CircuitBreaker($"{name}/{node.Name}", new CL.Common.Resilience.CircuitBreakerOptions
+                {
+                    FailureThreshold = config.CircuitBreakerThreshold,
+                    BreakDuration = TimeSpan.FromSeconds(config.CircuitBreakSeconds),
+                }, options.Time);
+    }
+
+    /// <summary>The retry/breaker step for <paramref name="config"/>, or null when both are off.</summary>
+    private static ResilienceMiddleware? Resilience(DataConnectionConfig config, TimeProvider time)
+    {
+        var retry = config.RetryCount > 0
+            ? new CL.Common.Resilience.RetryPolicy(new CL.Common.Resilience.RetryOptions
+            {
+                MaxAttempts = config.RetryCount + 1,
+                BaseDelay = TimeSpan.FromMilliseconds(config.RetryBaseDelayMs),
+                MaxDelay = TimeSpan.FromSeconds(5),
+            }, time)
+            : null;
+        return retry is null && config.CircuitBreakerThreshold == 0 ? null : new ResilienceMiddleware(retry, time);
     }
 
     /// <summary>A view of <paramref name="parent"/> whose commands all run in <paramref name="transaction"/>.</summary>
@@ -160,7 +182,7 @@ public sealed partial class Database : IAsyncDisposable
                 ? await tx.ExecuteAsync(ctx.Spec, state, body, ctx.CancellationToken).ConfigureAwait(false)
                 : transaction is { } isolation
                     ? await ExecuteInTransactionAsync(node, ctx, state, body, isolation).ConfigureAwait(false)
-                    : await _executor.ExecuteAsync(node, ctx.Spec, state, body, null, null, ctx.CancellationToken).ConfigureAwait(false);
+                    : await _executor.ExecuteAsync(node, ctx.Spec, state, body, null, null, ctx.CancellationToken, ctx).ConfigureAwait(false);
             ctx.Elapsed = Stopwatch.GetElapsedTime(started);
             if (rows is not null && result.IsSuccess) ctx.Rows = rows(result.Value!);
             return result;

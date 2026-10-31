@@ -29,14 +29,17 @@ internal sealed class CommandExecutor(DataProvider provider, int defaultTimeoutS
     public async ValueTask<Result<TResult>> ExecuteAsync<TState, TResult>(
         DataNode node, CommandSpec spec, TState state,
         Func<DbCommand, TState, CancellationToken, ValueTask<TResult>> body,
-        DbConnection? connection, DbTransaction? transaction, CancellationToken ct)
+        DbConnection? connection, DbTransaction? transaction, CancellationToken ct, CL.Data.Pipeline.CommandContext? context = null)
     {
         DbConnection? owned = null;
+        var opening = false;
         try
         {
             if (connection is null)
             {
+                opening = true;
                 owned = await node.DataSource.OpenConnectionAsync(ct).ConfigureAwait(false);
+                opening = false;
                 connection = owned;
             }
 
@@ -47,12 +50,24 @@ internal sealed class CommandExecutor(DataProvider provider, int defaultTimeoutS
         }
         catch (Exception ex)
         {
-            return Map(ex, ct);
+            return Fail(context, ex, opening, ct);
         }
         finally
         {
             if (owned is not null) await owned.DisposeAsync().ConfigureAwait(false);
         }
+    }
+
+    /// <summary>Maps <paramref name="exception"/> and records on <paramref name="context"/> whether it is worth retrying.</summary>
+    public Error Fail(CL.Data.Pipeline.CommandContext? context, Exception exception, bool opening, CancellationToken ct)
+    {
+        var error = Map(exception, ct);
+        if (context is not null && !ct.IsCancellationRequested)
+        {
+            context.FailedOpening = opening;
+            context.FailedTransient = IsTransient(exception);
+        }
+        return error;
     }
 
     /// <summary>Maps an exception to a CL.Data error (cancellation by <paramref name="ct"/> → <c>data.cancelled</c>).</summary>

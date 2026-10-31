@@ -24,6 +24,15 @@ public sealed class DataNode : IAsyncDisposable
     /// <summary>The driver data source (connection pool) of this node.</summary>
     public DbDataSource DataSource { get; }
 
+    /// <summary>
+    /// The node's circuit breaker (null when <c>CircuitBreakerThreshold</c> is 0). It opens after repeated node failures
+    /// (unreachable, connection lost); commands then fail fast with <c>data.circuit_open</c> until a trial call succeeds.
+    /// </summary>
+    public CL.Common.Resilience.CircuitBreaker? Breaker { get; internal set; }
+
+    /// <summary>True unless the node's circuit is open.</summary>
+    public bool IsHealthy => Breaker is null || Breaker.State != CL.Common.Resilience.CircuitState.Open;
+
     /// <inheritdoc />
     public ValueTask DisposeAsync() => DataSource.DisposeAsync();
 

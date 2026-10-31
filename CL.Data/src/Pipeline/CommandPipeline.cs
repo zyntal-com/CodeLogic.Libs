@@ -72,6 +72,15 @@ public sealed class CommandContext
         ReadFrom = ReadFrom,
     };
 
+    /// <summary>The 1-based attempt of this command (above 1 when the resilience step retries it).</summary>
+    public int Attempt { get; internal set; } = 1;
+
+    /// <summary>Set by the executor: the last failure was transient (retrying may succeed).</summary>
+    internal bool FailedTransient { get; set; }
+
+    /// <summary>Set by the executor: the last failure happened while opening the connection (nothing was sent).</summary>
+    internal bool FailedOpening { get; set; }
+
     /// <summary>Rows read or affected, set after execution.</summary>
     public long Rows { get; set; }
 

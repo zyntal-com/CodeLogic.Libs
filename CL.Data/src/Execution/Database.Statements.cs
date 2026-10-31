@@ -436,7 +436,7 @@ public sealed partial class Database
         }
         catch (Exception ex)
         {
-            return Executor.Map(ex, ctx.CancellationToken);
+            return Executor.Fail(ctx, ex, opening: true, ctx.CancellationToken);
         }
 
         await using (connection.ConfigureAwait(false))
@@ -453,7 +453,7 @@ public sealed partial class Database
 
             await using (transaction.ConfigureAwait(false))
             {
-                var result = await Executor.ExecuteAsync(node, ctx.Spec, state, body, connection, transaction, ctx.CancellationToken).ConfigureAwait(false);
+                var result = await Executor.ExecuteAsync(node, ctx.Spec, state, body, connection, transaction, ctx.CancellationToken, ctx).ConfigureAwait(false);
                 try
                 {
                     if (result.IsSuccess) await transaction.CommitAsync(ctx.CancellationToken).ConfigureAwait(false);
@@ -461,7 +461,10 @@ public sealed partial class Database
                 }
                 catch (Exception ex)
                 {
-                    return Executor.Map(ex, ctx.CancellationToken);
+                    // A failed commit leaves the outcome unknown: report it, but never retry it.
+                    var error = Executor.Map(ex, ctx.CancellationToken);
+                    ctx.FailedTransient = false;
+                    return error;
                 }
                 return result;
             }

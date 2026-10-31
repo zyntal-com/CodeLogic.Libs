@@ -275,3 +275,8 @@
   - `InProcessCacheBus` links caches inside one process.
   - `DatabaseCacheBus` polls a shared `cl_data_cache_bus` table: no extra infrastructure, old rows are pruned, and polling starts with `Start(scheduler)`.
   - A failed publish leaves the other nodes on their TTL; the local write is unaffected.
+- **Resilience (WP-90):** an innermost pipeline step, built on CL.Common `RetryPolicy` and `CircuitBreaker`, configured by `RetryCount`, `RetryBaseDelayMs`, `CircuitBreakerThreshold` and `CircuitBreakSeconds`.
+  - **Retries:** reads retry transient failures with backoff and jitter. Writes retry only when the statement certainly didn't take effect: the connection couldn't be opened, or the server rolled it back (deadlock, lock timeout). A failed commit is never retried.
+  - **Transactions:** nothing retries inside a user transaction.
+  - **Errors:** after the last attempt the original `data.*` error is returned unchanged.
+  - **Circuit breaker:** each node (`DataNode.Breaker`, `IsHealthy`) has one, and it counts only node failures (unreachable, connection lost). While it is open, commands fail fast with `data.circuit_open` until a trial call succeeds.
