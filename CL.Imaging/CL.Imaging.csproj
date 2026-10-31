@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>CL.Imaging</RootNamespace>
+    <AssemblyName>CL.Imaging</AssemblyName>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <PackageId>CodeLogic.Imaging</PackageId>
+    <PackageTags>imaging;image;resize;crop;thumbnail;webp;exif;blurhash;phash;skiasharp</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <Description>Image decoding, editing pipeline, metadata, analysis and web helpers for CodeLogic applications, built on SkiaSharp</Description>
+    <WarningsAsErrors>$(WarningsAsErrors);CS1591</WarningsAsErrors>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="SkiaSharp" Version="4.*" />
+    <PackageReference Include="SkiaSharp.NativeAssets.Linux.NoDependencies" Version="4.*" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Imaging.Tests" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="/" />
+    <None Include="MIGRATION.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
+</Project>
