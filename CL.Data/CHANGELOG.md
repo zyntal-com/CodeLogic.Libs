@@ -268,3 +268,10 @@
   - **Transactions:** reads inside a transaction bypass the cache, and invalidations wait for commit; a rollback drops nothing.
   - **Concurrency:** concurrent misses run once, and a write during a load keeps the stale result out of the cache.
   - **Measured on MySQL:** a key lookup takes 1.66 µs from cache against 1.4 ms from the database; a 100-row filter takes 18 µs against 1.6 ms.
+- **Warm queries:** set `CachePolicy.Refresh` to keep a result warm.
+  - The cache re-reads it in the background every period, so hits never wait for the database. It is dropped after `IdleRefreshes` periods without a hit.
+  - Start the loop with `DataCache.StartRefreshing(scheduler)`, or call `RefreshDueAsync` from your own scheduler.
+- **Cross-node invalidation:** `ICacheInvalidationBus` plus `DataCache.UseBus(bus)`. Local invalidations are published, and remote ones drop matching results without being re-published.
+  - `InProcessCacheBus` links caches inside one process.
+  - `DatabaseCacheBus` polls a shared `cl_data_cache_bus` table: no extra infrastructure, old rows are pruned, and polling starts with `Start(scheduler)`.
+  - A failed publish leaves the other nodes on their TTL; the local write is unaffected.

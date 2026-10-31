@@ -62,6 +62,16 @@ public sealed class CommandContext
     /// <summary>Cancellation for the whole command.</summary>
     public CancellationToken CancellationToken { get; }
 
+    /// <summary>A fresh context for the same command with another token (background cache refreshes).</summary>
+    internal CommandContext Renew(CancellationToken ct) => new(Database, Spec, Kind, ct)
+    {
+        Operation = Operation,
+        Table = Table,
+        IsWrite = IsWrite,
+        Tags = Tags,
+        ReadFrom = ReadFrom,
+    };
+
     /// <summary>Rows read or affected, set after execution.</summary>
     public long Rows { get; set; }
 

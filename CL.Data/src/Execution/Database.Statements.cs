@@ -227,16 +227,18 @@ public sealed partial class Database
                 }, rows).ConfigureAwait(false);
         }
 
-        var loaded = await store.GetOrLoadAsync(CacheKey(context), cache, CacheTags(tables), async () =>
+        var loaded = await store.GetOrLoadAsync(CacheKey(context), cache, CacheTags(tables), async token =>
         {
-            var buffered = await RunAsync(context, 0,
+            // Background refreshes run later with their own token; the caller's request may be long gone.
+            var run = token == context.CancellationToken ? context : context.Renew(token);
+            var buffered = await RunAsync(run, 0,
                 static async (cmd, _, token) =>
                 {
                     await using var reader = await cmd.ExecuteReaderAsync(token).ConfigureAwait(false);
                     return await BufferedResultSet.CaptureAsync(reader, token).ConfigureAwait(false);
                 }, static set => set.Rows.Length).ConfigureAwait(false);
             return buffered.IsFailure ? buffered.Error! : Result<(object, long)>.Success((buffered.Value!, buffered.Value!.Size));
-        }).ConfigureAwait(false);
+        }, context.CancellationToken).ConfigureAwait(false);
         if (loaded.IsFailure) return loaded.Error!;
 
         await using var replay = ((BufferedResultSet)loaded.Value!).CreateReader();

@@ -178,4 +178,75 @@ public abstract class CacheConformance(ProviderFixture fixture) : ConformanceSui
         await AllAsync(db);
         Assert.Equal(before + 2, reads.Count);
     }
+
+    [SkippableFact]
+    public async Task Warm_queries_refresh_in_the_background_and_stop_when_idle()
+    {
+        RequireProvider();
+        var (db, reads, clock) = Cached();
+        await using var __ = db;
+        await SeedAsync(db);
+        var policy = new CachePolicy { Ttl = TimeSpan.FromMinutes(1), Refresh = TimeSpan.FromMinutes(1) };
+        Task<long> Count() => db.Query<Product>().WithCache(policy).CountAsync().AsTask().ContinueWith(t => t.Result.ValueOrThrow());
+
+        Assert.Equal(3L, await Count());
+        // Another writer (no cache of its own, so nothing is invalidated here) adds a row.
+        (await Db.Repository<Product>().InsertAsync(new Product { Sku = "W-1", Name = "w", Price = 1, Stock = 1 })).ValueOrThrow();
+        Assert.Equal(3L, await Count());                                     // still the cached value
+
+        clock.Now = clock.Now.AddSeconds(61);
+        Assert.Equal(1, await db.Options.Cache!.RefreshDueAsync());          // refreshed in the background
+        var before = reads.Count;
+        Assert.Equal(4L, await Count());                                     // the refreshed value, without a read
+        Assert.Equal(before, reads.Count);
+
+        clock.Now = clock.Now.AddMinutes(10);                                // no hits for many refresh periods
+        await db.Options.Cache.RefreshDueAsync();
+        Assert.Equal(0, db.Options.Cache.WarmQueries);
+    }
+
+    [SkippableFact]
+    public async Task Invalidations_reach_other_nodes_through_the_bus()
+    {
+        RequireProvider();
+        await using var busA = new DatabaseCacheBus(Db);
+        await using var busB = new DatabaseCacheBus(Db);
+        var cacheA = new DataCache();
+        var cacheB = new DataCache();
+        cacheA.UseBus(busA);
+        cacheB.UseBus(busB);
+        // Two nodes: the same connection name, each with its own cache.
+        await using var nodeA = Database.Create("node", Fixture.Provider, Db.Config, new DatabaseOptions { Cache = cacheA }).ValueOrThrow();
+        await using var nodeB = Database.Create("node", Fixture.Provider, Db.Config, new DatabaseOptions { Cache = cacheB }).ValueOrThrow();
+        (await busB.PollAsync()).ValueOrThrow();                             // B starts listening
+
+        await SeedAsync(nodeA);
+        Assert.Equal(3L, (await nodeB.Query<Product>().WithCache().CountAsync()).ValueOrThrow());
+        (await nodeA.Repository<Product>().InsertAsync(new Product { Sku = "B-1", Name = "b", Price = 1, Stock = 1 })).ValueOrThrow();
+        Assert.Equal(3L, (await nodeB.Query<Product>().WithCache().CountAsync()).ValueOrThrow());   // B has not heard yet
+
+        // Publishing is fire-and-forget (a write never waits for other nodes); poll until the invalidation arrives.
+        var heard = 0;
+        for (var i = 0; i < 50 && heard == 0; i++)
+        {
+            heard = (await busB.PollAsync()).ValueOrThrow();
+            if (heard == 0) await Task.Delay(50);
+        }
+        Assert.True(heard >= 1);
+        Assert.Equal(4L, (await nodeB.Query<Product>().WithCache().CountAsync()).ValueOrThrow());
+
+        // The in-process bus links caches inside one process the same way, without polling.
+        var channel = "conformance-" + Guid.NewGuid().ToString("N");
+        await using var localBusC = new InProcessCacheBus(channel);
+        await using var localBusD = new InProcessCacheBus(channel);
+        var cacheC = new DataCache();
+        var cacheD = new DataCache();
+        cacheC.UseBus(localBusC);
+        cacheD.UseBus(localBusD);
+        await using var nodeC = Database.Create("local", Fixture.Provider, Db.Config, new DatabaseOptions { Cache = cacheC }).ValueOrThrow();
+        await using var nodeD = Database.Create("local", Fixture.Provider, Db.Config, new DatabaseOptions { Cache = cacheD }).ValueOrThrow();
+        Assert.Equal(4L, (await nodeD.Query<Product>().WithCache().CountAsync()).ValueOrThrow());
+        (await nodeC.Repository<Product>().InsertAsync(new Product { Sku = "L-1", Name = "l", Price = 1, Stock = 1 })).ValueOrThrow();
+        Assert.Equal(5L, (await nodeD.Query<Product>().WithCache().CountAsync()).ValueOrThrow());
+    }
 }

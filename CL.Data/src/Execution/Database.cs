@@ -294,12 +294,15 @@ public sealed partial class Database : IAsyncDisposable
     }
 
     /// <summary>Runs a statement and returns the number of affected rows. Raw statements are treated as writes.</summary>
-    public async ValueTask<Result<int>> ExecuteSqlAsync(SqlText sql, CancellationToken ct = default)
+    public ValueTask<Result<int>> ExecuteSqlAsync(SqlText sql, CancellationToken ct = default) => ExecuteSqlAsync(sql, ct, invalidate: true);
+
+    /// <summary>Runs a raw statement; <paramref name="invalidate"/> false keeps the result cache (CL.Data's own bookkeeping writes).</summary>
+    internal async ValueTask<Result<int>> ExecuteSqlAsync(SqlText sql, CancellationToken ct, bool invalidate)
     {
         var result = await RunAsync(Context(sql, CommandKind.NonQuery, ct, isWrite: true), 0,
             static async (cmd, _, token) => await cmd.ExecuteNonQueryAsync(token).ConfigureAwait(false),
             static affected => affected).ConfigureAwait(false);
-        InvalidateCache(["*"]);   // raw SQL may change any table
+        if (invalidate) InvalidateCache(["*"]);   // raw SQL may change any table
         return result;
     }
 
