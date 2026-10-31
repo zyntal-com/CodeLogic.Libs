@@ -148,3 +148,6 @@
   - It uses `DbBatch` where the driver supports it, otherwise one multi-statement command with globally numbered
     parameters.
   - A planning error (such as a translation failure) runs nothing.
+- **Fixes found on MySQL:**
+  - Upserts qualify target columns (shared `QualifyColumns`), because the incoming-row alias has the same column names.
+  - Savepoints fall back to standard `SAVEPOINT` SQL when a driver has no savepoint API.

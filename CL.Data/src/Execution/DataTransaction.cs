@@ -91,29 +91,41 @@ public sealed class DataTransaction : IAsyncDisposable
 
     /// <summary>Creates a savepoint you can roll back to without ending the transaction.</summary>
     public ValueTask<Result> SavepointAsync(string name, CancellationToken ct = default) =>
-        SavepointCoreAsync(name, static (t, n, token) => t.SaveAsync(n, token), ct);
+        SavepointCoreAsync(name, static (t, n, token) => t.SaveAsync(n, token), "SAVEPOINT ", ct);
 
     /// <summary>Rolls back to a savepoint; the transaction stays open.</summary>
     public ValueTask<Result> RollbackToSavepointAsync(string name, CancellationToken ct = default) =>
-        SavepointCoreAsync(name, static (t, n, token) => t.RollbackAsync(n, token), ct);
+        SavepointCoreAsync(name, static (t, n, token) => t.RollbackAsync(n, token), "ROLLBACK TO SAVEPOINT ", ct);
 
-    /// <summary>Releases a savepoint (where the provider supports it; otherwise a no-op).</summary>
+    /// <summary>Releases a savepoint (a no-op where the provider has no release).</summary>
     public ValueTask<Result> ReleaseSavepointAsync(string name, CancellationToken ct = default) =>
         SavepointCoreAsync(name, static async (t, n, token) =>
         {
             try { await t.ReleaseAsync(n, token).ConfigureAwait(false); }
             catch (NotSupportedException) { }
-        }, ct);
+        }, null, ct);
 
-    private async ValueTask<Result> SavepointCoreAsync(string name, Func<DbTransaction, string, CancellationToken, Task> action, CancellationToken ct)
+    private async ValueTask<Result> SavepointCoreAsync(string name, Func<DbTransaction, string, CancellationToken, Task> action,
+        string? fallbackSql, CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
         if (_completed) return DataErrors.Validation("The transaction is already completed.");
-        if (!_owner.Provider.Capabilities.Savepoints || !_transaction.SupportsSavepoints)
+        if (!_owner.Provider.Capabilities.Savepoints)
             return DataErrors.Unsupported($"Provider '{_owner.Provider.Name}' does not support savepoints.");
         try
         {
-            await action(_transaction, name, ct).ConfigureAwait(false);
+            try
+            {
+                await action(_transaction, name, ct).ConfigureAwait(false);
+            }
+            catch (NotSupportedException) when (fallbackSql is not null)
+            {
+                // The driver has no savepoint API; use the standard statements.
+                await using var command = _connection.CreateCommand();
+                command.Transaction = _transaction;
+                command.CommandText = fallbackSql + _owner.Provider.Dialect.QuoteIdentifier(name);
+                await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+            }
             return Result.Success();
         }
         catch (Exception ex)

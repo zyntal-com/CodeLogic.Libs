@@ -85,13 +85,16 @@ public sealed class MySqlSqlDialect : SqlDialect
         w.Append("INSERT INTO ").Table(insert.Table, withAlias: false).Append(" (").Identifiers(insert.Columns).Append(')');
         RenderInsertValues(w, insert);
         w.Append(" AS ").Identifier(ExcludedAlias).Append(" ON DUPLICATE KEY UPDATE ");
+        // The row alias has the same column names as the table, so target columns are qualified.
+        var table = insert.Table.Name;
         if (upsert.IgnoreOnConflict || upsert.UpdateSet.Count == 0)
         {
             // A no-op assignment ignores only duplicate keys (INSERT IGNORE would also hide truncation and other errors).
             var key = upsert.ConflictColumns.Count > 0 ? upsert.ConflictColumns[0] : insert.Columns[0];
-            w.Identifier(key).Append(" = ").Identifier(key);
+            w.Identifier(table).Append('.').Identifier(key).Append(" = ").Identifier(table).Append('.').Identifier(key);
             return;
         }
-        w.List(upsert.UpdateSet, static (writer, s) => writer.Identifier(s.Column).Append(" = ").Expr(s.Value));
+        w.List(upsert.UpdateSet, (writer, s) => writer.Identifier(table).Append('.').Identifier(s.Column).Append(" = ")
+            .Expr(QualifyColumns(s.Value, table)));
     }
 }

@@ -179,6 +179,22 @@ public abstract class SqlDialect
     /// <summary>How many times an upsert binds each row's parameters (SQL Server's two-statement upsert binds them twice).</summary>
     public virtual int UpsertParameterMultiplier => 1;
 
+    /// <summary>
+    /// Qualifies bare column references in <paramref name="expression"/> with <paramref name="table"/>, for upserts whose
+    /// incoming-row alias has the same column names as the target (MySQL row alias, SQL Server VALUES source).
+    /// </summary>
+    protected static SqlExpr QualifyColumns(SqlExpr expression, string table) => expression switch
+    {
+        ColumnExpr { Table: null } column => column with { Table = table },
+        BinaryExpr b => b with { Left = QualifyColumns(b.Left, table), Right = QualifyColumns(b.Right, table) },
+        UnaryExpr u => u with { Operand = QualifyColumns(u.Operand, table) },
+        FunctionExpr f => f with { Arguments = f.Arguments.Select(a => QualifyColumns(a, table)).ToArray() },
+        IsNullExpr n => n with { Operand = QualifyColumns(n.Operand, table) },
+        CaseExpr c => new CaseExpr(c.Whens.Select(x => new CaseWhen(QualifyColumns(x.When, table), QualifyColumns(x.Then, table))).ToArray(),
+            c.Else is null ? null : QualifyColumns(c.Else, table)),
+        _ => expression,
+    };
+
     /// <summary>Writes the incoming value of a column in an upsert's update arm. Default: <c>EXCLUDED.col</c>.</summary>
     public virtual void RenderExcluded(SqlWriter w, string column) => w.Append("EXCLUDED.").Identifier(column);
 

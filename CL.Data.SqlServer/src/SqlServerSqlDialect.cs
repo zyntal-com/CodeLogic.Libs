@@ -196,7 +196,7 @@ public sealed class SqlServerSqlDialect : SqlDialect
         {
             w.Append("UPDATE ").Identifier(name).Append(" SET ");
             w.List(upsert.UpdateSet, (writer, s) => writer.Identifier(name).Append('.').Identifier(s.Column).Append(" = ")
-                .Expr(Qualify(s.Value, name)));
+                .Expr(QualifyColumns(s.Value, name)));
             w.Append(" FROM ").Table(target).Append(" WITH (UPDLOCK, SERIALIZABLE) INNER JOIN ");
             Source(w, insert);
             w.Append(" ON ");
@@ -230,17 +230,4 @@ public sealed class SqlServerSqlDialect : SqlDialect
             w.Identifier(table).Append('.').Identifier(keys[i]).Append(" = ").Identifier(ExcludedAlias).Append('.').Identifier(keys[i]);
         }
     }
-
-    /// <summary>Qualifies bare column references with the target table (both the target and the source have the column).</summary>
-    private static SqlExpr Qualify(SqlExpr expression, string table) => expression switch
-    {
-        ColumnExpr { Table: null } column => column with { Table = table },
-        BinaryExpr b => b with { Left = Qualify(b.Left, table), Right = Qualify(b.Right, table) },
-        UnaryExpr u => u with { Operand = Qualify(u.Operand, table) },
-        FunctionExpr f => f with { Arguments = f.Arguments.Select(a => Qualify(a, table)).ToArray() },
-        IsNullExpr n => n with { Operand = Qualify(n.Operand, table) },
-        CaseExpr c => new CaseExpr(c.Whens.Select(x => new CaseWhen(Qualify(x.When, table), Qualify(x.Then, table))).ToArray(),
-            c.Else is null ? null : Qualify(c.Else, table)),
-        _ => expression,
-    };
 }

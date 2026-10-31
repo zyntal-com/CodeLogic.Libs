@@ -138,7 +138,7 @@ public sealed class DialectGoldenTests
             UpdateSet = [new("Hits", B(SqlBinaryOperator.Add, C("Hits"), new ExcludedExpr("Hits")))],
         };
         Golden(upsert,
-            "INSERT INTO `counters` (`Key`, `Hits`) VALUES (@p0, @p1) AS `excluded` ON DUPLICATE KEY UPDATE `Hits` = `Hits` + `excluded`.`Hits`",
+            "INSERT INTO `counters` (`Key`, `Hits`) VALUES (@p0, @p1) AS `excluded` ON DUPLICATE KEY UPDATE `counters`.`Hits` = `counters`.`Hits` + `excluded`.`Hits`",
             "INSERT INTO \"counters\" (\"Key\", \"Hits\") VALUES (@p0, @p1) ON CONFLICT (\"Key\") DO UPDATE SET \"Hits\" = \"Hits\" + EXCLUDED.\"Hits\"",
             "UPDATE [counters] SET [counters].[Hits] = [counters].[Hits] + [excluded].[Hits] FROM [counters] WITH (UPDLOCK, SERIALIZABLE) " +
             "INNER JOIN ( VALUES (@p0, @p1)) AS [excluded] ([Key], [Hits]) ON [counters].[Key] = [excluded].[Key];\n" +
@@ -147,7 +147,7 @@ public sealed class DialectGoldenTests
             "INSERT INTO \"counters\" (\"Key\", \"Hits\") VALUES (@p0, @p1) ON CONFLICT (\"Key\") DO UPDATE SET \"Hits\" = \"Hits\" + EXCLUDED.\"Hits\"");
 
         var ignore = upsert with { IgnoreOnConflict = true };
-        Assert.EndsWith("ON DUPLICATE KEY UPDATE `Key` = `Key`", SqlWriter.Render(ignore, MySql).Text);
+        Assert.EndsWith("ON DUPLICATE KEY UPDATE `counters`.`Key` = `counters`.`Key`", SqlWriter.Render(ignore, MySql).Text);
         Assert.StartsWith("INSERT INTO [counters]", SqlWriter.Render(ignore, Mssql).Text);
         Assert.Equal(2, SqlWriter.Render(ignore, Mssql).Parameters.Count);
     }
