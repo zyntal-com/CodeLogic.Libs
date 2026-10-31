@@ -475,7 +475,7 @@ public sealed class NeedsReviewTransferTests
         {
             Move = async (from, to, options, token) =>
             {
-                var copied = await local.CopyAsync(from, to, options with { SourceVersionId = null, ExpectedSourceETag = null }, token);
+                var copied = await local.CopyAsync(from, to, (options ?? new()) with { SourceVersionId = null, ExpectedSourceETag = null }, token);
                 return copied.IsFailure ? copied : Result.Failure(StorageErrors.PartialFailure("The source could not be deleted.",
                     $"sourceDeleteError=storage.permission_denied;{StorageErrorInfo.DestinationStateKey}=complete;{StorageErrorInfo.LeftBehindKey}={from}"));
             }
