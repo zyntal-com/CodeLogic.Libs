@@ -129,6 +129,21 @@ public static class GeneratedMapping
         return (TProperty)converted!;
     }
 
+    /// <summary>Equality used by snapshots: byte arrays by content, everything else by <see cref="EqualityComparer{T}.Default"/>.</summary>
+    public static bool Same<T>(T a, T b) =>
+        a is byte[] x && b is byte[] y ? x.AsSpan().SequenceEqual(y) : EqualityComparer<T>.Default.Equals(a, b);
+
+    /// <summary>A snapshot copy of <paramref name="value"/>: byte arrays are cloned so changes made in place are seen.</summary>
+    public static T Copy<T>(T value) => value is byte[] bytes ? (T)(object)bytes.ToArray() : value;
+
+    /// <summary>The stored form of <paramref name="value"/> through the column's converter (snapshots compare converter columns this way).</summary>
+    public static object? Store<T>(T value, ColumnMap column) =>
+        value is null || column.Converter is not { } converter ? null : Copy(converter.ToStoreObject(value));
+
+    /// <summary>Equality of two stored values (byte arrays by content).</summary>
+    public static bool SameStore(object? a, object? b) =>
+        a is byte[] x && b is byte[] y ? x.AsSpan().SequenceEqual(y) : Equals(a, b);
+
     /// <summary>The exception generated accessors throw for a property they cannot set.</summary>
     public static NotSupportedException NotSettable(Type type, ColumnMap column) =>
         new($"'{type.Name}.{column.PropertyName}' has no public setter.");

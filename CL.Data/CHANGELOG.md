@@ -229,3 +229,11 @@
   - **CLD001** (warning): the type cannot use generated mapping, so it falls back to reflection, which Native AOT doesn't support.
 - **Native AOT:** the `samples/Data.AotSmoke` app does CRUD, LINQ queries (expression trees run interpreted), plan-cached repeats, transactions, schema sync and raw SQL on SQLite as a 6.6 MB native executable. The publish has no trim/AOT warnings from CL.Data, CL.Common or CodeLogic, and CI (`data-aot`) publishes and runs it.
   - **MySqlConnector and Npgsql:** add no warnings either.
+- **Changed-column updates:** these write only the columns that changed, plus audit columns and the concurrency token, and send nothing when nothing changed.
+  - **`Repository.UpdateAsync(entity, change)`:** applies your change, then writes the difference.
+  - **`UpdateAsync(entity, snapshot)`:** writes what changed since `Repository.Snapshot(entity)`.
+  - **`UpdateChangedAsync(original, modified)`:** for detached copies.
+  - **Accessors:** both kinds implement `IEntityAccessor<T>.Snapshot`. Generated snapshots keep typed fields and compare without boxing.
+  - **In-place changes:** byte arrays are copied and converter columns are compared in stored form, so they are detected.
+  - **Effect:** a concurrent change to another column is no longer overwritten.
+- **Breaking:** `IEntityAccessor<T>` gains `Snapshot`.

@@ -37,4 +37,7 @@ public interface IEntityAccessor<T>
 
     /// <summary>The entity's primary-key value.</summary>
     EntityKey GetKey(T entity);
+
+    /// <summary>The current column values of <paramref name="entity"/>, to find out later which columns changed.</summary>
+    EntitySnapshot<T> Snapshot(T entity);
 }

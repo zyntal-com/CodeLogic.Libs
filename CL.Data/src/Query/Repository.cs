@@ -73,6 +73,51 @@ public sealed class Repository<T>
         return UpdateCoreAsync(entity, names, ct);
     }
 
+    /// <summary>The current column values of <paramref name="entity"/>; pass it to <see cref="UpdateAsync(T, EntitySnapshot{T}, CancellationToken)"/> later.</summary>
+    public Result<EntitySnapshot<T>> Snapshot(T entity)
+    {
+        ArgumentNullException.ThrowIfNull(entity);
+        var accessor = Accessor();
+        return accessor.IsFailure ? accessor.Error! : Result<EntitySnapshot<T>>.Success(accessor.Value!.Snapshot(entity));
+    }
+
+    /// <summary>
+    /// Writes only the columns of <paramref name="entity"/> that changed since <paramref name="since"/> (plus audit columns and
+    /// the concurrency token). When nothing changed, nothing is sent to the database.
+    /// </summary>
+    public async ValueTask<Result<T>> UpdateAsync(T entity, EntitySnapshot<T> since, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(entity);
+        ArgumentNullException.ThrowIfNull(since);
+        var accessor = Accessor();
+        if (accessor.IsFailure) return accessor.Error!;
+        var changed = since.ChangedProperties(entity, accessor.Value!.Map);
+        return changed.Count == 0 ? entity : await UpdateCoreAsync(entity, changed, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Applies <paramref name="change"/> to <paramref name="entity"/> and writes only the columns it changed. When it changed
+    /// nothing, nothing is sent to the database.
+    /// </summary>
+    public ValueTask<Result<T>> UpdateAsync(T entity, Action<T> change, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(change);
+        var snapshot = Snapshot(entity);
+        if (snapshot.IsFailure) return ValueTask.FromResult<Result<T>>(snapshot.Error!);
+        change(entity);
+        return UpdateAsync(entity, snapshot.Value!, ct);
+    }
+
+    /// <summary>
+    /// Writes the columns where <paramref name="modified"/> differs from <paramref name="original"/> (detached objects, for
+    /// example a stored copy and an edited DTO-mapped instance). When they are equal, nothing is sent to the database.
+    /// </summary>
+    public ValueTask<Result<T>> UpdateChangedAsync(T original, T modified, CancellationToken ct = default)
+    {
+        var snapshot = Snapshot(original);
+        return snapshot.IsFailure ? ValueTask.FromResult<Result<T>>(snapshot.Error!) : UpdateAsync(modified, snapshot.Value!, ct);
+    }
+
     private async ValueTask<Result<T>> UpdateCoreAsync(T entity, IReadOnlyCollection<string>? only, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(entity);

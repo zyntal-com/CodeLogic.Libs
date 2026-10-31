@@ -117,6 +117,31 @@ internal sealed class ReflectionEntityAccessor<T> : IEntityAccessor<T>
         };
     }
 
+    public EntitySnapshot<T> Snapshot(T entity) => new ReflectionSnapshot(this, entity);
+
+    /// <summary>Boxed column values (stored form for converter columns, copies of byte arrays).</summary>
+    private sealed class ReflectionSnapshot : EntitySnapshot<T>
+    {
+        private readonly ReflectionEntityAccessor<T> _owner;
+        private readonly object?[] _values;
+
+        public ReflectionSnapshot(ReflectionEntityAccessor<T> owner, T entity)
+        {
+            _owner = owner;
+            _values = new object?[owner._getters.Length];
+            for (var i = 0; i < _values.Length; i++) _values[i] = Capture(owner, entity, i);
+        }
+
+        public override bool IsChanged(T entity, int column) => !GeneratedMapping.SameStore(_values[column], Capture(_owner, entity, column));
+
+        private static object? Capture(ReflectionEntityAccessor<T> owner, T entity, int column)
+        {
+            var value = owner._getters[column](entity);
+            var map = owner.Map.Columns[column];
+            return map.Converter is not null ? GeneratedMapping.Store(value, map) : GeneratedMapping.Copy(value);
+        }
+    }
+
     private static object? Read(DbDataReader reader, int ordinal, ColumnMap column)
     {
         if (reader.IsDBNull(ordinal))

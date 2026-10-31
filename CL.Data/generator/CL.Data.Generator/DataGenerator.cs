@@ -169,6 +169,35 @@ internal static class EntityEmitter
         sb.Append("                for (var i = 0; i < values.Length; i++) values[i] = GetValue(entity, key[i].Ordinal);\n");
         sb.Append("                return global::CL.Data.Mapping.EntityKey.Of((global::System.ReadOnlySpan<object?>)values);\n        }\n    }\n");
 
+        // Snapshot: typed copies of every column (stored form for converter columns), compared without boxing.
+        sb.Append("\n    public global::CL.Data.Mapping.EntitySnapshot<").Append(typeName).Append("> Snapshot(").Append(typeName)
+          .Append(" entity) => new Snap(entity, Map.Columns);\n\n");
+        sb.Append("    private sealed class Snap : global::CL.Data.Mapping.EntitySnapshot<").Append(typeName).Append(">\n    {\n");
+        sb.Append("        private readonly global::System.Collections.Generic.IReadOnlyList<global::CL.Data.Mapping.ColumnMap> _columns;\n");
+        for (var i = 0; i < mapped.Count; i++)
+            sb.Append("        private readonly ").Append(mapped[i].TypeName).Append(!mapped[i].Type.IsValueType ? "?" : "")
+              .Append(" _v").Append(i).Append(";\n        private readonly object? _s").Append(i).Append(";\n");
+        sb.Append("\n        public Snap(").Append(typeName).Append(" entity, global::System.Collections.Generic.IReadOnlyList<global::CL.Data.Mapping.ColumnMap> columns)\n        {\n");
+        sb.Append("            _columns = columns;\n");
+        for (var i = 0; i < mapped.Count; i++)
+        {
+            var name = mapped[i].Name;
+            sb.Append("            if (columns[").Append(i).Append("].Converter is null) _v").Append(i).Append(" = global::CL.Data.Mapping.GeneratedMapping.Copy(entity.")
+              .Append(name).Append("); else _s").Append(i).Append(" = global::CL.Data.Mapping.GeneratedMapping.Store(entity.").Append(name)
+              .Append(", columns[").Append(i).Append("]);\n");
+        }
+        sb.Append("        }\n\n");
+        sb.Append("        public override bool IsChanged(").Append(typeName).Append(" entity, int column) => column switch\n        {\n");
+        for (var i = 0; i < mapped.Count; i++)
+        {
+            var name = mapped[i].Name;
+            sb.Append("            ").Append(i).Append(" => _columns[").Append(i).Append("].Converter is null\n");
+            sb.Append("                ? !global::CL.Data.Mapping.GeneratedMapping.Same(_v").Append(i).Append(", entity.").Append(name).Append(")\n");
+            sb.Append("                : !global::CL.Data.Mapping.GeneratedMapping.SameStore(_s").Append(i).Append(", global::CL.Data.Mapping.GeneratedMapping.Store(entity.")
+              .Append(name).Append(", _columns[").Append(i).Append("])),\n");
+        }
+        sb.Append("            _ => throw new global::System.ArgumentOutOfRangeException(nameof(column)),\n        };\n    }\n");
+
         // Init-only setters through UnsafeAccessor (no reflection, AOT-safe).
         foreach (var p in mapped.Where(p => p.Setter == SetterKind.Init))
         {
