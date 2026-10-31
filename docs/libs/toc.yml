@@ -81,6 +81,18 @@
 - name: CL.GitHelper
   href: githelper.md
 
+- name: Media
+- name: CL.Imaging
+  items:
+    - name: Overview
+      href: imaging/index.md
+    - name: Editing
+      href: imaging/editing.md
+    - name: Metadata
+      href: imaging/metadata.md
+    - name: Analysis
+      href: imaging/analysis.md
+
 - name: Utilities
 - name: CL.Common
   items:
