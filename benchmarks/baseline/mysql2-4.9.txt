@@ -1,0 +1,692 @@
+// Validating benchmarks:
+//    * No exporters defined, results will not be persisted.
+
+// ***** BenchmarkRunner: Start   *****
+// ***** Found 6 benchmark(s) in total *****
+// ***** Building 1 exe(s) in Parallel: Start   *****
+// ***** Done, took 00:00:00 (0.03 sec)   *****
+// Found 6 benchmarks:
+//   MySql2Benchmarks.MySQL2_Count: Job-IWBRKJ(Toolchain=InProcessEmitToolchain, IterationCount=10, LaunchCount=1, WarmupCount=3)
+//   MySql2Benchmarks.MySQL2_Filter100: Job-IWBRKJ(Toolchain=InProcessEmitToolchain, IterationCount=10, LaunchCount=1, WarmupCount=3)
+//   MySql2Benchmarks.MySQL2_GetById: Job-IWBRKJ(Toolchain=InProcessEmitToolchain, IterationCount=10, LaunchCount=1, WarmupCount=3)
+//   MySql2Benchmarks.MySQL2_Insert: Job-IWBRKJ(Toolchain=InProcessEmitToolchain, IterationCount=10, LaunchCount=1, WarmupCount=3)
+//   MySql2Benchmarks.MySQL2_InsertMany100: Job-IWBRKJ(Toolchain=InProcessEmitToolchain, IterationCount=10, LaunchCount=1, WarmupCount=3)
+//   MySql2Benchmarks.MySQL2_Update: Job-IWBRKJ(Toolchain=InProcessEmitToolchain, IterationCount=10, LaunchCount=1, WarmupCount=3)
+
+Setup power plan (GUID: 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c FriendlyName: High performance)
+// **************************
+// Benchmark: MySql2Benchmarks.MySQL2_Count: Job-IWBRKJ(Toolchain=InProcessEmitToolchain, IterationCount=10, LaunchCount=1, WarmupCount=3)
+// *** Execute ***
+// Launch: 1 / 1
+
+// Benchmark Process Environment Information:
+// BenchmarkDotNet v0.15.4
+// Runtime=.NET 10.0.14 (10.0.14, 10.0.1426.52326), X64 RyuJIT x86-64-v4
+// GC=Concurrent Workstation
+// HardwareIntrinsics=AVX512 BITALG+VBMI2+VNNI+VPOPCNTDQ,AVX512 IFMA+VBMI,AVX512 F+BW+CD+DQ+VL,AVX2+BMI1+BMI2+F16C+FMA+LZCNT+MOVBE,AVX,SSE3+SSSE3+SSE4.1+SSE4.2+POPCNT,X86Base+SSE+SSE2,AES+PCLMUL,AvxVnni VectorSize=256
+// Job: Job-IWBRKJ(Toolchain=InProcessEmitToolchain, IterationCount=10, LaunchCount=1, WarmupCount=3)
+
+
+  First run detected - scaffolding directory structure...
+  Created 8 directories
+
+[CODELOGIC][DESKTOP-L6R9SKI] 2026-10-31 15:39:25.459 [INFO] Framework initialized
+[CODELOGIC][DESKTOP-L6R9SKI] 2026-10-31 15:39:25.461 [INFO]   Machine  : DESKTOP-L6R9SKI
+[CODELOGIC][DESKTOP-L6R9SKI] 2026-10-31 15:39:25.461 [INFO]   App      : 1.0.0
+[CODELOGIC][DESKTOP-L6R9SKI] 2026-10-31 15:39:25.461 [INFO]   Debug    : False
+[CODELOGIC][DESKTOP-L6R9SKI] 2026-10-31 15:39:25.462 [INFO]   Root     : C:\Users\claus\AppData\Local\Temp\cl-mysql2-bench-df387bb2
+[CODELOGIC][DESKTOP-L6R9SKI] 2026-10-31 15:39:25.462 [INFO]   App path : C:\Users\claus\AppData\Local\Temp\cl-mysql2-bench-df387bb2\Application
+[CODELOGIC][DESKTOP-L6R9SKI] 2026-10-31 15:39:25.463 [INFO] Library manager created - ready for Libraries.LoadAsync<T>()
+  ✓ Manually loaded: MySQL2 Library v4.9.107
+  ✓ Configured: MySQL2 Library
+  ✓ Initialized: MySQL2 Library
+  ✓ Started: MySQL2 Library
+OverheadJitting  1: 1 op, 199800.00 ns, 199.8000 us/op
+WorkloadJitting  1: 1 op, 11687500.00 ns, 11.6875 ms/op
+
+OverheadJitting  2: 16 op, 350100.00 ns, 21.8813 us/op
+WorkloadJitting  2: 16 op, 28833900.00 ns, 1.8021 ms/op
+
+WorkloadPilot    1: 16 op, 28025200.00 ns, 1.7516 ms/op
+WorkloadPilot    2: 32 op, 54875200.00 ns, 1.7149 ms/op
+WorkloadPilot    3: 64 op, 111246400.00 ns, 1.7382 ms/op
+WorkloadPilot    4: 128 op, 228166500.00 ns, 1.7826 ms/op
+WorkloadPilot    5: 256 op, 445273900.00 ns, 1.7394 ms/op
+WorkloadPilot    6: 512 op, 904079900.00 ns, 1.7658 ms/op
+
+OverheadWarmup   1: 512 op, 3300.00 ns, 6.4453 ns/op
+OverheadWarmup   2: 512 op, 1400.00 ns, 2.7344 ns/op
+OverheadWarmup   3: 512 op, 1400.00 ns, 2.7344 ns/op
+OverheadWarmup   4: 512 op, 1400.00 ns, 2.7344 ns/op
+OverheadWarmup   5: 512 op, 1400.00 ns, 2.7344 ns/op
+OverheadWarmup   6: 512 op, 1400.00 ns, 2.7344 ns/op
+
+OverheadActual   1: 512 op, 1500.00 ns, 2.9297 ns/op
+OverheadActual   2: 512 op, 1400.00 ns, 2.7344 ns/op
+OverheadActual   3: 512 op, 1400.00 ns, 2.7344 ns/op
+OverheadActual   4: 512 op, 1400.00 ns, 2.7344 ns/op
+OverheadActual   5: 512 op, 1400.00 ns, 2.7344 ns/op
+OverheadActual   6: 512 op, 1400.00 ns, 2.7344 ns/op
+OverheadActual   7: 512 op, 1400.00 ns, 2.7344 ns/op
+OverheadActual   8: 512 op, 1100.00 ns, 2.1484 ns/op
+OverheadActual   9: 512 op, 1000.00 ns, 1.9531 ns/op
+OverheadActual  10: 512 op, 1000.00 ns, 1.9531 ns/op
+OverheadActual  11: 512 op, 1000.00 ns, 1.9531 ns/op
+OverheadActual  12: 512 op, 1000.00 ns, 1.9531 ns/op
+OverheadActual  13: 512 op, 1000.00 ns, 1.9531 ns/op
+OverheadActual  14: 512 op, 1000.00 ns, 1.9531 ns/op
+OverheadActual  15: 512 op, 1000.00 ns, 1.9531 ns/op
+OverheadActual  16: 512 op, 1000.00 ns, 1.9531 ns/op
+OverheadActual  17: 512 op, 1000.00 ns, 1.9531 ns/op
+OverheadActual  18: 512 op, 1300.00 ns, 2.5391 ns/op
+OverheadActual  19: 512 op, 1000.00 ns, 1.9531 ns/op
+OverheadActual  20: 512 op, 1400.00 ns, 2.7344 ns/op
+
+WorkloadWarmup   1: 512 op, 872620800.00 ns, 1.7043 ms/op
+WorkloadWarmup   2: 512 op, 834413200.00 ns, 1.6297 ms/op
+WorkloadWarmup   3: 512 op, 820118700.00 ns, 1.6018 ms/op
+
+WorkloadActual   1: 512 op, 866263100.00 ns, 1.6919 ms/op
+WorkloadActual   2: 512 op, 826609400.00 ns, 1.6145 ms/op
+WorkloadActual   3: 512 op, 849197600.00 ns, 1.6586 ms/op
+WorkloadActual   4: 512 op, 833954300.00 ns, 1.6288 ms/op
+WorkloadActual   5: 512 op, 784692500.00 ns, 1.5326 ms/op
+WorkloadActual   6: 512 op, 797118600.00 ns, 1.5569 ms/op
+WorkloadActual   7: 512 op, 832586500.00 ns, 1.6261 ms/op
+WorkloadActual   8: 512 op, 819768000.00 ns, 1.6011 ms/op
+WorkloadActual   9: 512 op, 817479500.00 ns, 1.5966 ms/op
+WorkloadActual  10: 512 op, 805878100.00 ns, 1.5740 ms/op
+
+WorkloadResult   1: 512 op, 866262050.00 ns, 1.6919 ms/op
+WorkloadResult   2: 512 op, 826608350.00 ns, 1.6145 ms/op
+WorkloadResult   3: 512 op, 849196550.00 ns, 1.6586 ms/op
+WorkloadResult   4: 512 op, 833953250.00 ns, 1.6288 ms/op
+WorkloadResult   5: 512 op, 784691450.00 ns, 1.5326 ms/op
+WorkloadResult   6: 512 op, 797117550.00 ns, 1.5569 ms/op
+WorkloadResult   7: 512 op, 832585450.00 ns, 1.6261 ms/op
+WorkloadResult   8: 512 op, 819766950.00 ns, 1.6011 ms/op
+WorkloadResult   9: 512 op, 817478450.00 ns, 1.5966 ms/op
+WorkloadResult  10: 512 op, 805877050.00 ns, 1.5740 ms/op
+// GC:  0 0 0 9529784 512
+// Threading:  1197 2 512
+
+
+Mean = 1.608 ms, StdErr = 0.015 ms (0.93%), N = 10, StdDev = 0.047 ms
+Min = 1.533 ms, Q1 = 1.580 ms, Median = 1.608 ms, Q3 = 1.628 ms, Max = 1.692 ms
+IQR = 0.049 ms, LowerFence = 1.507 ms, UpperFence = 1.701 ms
+ConfidenceInterval = [1.537 ms; 1.679 ms] (CI 99.9%), Margin = 0.071 ms (4.44% of Mean)
+Skewness = 0.12, Kurtosis = 1.95, MValue = 2
+
+// ** Remained 5 (83,3 %) benchmark(s) to run. Estimated finish 2026-10-31 15:40 (0h 1m from now) **
+Setup power plan (GUID: 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c FriendlyName: High performance)
+// **************************
+// Benchmark: MySql2Benchmarks.MySQL2_Filter100: Job-IWBRKJ(Toolchain=InProcessEmitToolchain, IterationCount=10, LaunchCount=1, WarmupCount=3)
+// *** Execute ***
+// Launch: 1 / 1
+
+// Benchmark Process Environment Information:
+// BenchmarkDotNet v0.15.4
+// Runtime=.NET 10.0.14 (10.0.14, 10.0.1426.52326), X64 RyuJIT x86-64-v4
+// GC=Concurrent Workstation
+// HardwareIntrinsics=AVX512 BITALG+VBMI2+VNNI+VPOPCNTDQ,AVX512 IFMA+VBMI,AVX512 F+BW+CD+DQ+VL,AVX2+BMI1+BMI2+F16C+FMA+LZCNT+MOVBE,AVX,SSE3+SSSE3+SSE4.1+SSE4.2+POPCNT,X86Base+SSE+SSE2,AES+PCLMUL,AvxVnni VectorSize=256
+// Job: Job-IWBRKJ(Toolchain=InProcessEmitToolchain, IterationCount=10, LaunchCount=1, WarmupCount=3)
+
+OverheadJitting  1: 1 op, 309600.00 ns, 309.6000 us/op
+WorkloadJitting  1: 1 op, 4261400.00 ns, 4.2614 ms/op
+
+OverheadJitting  2: 16 op, 452700.00 ns, 28.2938 us/op
+WorkloadJitting  2: 16 op, 29734400.00 ns, 1.8584 ms/op
+
+WorkloadPilot    1: 16 op, 28937300.00 ns, 1.8086 ms/op
+WorkloadPilot    2: 32 op, 57074800.00 ns, 1.7836 ms/op
+WorkloadPilot    3: 64 op, 109292300.00 ns, 1.7077 ms/op
+WorkloadPilot    4: 128 op, 212738900.00 ns, 1.6620 ms/op
+WorkloadPilot    5: 256 op, 412979800.00 ns, 1.6132 ms/op
+WorkloadPilot    6: 512 op, 827654400.00 ns, 1.6165 ms/op
+
+OverheadWarmup   1: 512 op, 5000.00 ns, 9.7656 ns/op
+OverheadWarmup   2: 512 op, 1800.00 ns, 3.5156 ns/op
+OverheadWarmup   3: 512 op, 1800.00 ns, 3.5156 ns/op
+OverheadWarmup   4: 512 op, 1500.00 ns, 2.9297 ns/op
+OverheadWarmup   5: 512 op, 1600.00 ns, 3.1250 ns/op
+OverheadWarmup   6: 512 op, 1600.00 ns, 3.1250 ns/op
+
+OverheadActual   1: 512 op, 1600.00 ns, 3.1250 ns/op
+OverheadActual   2: 512 op, 2200.00 ns, 4.2969 ns/op
+OverheadActual   3: 512 op, 1600.00 ns, 3.1250 ns/op
+OverheadActual   4: 512 op, 2000.00 ns, 3.9063 ns/op
+OverheadActual   5: 512 op, 1800.00 ns, 3.5156 ns/op
+OverheadActual   6: 512 op, 1600.00 ns, 3.1250 ns/op
+OverheadActual   7: 512 op, 1800.00 ns, 3.5156 ns/op
+OverheadActual   8: 512 op, 1600.00 ns, 3.1250 ns/op
+OverheadActual   9: 512 op, 1500.00 ns, 2.9297 ns/op
+OverheadActual  10: 512 op, 1800.00 ns, 3.5156 ns/op
+OverheadActual  11: 512 op, 1500.00 ns, 2.9297 ns/op
+OverheadActual  12: 512 op, 1700.00 ns, 3.3203 ns/op
+OverheadActual  13: 512 op, 1500.00 ns, 2.9297 ns/op
+OverheadActual  14: 512 op, 1700.00 ns, 3.3203 ns/op
+OverheadActual  15: 512 op, 1700.00 ns, 3.3203 ns/op
+OverheadActual  16: 512 op, 1700.00 ns, 3.3203 ns/op
+OverheadActual  17: 512 op, 1600.00 ns, 3.1250 ns/op
+OverheadActual  18: 512 op, 1600.00 ns, 3.1250 ns/op
+OverheadActual  19: 512 op, 1700.00 ns, 3.3203 ns/op
+OverheadActual  20: 512 op, 2100.00 ns, 4.1016 ns/op
+
+WorkloadWarmup   1: 512 op, 825496300.00 ns, 1.6123 ms/op
+WorkloadWarmup   2: 512 op, 817683400.00 ns, 1.5970 ms/op
+WorkloadWarmup   3: 512 op, 797175200.00 ns, 1.5570 ms/op
+
+WorkloadActual   1: 512 op, 800366200.00 ns, 1.5632 ms/op
+WorkloadActual   2: 512 op, 829812500.00 ns, 1.6207 ms/op
+WorkloadActual   3: 512 op, 834057700.00 ns, 1.6290 ms/op
+WorkloadActual   4: 512 op, 827037600.00 ns, 1.6153 ms/op
+WorkloadActual   5: 512 op, 827275600.00 ns, 1.6158 ms/op
+WorkloadActual   6: 512 op, 842743800.00 ns, 1.6460 ms/op
+WorkloadActual   7: 512 op, 828430400.00 ns, 1.6180 ms/op
+WorkloadActual   8: 512 op, 814239000.00 ns, 1.5903 ms/op
+WorkloadActual   9: 512 op, 820847200.00 ns, 1.6032 ms/op
+WorkloadActual  10: 512 op, 806699800.00 ns, 1.5756 ms/op
+
+WorkloadResult   1: 512 op, 800364500.00 ns, 1.5632 ms/op
+WorkloadResult   2: 512 op, 829810800.00 ns, 1.6207 ms/op
+WorkloadResult   3: 512 op, 834056000.00 ns, 1.6290 ms/op
+WorkloadResult   4: 512 op, 827035900.00 ns, 1.6153 ms/op
+WorkloadResult   5: 512 op, 827273900.00 ns, 1.6158 ms/op
+WorkloadResult   6: 512 op, 842742100.00 ns, 1.6460 ms/op
+WorkloadResult   7: 512 op, 828428700.00 ns, 1.6180 ms/op
+WorkloadResult   8: 512 op, 814237300.00 ns, 1.5903 ms/op
+WorkloadResult   9: 512 op, 820845500.00 ns, 1.6032 ms/op
+WorkloadResult  10: 512 op, 806698100.00 ns, 1.5756 ms/op
+// GC:  1 0 0 31606344 512
+// Threading:  1192 1 512
+
+
+Mean = 1.608 ms, StdErr = 0.008 ms (0.49%), N = 10, StdDev = 0.025 ms
+Min = 1.563 ms, Q1 = 1.594 ms, Median = 1.616 ms, Q3 = 1.620 ms, Max = 1.646 ms
+IQR = 0.027 ms, LowerFence = 1.554 ms, UpperFence = 1.660 ms
+ConfidenceInterval = [1.570 ms; 1.646 ms] (CI 99.9%), Margin = 0.038 ms (2.36% of Mean)
+Skewness = -0.36, Kurtosis = 1.9, MValue = 2
+
+// ** Remained 4 (66,7 %) benchmark(s) to run. Estimated finish 2026-10-31 15:40 (0h 0m from now) **
+Setup power plan (GUID: 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c FriendlyName: High performance)
+// **************************
+// Benchmark: MySql2Benchmarks.MySQL2_GetById: Job-IWBRKJ(Toolchain=InProcessEmitToolchain, IterationCount=10, LaunchCount=1, WarmupCount=3)
+// *** Execute ***
+// Launch: 1 / 1
+
+// Benchmark Process Environment Information:
+// BenchmarkDotNet v0.15.4
+// Runtime=.NET 10.0.14 (10.0.14, 10.0.1426.52326), X64 RyuJIT x86-64-v4
+// GC=Concurrent Workstation
+// HardwareIntrinsics=AVX512 BITALG+VBMI2+VNNI+VPOPCNTDQ,AVX512 IFMA+VBMI,AVX512 F+BW+CD+DQ+VL,AVX2+BMI1+BMI2+F16C+FMA+LZCNT+MOVBE,AVX,SSE3+SSSE3+SSE4.1+SSE4.2+POPCNT,X86Base+SSE+SSE2,AES+PCLMUL,AvxVnni VectorSize=256
+// Job: Job-IWBRKJ(Toolchain=InProcessEmitToolchain, IterationCount=10, LaunchCount=1, WarmupCount=3)
+
+OverheadJitting  1: 1 op, 345800.00 ns, 345.8000 us/op
+WorkloadJitting  1: 1 op, 6498600.00 ns, 6.4986 ms/op
+
+OverheadJitting  2: 16 op, 464200.00 ns, 29.0125 us/op
+WorkloadJitting  2: 16 op, 23200300.00 ns, 1.4500 ms/op
+
+WorkloadPilot    1: 16 op, 23207700.00 ns, 1.4505 ms/op
+WorkloadPilot    2: 32 op, 45206800.00 ns, 1.4127 ms/op
+WorkloadPilot    3: 64 op, 91325300.00 ns, 1.4270 ms/op
+WorkloadPilot    4: 128 op, 180893500.00 ns, 1.4132 ms/op
+WorkloadPilot    5: 256 op, 369556200.00 ns, 1.4436 ms/op
+WorkloadPilot    6: 512 op, 742896300.00 ns, 1.4510 ms/op
+
+OverheadWarmup   1: 512 op, 5700.00 ns, 11.1328 ns/op
+OverheadWarmup   2: 512 op, 2600.00 ns, 5.0781 ns/op
+OverheadWarmup   3: 512 op, 2700.00 ns, 5.2734 ns/op
+OverheadWarmup   4: 512 op, 2900.00 ns, 5.6641 ns/op
+OverheadWarmup   5: 512 op, 2100.00 ns, 4.1016 ns/op
+OverheadWarmup   6: 512 op, 2100.00 ns, 4.1016 ns/op
+OverheadWarmup   7: 512 op, 2100.00 ns, 4.1016 ns/op
+
+OverheadActual   1: 512 op, 2700.00 ns, 5.2734 ns/op
+OverheadActual   2: 512 op, 2600.00 ns, 5.0781 ns/op
+OverheadActual   3: 512 op, 2400.00 ns, 4.6875 ns/op
+OverheadActual   4: 512 op, 2600.00 ns, 5.0781 ns/op
+OverheadActual   5: 512 op, 2200.00 ns, 4.2969 ns/op
+OverheadActual   6: 512 op, 2600.00 ns, 5.0781 ns/op
+OverheadActual   7: 512 op, 2500.00 ns, 4.8828 ns/op
+OverheadActual   8: 512 op, 2300.00 ns, 4.4922 ns/op
+OverheadActual   9: 512 op, 2300.00 ns, 4.4922 ns/op
+OverheadActual  10: 512 op, 2600.00 ns, 5.0781 ns/op
+OverheadActual  11: 512 op, 2300.00 ns, 4.4922 ns/op
+OverheadActual  12: 512 op, 2200.00 ns, 4.2969 ns/op
+OverheadActual  13: 512 op, 2300.00 ns, 4.4922 ns/op
+OverheadActual  14: 512 op, 2400.00 ns, 4.6875 ns/op
+OverheadActual  15: 512 op, 2600.00 ns, 5.0781 ns/op
+OverheadActual  16: 512 op, 2500.00 ns, 4.8828 ns/op
+OverheadActual  17: 512 op, 2600.00 ns, 5.0781 ns/op
+OverheadActual  18: 512 op, 2400.00 ns, 4.6875 ns/op
+OverheadActual  19: 512 op, 2800.00 ns, 5.4688 ns/op
+OverheadActual  20: 512 op, 3000.00 ns, 5.8594 ns/op
+
+WorkloadWarmup   1: 512 op, 754907900.00 ns, 1.4744 ms/op
+WorkloadWarmup   2: 512 op, 749089900.00 ns, 1.4631 ms/op
+WorkloadWarmup   3: 512 op, 737539700.00 ns, 1.4405 ms/op
+
+WorkloadActual   1: 512 op, 744907900.00 ns, 1.4549 ms/op
+WorkloadActual   2: 512 op, 770066200.00 ns, 1.5040 ms/op
+WorkloadActual   3: 512 op, 748349600.00 ns, 1.4616 ms/op
+WorkloadActual   4: 512 op, 776602600.00 ns, 1.5168 ms/op
+WorkloadActual   5: 512 op, 797965700.00 ns, 1.5585 ms/op
+WorkloadActual   6: 512 op, 797542600.00 ns, 1.5577 ms/op
+WorkloadActual   7: 512 op, 795280800.00 ns, 1.5533 ms/op
+WorkloadActual   8: 512 op, 775972600.00 ns, 1.5156 ms/op
+WorkloadActual   9: 512 op, 752558700.00 ns, 1.4698 ms/op
+WorkloadActual  10: 512 op, 773130800.00 ns, 1.5100 ms/op
+
+WorkloadResult   1: 512 op, 744905400.00 ns, 1.4549 ms/op
+WorkloadResult   2: 512 op, 770063700.00 ns, 1.5040 ms/op
+WorkloadResult   3: 512 op, 748347100.00 ns, 1.4616 ms/op
+WorkloadResult   4: 512 op, 776600100.00 ns, 1.5168 ms/op
+WorkloadResult   5: 512 op, 797963200.00 ns, 1.5585 ms/op
+WorkloadResult   6: 512 op, 797540100.00 ns, 1.5577 ms/op
+WorkloadResult   7: 512 op, 795278300.00 ns, 1.5533 ms/op
+WorkloadResult   8: 512 op, 775970100.00 ns, 1.5156 ms/op
+WorkloadResult   9: 512 op, 752556200.00 ns, 1.4698 ms/op
+WorkloadResult  10: 512 op, 773128300.00 ns, 1.5100 ms/op
+// GC:  0 0 0 8525560 512
+// Threading:  1172 0 512
+
+
+Mean = 1.510 ms, StdErr = 0.012 ms (0.81%), N = 10, StdDev = 0.039 ms
+Min = 1.455 ms, Q1 = 1.478 ms, Median = 1.513 ms, Q3 = 1.544 ms, Max = 1.559 ms
+IQR = 0.066 ms, LowerFence = 1.380 ms, UpperFence = 1.643 ms
+ConfidenceInterval = [1.451 ms; 1.569 ms] (CI 99.9%), Margin = 0.059 ms (3.89% of Mean)
+Skewness = -0.09, Kurtosis = 1.38, MValue = 2
+
+// ** Remained 3 (50,0 %) benchmark(s) to run. Estimated finish 2026-10-31 15:40 (0h 0m from now) **
+Setup power plan (GUID: 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c FriendlyName: High performance)
+// **************************
+// Benchmark: MySql2Benchmarks.MySQL2_Insert: Job-IWBRKJ(Toolchain=InProcessEmitToolchain, IterationCount=10, LaunchCount=1, WarmupCount=3)
+// *** Execute ***
+// Launch: 1 / 1
+
+// Benchmark Process Environment Information:
+// BenchmarkDotNet v0.15.4
+// Runtime=.NET 10.0.14 (10.0.14, 10.0.1426.52326), X64 RyuJIT x86-64-v4
+// GC=Concurrent Workstation
+// HardwareIntrinsics=AVX512 BITALG+VBMI2+VNNI+VPOPCNTDQ,AVX512 IFMA+VBMI,AVX512 F+BW+CD+DQ+VL,AVX2+BMI1+BMI2+F16C+FMA+LZCNT+MOVBE,AVX,SSE3+SSSE3+SSE4.1+SSE4.2+POPCNT,X86Base+SSE+SSE2,AES+PCLMUL,AvxVnni VectorSize=256
+// Job: Job-IWBRKJ(Toolchain=InProcessEmitToolchain, IterationCount=10, LaunchCount=1, WarmupCount=3)
+
+OverheadJitting  1: 1 op, 382700.00 ns, 382.7000 us/op
+WorkloadJitting  1: 1 op, 12405600.00 ns, 12.4056 ms/op
+
+OverheadJitting  2: 16 op, 486000.00 ns, 30.3750 us/op
+WorkloadJitting  2: 16 op, 70345900.00 ns, 4.3966 ms/op
+
+WorkloadPilot    1: 16 op, 72165700.00 ns, 4.5104 ms/op
+WorkloadPilot    2: 32 op, 142388500.00 ns, 4.4496 ms/op
+WorkloadPilot    3: 64 op, 268351600.00 ns, 4.1930 ms/op
+WorkloadPilot    4: 128 op, 494878400.00 ns, 3.8662 ms/op
+WorkloadPilot    5: 256 op, 1065407000.00 ns, 4.1617 ms/op
+
+OverheadWarmup   1: 256 op, 4600.00 ns, 17.9688 ns/op
+OverheadWarmup   2: 256 op, 1800.00 ns, 7.0313 ns/op
+OverheadWarmup   3: 256 op, 1700.00 ns, 6.6406 ns/op
+OverheadWarmup   4: 256 op, 1300.00 ns, 5.0781 ns/op
+OverheadWarmup   5: 256 op, 3100.00 ns, 12.1094 ns/op
+OverheadWarmup   6: 256 op, 1200.00 ns, 4.6875 ns/op
+OverheadWarmup   7: 256 op, 1700.00 ns, 6.6406 ns/op
+OverheadWarmup   8: 256 op, 1900.00 ns, 7.4219 ns/op
+OverheadWarmup   9: 256 op, 2000.00 ns, 7.8125 ns/op
+OverheadWarmup  10: 256 op, 1300.00 ns, 5.0781 ns/op
+
+OverheadActual   1: 256 op, 1300.00 ns, 5.0781 ns/op
+OverheadActual   2: 256 op, 1300.00 ns, 5.0781 ns/op
+OverheadActual   3: 256 op, 1300.00 ns, 5.0781 ns/op
+OverheadActual   4: 256 op, 1600.00 ns, 6.2500 ns/op
+OverheadActual   5: 256 op, 1000.00 ns, 3.9063 ns/op
+OverheadActual   6: 256 op, 600.00 ns, 2.3438 ns/op
+OverheadActual   7: 256 op, 1800.00 ns, 7.0313 ns/op
+OverheadActual   8: 256 op, 1400.00 ns, 5.4688 ns/op
+OverheadActual   9: 256 op, 1600.00 ns, 6.2500 ns/op
+OverheadActual  10: 256 op, 1600.00 ns, 6.2500 ns/op
+OverheadActual  11: 256 op, 1300.00 ns, 5.0781 ns/op
+OverheadActual  12: 256 op, 1500.00 ns, 5.8594 ns/op
+OverheadActual  13: 256 op, 1400.00 ns, 5.4688 ns/op
+OverheadActual  14: 256 op, 1500.00 ns, 5.8594 ns/op
+OverheadActual  15: 256 op, 1000.00 ns, 3.9063 ns/op
+OverheadActual  16: 256 op, 1300.00 ns, 5.0781 ns/op
+OverheadActual  17: 256 op, 1200.00 ns, 4.6875 ns/op
+OverheadActual  18: 256 op, 1200.00 ns, 4.6875 ns/op
+OverheadActual  19: 256 op, 1200.00 ns, 4.6875 ns/op
+OverheadActual  20: 256 op, 1500.00 ns, 5.8594 ns/op
+
+WorkloadWarmup   1: 256 op, 1144239200.00 ns, 4.4697 ms/op
+WorkloadWarmup   2: 256 op, 1045328100.00 ns, 4.0833 ms/op
+WorkloadWarmup   3: 256 op, 992424500.00 ns, 3.8767 ms/op
+
+WorkloadActual   1: 256 op, 997845600.00 ns, 3.8978 ms/op
+WorkloadActual   2: 256 op, 979869800.00 ns, 3.8276 ms/op
+WorkloadActual   3: 256 op, 982911700.00 ns, 3.8395 ms/op
+WorkloadActual   4: 256 op, 1023863500.00 ns, 3.9995 ms/op
+WorkloadActual   5: 256 op, 988260900.00 ns, 3.8604 ms/op
+WorkloadActual   6: 256 op, 990086400.00 ns, 3.8675 ms/op
+WorkloadActual   7: 256 op, 986638100.00 ns, 3.8541 ms/op
+WorkloadActual   8: 256 op, 1015990600.00 ns, 3.9687 ms/op
+WorkloadActual   9: 256 op, 1002392700.00 ns, 3.9156 ms/op
+WorkloadActual  10: 256 op, 988047000.00 ns, 3.8596 ms/op
+
+WorkloadResult   1: 256 op, 997844300.00 ns, 3.8978 ms/op
+WorkloadResult   2: 256 op, 979868500.00 ns, 3.8276 ms/op
+WorkloadResult   3: 256 op, 982910400.00 ns, 3.8395 ms/op
+WorkloadResult   4: 256 op, 988259600.00 ns, 3.8604 ms/op
+WorkloadResult   5: 256 op, 990085100.00 ns, 3.8675 ms/op
+WorkloadResult   6: 256 op, 986636800.00 ns, 3.8541 ms/op
+WorkloadResult   7: 256 op, 1015989300.00 ns, 3.9687 ms/op
+WorkloadResult   8: 256 op, 1002391400.00 ns, 3.9156 ms/op
+WorkloadResult   9: 256 op, 988045700.00 ns, 3.8596 ms/op
+// GC:  0 0 0 4157432 256
+// Threading:  663 0 256
+
+
+Mean = 3.877 ms, StdErr = 0.015 ms (0.38%), N = 9, StdDev = 0.044 ms
+Min = 3.828 ms, Q1 = 3.854 ms, Median = 3.860 ms, Q3 = 3.898 ms, Max = 3.969 ms
+IQR = 0.044 ms, LowerFence = 3.788 ms, UpperFence = 3.963 ms
+ConfidenceInterval = [3.803 ms; 3.950 ms] (CI 99.9%), Margin = 0.074 ms (1.90% of Mean)
+Skewness = 0.86, Kurtosis = 2.47, MValue = 2
+
+// ** Remained 2 (33,3 %) benchmark(s) to run. Estimated finish 2026-10-31 15:40 (0h 0m from now) **
+Setup power plan (GUID: 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c FriendlyName: High performance)
+// **************************
+// Benchmark: MySql2Benchmarks.MySQL2_InsertMany100: Job-IWBRKJ(Toolchain=InProcessEmitToolchain, IterationCount=10, LaunchCount=1, WarmupCount=3)
+// *** Execute ***
+// Launch: 1 / 1
+
+// Benchmark Process Environment Information:
+// BenchmarkDotNet v0.15.4
+// Runtime=.NET 10.0.14 (10.0.14, 10.0.1426.52326), X64 RyuJIT x86-64-v4
+// GC=Concurrent Workstation
+// HardwareIntrinsics=AVX512 BITALG+VBMI2+VNNI+VPOPCNTDQ,AVX512 IFMA+VBMI,AVX512 F+BW+CD+DQ+VL,AVX2+BMI1+BMI2+F16C+FMA+LZCNT+MOVBE,AVX,SSE3+SSSE3+SSE4.1+SSE4.2+POPCNT,X86Base+SSE+SSE2,AES+PCLMUL,AvxVnni VectorSize=256
+// Job: Job-IWBRKJ(Toolchain=InProcessEmitToolchain, IterationCount=10, LaunchCount=1, WarmupCount=3)
+
+OverheadJitting  1: 1 op, 302000.00 ns, 302.0000 us/op
+WorkloadJitting  1: 1 op, 8078100.00 ns, 8.0781 ms/op
+
+OverheadJitting  2: 16 op, 372000.00 ns, 23.2500 us/op
+WorkloadJitting  2: 16 op, 106346700.00 ns, 6.6467 ms/op
+
+WorkloadPilot    1: 16 op, 109781600.00 ns, 6.8614 ms/op
+WorkloadPilot    2: 32 op, 209825600.00 ns, 6.5571 ms/op
+WorkloadPilot    3: 64 op, 406642400.00 ns, 6.3538 ms/op
+WorkloadPilot    4: 128 op, 748903500.00 ns, 5.8508 ms/op
+
+OverheadWarmup   1: 128 op, 4100.00 ns, 32.0313 ns/op
+OverheadWarmup   2: 128 op, 900.00 ns, 7.0313 ns/op
+OverheadWarmup   3: 128 op, 700.00 ns, 5.4688 ns/op
+OverheadWarmup   4: 128 op, 800.00 ns, 6.2500 ns/op
+OverheadWarmup   5: 128 op, 800.00 ns, 6.2500 ns/op
+OverheadWarmup   6: 128 op, 800.00 ns, 6.2500 ns/op
+OverheadWarmup   7: 128 op, 800.00 ns, 6.2500 ns/op
+
+OverheadActual   1: 128 op, 800.00 ns, 6.2500 ns/op
+OverheadActual   2: 128 op, 600.00 ns, 4.6875 ns/op
+OverheadActual   3: 128 op, 800.00 ns, 6.2500 ns/op
+OverheadActual   4: 128 op, 800.00 ns, 6.2500 ns/op
+OverheadActual   5: 128 op, 700.00 ns, 5.4688 ns/op
+OverheadActual   6: 128 op, 800.00 ns, 6.2500 ns/op
+OverheadActual   7: 128 op, 700.00 ns, 5.4688 ns/op
+OverheadActual   8: 128 op, 900.00 ns, 7.0313 ns/op
+OverheadActual   9: 128 op, 700.00 ns, 5.4688 ns/op
+OverheadActual  10: 128 op, 700.00 ns, 5.4688 ns/op
+OverheadActual  11: 128 op, 700.00 ns, 5.4688 ns/op
+OverheadActual  12: 128 op, 300.00 ns, 2.3438 ns/op
+OverheadActual  13: 128 op, 500.00 ns, 3.9063 ns/op
+OverheadActual  14: 128 op, 500.00 ns, 3.9063 ns/op
+OverheadActual  15: 128 op, 700.00 ns, 5.4688 ns/op
+OverheadActual  16: 128 op, 500.00 ns, 3.9063 ns/op
+OverheadActual  17: 128 op, 300.00 ns, 2.3438 ns/op
+OverheadActual  18: 128 op, 800.00 ns, 6.2500 ns/op
+OverheadActual  19: 128 op, 900.00 ns, 7.0313 ns/op
+OverheadActual  20: 128 op, 800.00 ns, 6.2500 ns/op
+
+WorkloadWarmup   1: 128 op, 762045300.00 ns, 5.9535 ms/op
+WorkloadWarmup   2: 128 op, 764115400.00 ns, 5.9697 ms/op
+WorkloadWarmup   3: 128 op, 760367000.00 ns, 5.9404 ms/op
+
+WorkloadActual   1: 128 op, 752279600.00 ns, 5.8772 ms/op
+WorkloadActual   2: 128 op, 868661900.00 ns, 6.7864 ms/op
+WorkloadActual   3: 128 op, 769810300.00 ns, 6.0141 ms/op
+WorkloadActual   4: 128 op, 757522100.00 ns, 5.9181 ms/op
+WorkloadActual   5: 128 op, 668927800.00 ns, 5.2260 ms/op
+WorkloadActual   6: 128 op, 677370300.00 ns, 5.2920 ms/op
+WorkloadActual   7: 128 op, 648431300.00 ns, 5.0659 ms/op
+WorkloadActual   8: 128 op, 635908200.00 ns, 4.9680 ms/op
+WorkloadActual   9: 128 op, 651992000.00 ns, 5.0937 ms/op
+WorkloadActual  10: 128 op, 651600900.00 ns, 5.0906 ms/op
+
+WorkloadResult   1: 128 op, 752278900.00 ns, 5.8772 ms/op
+WorkloadResult   2: 128 op, 868661200.00 ns, 6.7864 ms/op
+WorkloadResult   3: 128 op, 769809600.00 ns, 6.0141 ms/op
+WorkloadResult   4: 128 op, 757521400.00 ns, 5.9181 ms/op
+WorkloadResult   5: 128 op, 668927100.00 ns, 5.2260 ms/op
+WorkloadResult   6: 128 op, 677369600.00 ns, 5.2920 ms/op
+WorkloadResult   7: 128 op, 648430600.00 ns, 5.0659 ms/op
+WorkloadResult   8: 128 op, 635907500.00 ns, 4.9680 ms/op
+WorkloadResult   9: 128 op, 651991300.00 ns, 5.0937 ms/op
+WorkloadResult  10: 128 op, 651600200.00 ns, 5.0906 ms/op
+// GC:  2 0 0 33546144 128
+// Threading:  290 1 128
+
+
+Mean = 5.533 ms, StdErr = 0.187 ms (3.38%), N = 10, StdDev = 0.591 ms
+Min = 4.968 ms, Q1 = 5.091 ms, Median = 5.259 ms, Q3 = 5.908 ms, Max = 6.786 ms
+IQR = 0.817 ms, LowerFence = 3.867 ms, UpperFence = 7.133 ms
+ConfidenceInterval = [4.639 ms; 6.427 ms] (CI 99.9%), Margin = 0.894 ms (16.16% of Mean)
+Skewness = 0.81, Kurtosis = 2.28, MValue = 2
+
+// ** Remained 1 (16,7 %) benchmark(s) to run. Estimated finish 2026-10-31 15:40 (0h 0m from now) **
+Setup power plan (GUID: 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c FriendlyName: High performance)
+// **************************
+// Benchmark: MySql2Benchmarks.MySQL2_Update: Job-IWBRKJ(Toolchain=InProcessEmitToolchain, IterationCount=10, LaunchCount=1, WarmupCount=3)
+// *** Execute ***
+// Launch: 1 / 1
+
+// Benchmark Process Environment Information:
+// BenchmarkDotNet v0.15.4
+// Runtime=.NET 10.0.14 (10.0.14, 10.0.1426.52326), X64 RyuJIT x86-64-v4
+// GC=Concurrent Workstation
+// HardwareIntrinsics=AVX512 BITALG+VBMI2+VNNI+VPOPCNTDQ,AVX512 IFMA+VBMI,AVX512 F+BW+CD+DQ+VL,AVX2+BMI1+BMI2+F16C+FMA+LZCNT+MOVBE,AVX,SSE3+SSSE3+SSE4.1+SSE4.2+POPCNT,X86Base+SSE+SSE2,AES+PCLMUL,AvxVnni VectorSize=256
+// Job: Job-IWBRKJ(Toolchain=InProcessEmitToolchain, IterationCount=10, LaunchCount=1, WarmupCount=3)
+
+OverheadJitting  1: 1 op, 321500.00 ns, 321.5000 us/op
+WorkloadJitting  1: 1 op, 8841200.00 ns, 8.8412 ms/op
+
+OverheadJitting  2: 16 op, 488900.00 ns, 30.5563 us/op
+WorkloadJitting  2: 16 op, 61582800.00 ns, 3.8489 ms/op
+
+WorkloadPilot    1: 16 op, 62264800.00 ns, 3.8916 ms/op
+WorkloadPilot    2: 32 op, 124444400.00 ns, 3.8889 ms/op
+WorkloadPilot    3: 64 op, 240363700.00 ns, 3.7557 ms/op
+WorkloadPilot    4: 128 op, 486753600.00 ns, 3.8028 ms/op
+WorkloadPilot    5: 256 op, 988519500.00 ns, 3.8614 ms/op
+
+OverheadWarmup   1: 256 op, 4800.00 ns, 18.7500 ns/op
+OverheadWarmup   2: 256 op, 1500.00 ns, 5.8594 ns/op
+OverheadWarmup   3: 256 op, 1700.00 ns, 6.6406 ns/op
+OverheadWarmup   4: 256 op, 2300.00 ns, 8.9844 ns/op
+OverheadWarmup   5: 256 op, 1600.00 ns, 6.2500 ns/op
+OverheadWarmup   6: 256 op, 1700.00 ns, 6.6406 ns/op
+OverheadWarmup   7: 256 op, 1200.00 ns, 4.6875 ns/op
+
+OverheadActual   1: 256 op, 1100.00 ns, 4.2969 ns/op
+OverheadActual   2: 256 op, 1800.00 ns, 7.0313 ns/op
+OverheadActual   3: 256 op, 1500.00 ns, 5.8594 ns/op
+OverheadActual   4: 256 op, 1300.00 ns, 5.0781 ns/op
+OverheadActual   5: 256 op, 1100.00 ns, 4.2969 ns/op
+OverheadActual   6: 256 op, 9600.00 ns, 37.5000 ns/op
+OverheadActual   7: 256 op, 1800.00 ns, 7.0313 ns/op
+OverheadActual   8: 256 op, 1700.00 ns, 6.6406 ns/op
+OverheadActual   9: 256 op, 1500.00 ns, 5.8594 ns/op
+OverheadActual  10: 256 op, 900.00 ns, 3.5156 ns/op
+OverheadActual  11: 256 op, 900.00 ns, 3.5156 ns/op
+OverheadActual  12: 256 op, 1000.00 ns, 3.9063 ns/op
+OverheadActual  13: 256 op, 1600.00 ns, 6.2500 ns/op
+OverheadActual  14: 256 op, 1600.00 ns, 6.2500 ns/op
+OverheadActual  15: 256 op, 1500.00 ns, 5.8594 ns/op
+OverheadActual  16: 256 op, 1400.00 ns, 5.4688 ns/op
+OverheadActual  17: 256 op, 1600.00 ns, 6.2500 ns/op
+OverheadActual  18: 256 op, 1400.00 ns, 5.4688 ns/op
+OverheadActual  19: 256 op, 1100.00 ns, 4.2969 ns/op
+OverheadActual  20: 256 op, 1200.00 ns, 4.6875 ns/op
+
+WorkloadWarmup   1: 256 op, 962077500.00 ns, 3.7581 ms/op
+WorkloadWarmup   2: 256 op, 974188100.00 ns, 3.8054 ms/op
+WorkloadWarmup   3: 256 op, 991674400.00 ns, 3.8737 ms/op
+
+WorkloadActual   1: 256 op, 1002422500.00 ns, 3.9157 ms/op
+WorkloadActual   2: 256 op, 970976100.00 ns, 3.7929 ms/op
+WorkloadActual   3: 256 op, 966625300.00 ns, 3.7759 ms/op
+WorkloadActual   4: 256 op, 970348700.00 ns, 3.7904 ms/op
+WorkloadActual   5: 256 op, 979500000.00 ns, 3.8262 ms/op
+WorkloadActual   6: 256 op, 1010731000.00 ns, 3.9482 ms/op
+WorkloadActual   7: 256 op, 995840500.00 ns, 3.8900 ms/op
+WorkloadActual   8: 256 op, 968989900.00 ns, 3.7851 ms/op
+WorkloadActual   9: 256 op, 966104300.00 ns, 3.7738 ms/op
+WorkloadActual  10: 256 op, 973419500.00 ns, 3.8024 ms/op
+
+WorkloadResult   1: 256 op, 1002421050.00 ns, 3.9157 ms/op
+WorkloadResult   2: 256 op, 970974650.00 ns, 3.7929 ms/op
+WorkloadResult   3: 256 op, 966623850.00 ns, 3.7759 ms/op
+WorkloadResult   4: 256 op, 970347250.00 ns, 3.7904 ms/op
+WorkloadResult   5: 256 op, 979498550.00 ns, 3.8262 ms/op
+WorkloadResult   6: 256 op, 1010729550.00 ns, 3.9482 ms/op
+WorkloadResult   7: 256 op, 995839050.00 ns, 3.8900 ms/op
+WorkloadResult   8: 256 op, 968988450.00 ns, 3.7851 ms/op
+WorkloadResult   9: 256 op, 966102850.00 ns, 3.7738 ms/op
+WorkloadResult  10: 256 op, 973418050.00 ns, 3.8024 ms/op
+// GC:  0 0 0 4033200 256
+// Threading:  598 0 256
+
+
+Mean = 3.830 ms, StdErr = 0.020 ms (0.53%), N = 10, StdDev = 0.064 ms
+Min = 3.774 ms, Q1 = 3.786 ms, Median = 3.798 ms, Q3 = 3.874 ms, Max = 3.948 ms
+IQR = 0.088 ms, LowerFence = 3.655 ms, UpperFence = 4.005 ms
+ConfidenceInterval = [3.733 ms; 3.927 ms] (CI 99.9%), Margin = 0.097 ms (2.52% of Mean)
+Skewness = 0.74, Kurtosis = 1.74, MValue = 2
+
+// ** Remained 0 (0,0 %) benchmark(s) to run. Estimated finish 2026-10-31 15:40 (0h 0m from now) **
+Successfully reverted power plan (GUID: 381b4222-f694-41f0-9685-ff5bb260df2e FriendlyName: Balanced)
+// ***** BenchmarkRunner: Finish  *****
+
+// * Export *
+
+// * Detailed results *
+MySql2Benchmarks.MySQL2_Count: Job-IWBRKJ(Toolchain=InProcessEmitToolchain, IterationCount=10, LaunchCount=1, WarmupCount=3)
+Runtime = ; GC = 
+Mean = 1.608 ms, StdErr = 0.015 ms (0.93%), N = 10, StdDev = 0.047 ms
+Min = 1.533 ms, Q1 = 1.580 ms, Median = 1.608 ms, Q3 = 1.628 ms, Max = 1.692 ms
+IQR = 0.049 ms, LowerFence = 1.507 ms, UpperFence = 1.701 ms
+ConfidenceInterval = [1.537 ms; 1.679 ms] (CI 99.9%), Margin = 0.071 ms (4.44% of Mean)
+Skewness = 0.12, Kurtosis = 1.95, MValue = 2
+-------------------- Histogram --------------------
+[1.504 ms ; 1.573 ms) | @@
+[1.573 ms ; 1.630 ms) | @@@@@@
+[1.630 ms ; 1.704 ms) | @@
+---------------------------------------------------
+
+MySql2Benchmarks.MySQL2_Filter100: Job-IWBRKJ(Toolchain=InProcessEmitToolchain, IterationCount=10, LaunchCount=1, WarmupCount=3)
+Runtime = ; GC = 
+Mean = 1.608 ms, StdErr = 0.008 ms (0.49%), N = 10, StdDev = 0.025 ms
+Min = 1.563 ms, Q1 = 1.594 ms, Median = 1.616 ms, Q3 = 1.620 ms, Max = 1.646 ms
+IQR = 0.027 ms, LowerFence = 1.554 ms, UpperFence = 1.660 ms
+ConfidenceInterval = [1.570 ms; 1.646 ms] (CI 99.9%), Margin = 0.038 ms (2.36% of Mean)
+Skewness = -0.36, Kurtosis = 1.9, MValue = 2
+-------------------- Histogram --------------------
+[1.561 ms ; 1.600 ms) | @@@
+[1.600 ms ; 1.661 ms) | @@@@@@@
+---------------------------------------------------
+
+MySql2Benchmarks.MySQL2_GetById: Job-IWBRKJ(Toolchain=InProcessEmitToolchain, IterationCount=10, LaunchCount=1, WarmupCount=3)
+Runtime = ; GC = 
+Mean = 1.510 ms, StdErr = 0.012 ms (0.81%), N = 10, StdDev = 0.039 ms
+Min = 1.455 ms, Q1 = 1.478 ms, Median = 1.513 ms, Q3 = 1.544 ms, Max = 1.559 ms
+IQR = 0.066 ms, LowerFence = 1.380 ms, UpperFence = 1.643 ms
+ConfidenceInterval = [1.451 ms; 1.569 ms] (CI 99.9%), Margin = 0.059 ms (3.89% of Mean)
+Skewness = -0.09, Kurtosis = 1.38, MValue = 2
+-------------------- Histogram --------------------
+[1.439 ms ; 1.486 ms) | @@@
+[1.486 ms ; 1.561 ms) | @@@@@@@
+---------------------------------------------------
+
+MySql2Benchmarks.MySQL2_Insert: Job-IWBRKJ(Toolchain=InProcessEmitToolchain, IterationCount=10, LaunchCount=1, WarmupCount=3)
+Runtime = ; GC = 
+Mean = 3.877 ms, StdErr = 0.015 ms (0.38%), N = 9, StdDev = 0.044 ms
+Min = 3.828 ms, Q1 = 3.854 ms, Median = 3.860 ms, Q3 = 3.898 ms, Max = 3.969 ms
+IQR = 0.044 ms, LowerFence = 3.788 ms, UpperFence = 3.963 ms
+ConfidenceInterval = [3.803 ms; 3.950 ms] (CI 99.9%), Margin = 0.074 ms (1.90% of Mean)
+Skewness = 0.86, Kurtosis = 2.47, MValue = 2
+-------------------- Histogram --------------------
+[3.809 ms ; 3.996 ms) | @@@@@@@@@
+---------------------------------------------------
+
+MySql2Benchmarks.MySQL2_InsertMany100: Job-IWBRKJ(Toolchain=InProcessEmitToolchain, IterationCount=10, LaunchCount=1, WarmupCount=3)
+Runtime = ; GC = 
+Mean = 5.533 ms, StdErr = 0.187 ms (3.38%), N = 10, StdDev = 0.591 ms
+Min = 4.968 ms, Q1 = 5.091 ms, Median = 5.259 ms, Q3 = 5.908 ms, Max = 6.786 ms
+IQR = 0.817 ms, LowerFence = 3.867 ms, UpperFence = 7.133 ms
+ConfidenceInterval = [4.639 ms; 6.427 ms] (CI 99.9%), Margin = 0.894 ms (16.16% of Mean)
+Skewness = 0.81, Kurtosis = 2.28, MValue = 2
+-------------------- Histogram --------------------
+[4.770 ms ; 5.490 ms) | @@@@@@
+[5.490 ms ; 6.306 ms) | @@@
+[6.306 ms ; 7.147 ms) | @
+---------------------------------------------------
+
+MySql2Benchmarks.MySQL2_Update: Job-IWBRKJ(Toolchain=InProcessEmitToolchain, IterationCount=10, LaunchCount=1, WarmupCount=3)
+Runtime = ; GC = 
+Mean = 3.830 ms, StdErr = 0.020 ms (0.53%), N = 10, StdDev = 0.064 ms
+Min = 3.774 ms, Q1 = 3.786 ms, Median = 3.798 ms, Q3 = 3.874 ms, Max = 3.948 ms
+IQR = 0.088 ms, LowerFence = 3.655 ms, UpperFence = 4.005 ms
+ConfidenceInterval = [3.733 ms; 3.927 ms] (CI 99.9%), Margin = 0.097 ms (2.52% of Mean)
+Skewness = 0.74, Kurtosis = 1.74, MValue = 2
+-------------------- Histogram --------------------
+[3.761 ms ; 3.958 ms) | @@@@@@@@@@
+---------------------------------------------------
+
+// * Summary *
+
+BenchmarkDotNet v0.15.4, Windows 11 (10.0.26300.9711)
+AMD Ryzen 9 9950X 4.30GHz, 1 CPU, 32 logical and 16 physical cores
+.NET SDK 11.0.100-rc.3.26522.148
+  [Host] : .NET 10.0.14 (10.0.14, 10.0.1426.52326), X64 RyuJIT x86-64-v4
+
+Toolchain=InProcessEmitToolchain  IterationCount=10  LaunchCount=1  
+WarmupCount=3  
+
+| Method               | Categories    | Mean     | Error     | StdDev    | Gen0    | Allocated |
+|--------------------- |-------------- |---------:|----------:|----------:|--------:|----------:|
+| MySQL2_Count         | Count         | 1.608 ms | 0.0713 ms | 0.0472 ms |       - |  18.18 KB |
+|                      |               |          |           |           |         |           |
+| MySQL2_Filter100     | Filter100     | 1.608 ms | 0.0379 ms | 0.0251 ms |  1.9531 |  60.28 KB |
+|                      |               |          |           |           |         |           |
+| MySQL2_GetById       | GetById       | 1.510 ms | 0.0588 ms | 0.0389 ms |       - |  16.26 KB |
+|                      |               |          |           |           |         |           |
+| MySQL2_Insert        | Insert        | 3.877 ms | 0.0737 ms | 0.0438 ms |       - |  15.86 KB |
+|                      |               |          |           |           |         |           |
+| MySQL2_InsertMany100 | InsertMany100 | 5.533 ms | 0.8941 ms | 0.5914 ms | 15.6250 | 255.94 KB |
+|                      |               |          |           |           |         |           |
+| MySQL2_Update        | Update        | 3.830 ms | 0.0966 ms | 0.0639 ms |       - |  15.39 KB |
+
+// * Legends *
+  Categories : All categories of the corresponded method, class, and assembly
+  Mean       : Arithmetic mean of all measurements
+  Error      : Half of 99.9% confidence interval
+  StdDev     : Standard deviation of all measurements
+  Gen0       : GC Generation 0 collects per 1000 operations
+  Allocated  : Allocated memory per single operation (managed only, inclusive, 1KB = 1024B)
+  1 ms       : 1 Millisecond (0.001 sec)
+
+// * Diagnostic Output - MemoryDiagnoser *
+
+
+// ***** BenchmarkRunner: End *****
+Run time: 00:01:24 (84.89 sec), executed benchmarks: 6
+
+Global total time: 00:01:25 (85.38 sec), executed benchmarks: 6
+// * Artifacts cleanup *
+Artifacts cleanup is finished
