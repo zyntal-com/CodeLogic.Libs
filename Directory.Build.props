@@ -1,7 +1,7 @@
 <Project>
   <!--
     Target framework and language version for every project in the repo (libraries and tests).
-    The 5.x line is .NET 11 only; .NET 10 consumers stay on 4.9.x (branch release-4.x).
+    The 5.x line is .NET 11 only; .NET 10 consumers stay on 4.9.x (branch support/4.x).
   -->
   <PropertyGroup>
     <TargetFramework>net11.0</TargetFramework>

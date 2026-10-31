@@ -3,8 +3,8 @@ name: Build And Release
 on:
   push:
     branches:
-      - release
-      - prerelease
+      - 'release/**'
+      - 'prerelease/**'
   workflow_dispatch:
     inputs:
       build_all:
@@ -22,11 +22,15 @@ concurrency:
 jobs:
   # Publishing to nuget.org cannot be undone - a version can be delisted but never
   # replaced or reused. Nothing is packed until the full suite is green.
+  # Creating a release/* or prerelease/* branch (Promote does this the first time) must not publish:
+  # publishing happens through Promote's dispatch or a push of new commits.
   verify:
+    if: github.event_name != 'push' || !github.event.created
     uses: ./.github/workflows/ci-tests.yml
 
   release:
     needs: [verify]
+    if: github.event_name != 'push' || !github.event.created
     runs-on: ubuntu-latest
     # Must match the nuget.org Trusted Publishing policy (workflow release.yml, environment production).
     environment: production
@@ -59,8 +63,11 @@ jobs:
 
           $buildAll = '${{ github.event.inputs.build_all }}' -eq 'true'
 
-          # Find the last release tag to diff against (match tag pattern to branch)
-          $tagPattern = if ('${{ github.ref_name }}' -eq 'prerelease') { 'libs-preview-v*' } else { 'libs-v*' }
+          # Find the last release tag of THIS line (libs-v<major.minor>-<run>), so a 4.x release
+          # never diffs against a 5.x tag.
+          $line = (Get-Content 'version.txt' -TotalCount 1).Trim()
+          $tagPattern = if ('${{ github.ref_name }}'.StartsWith('prerelease/')) { "libs-preview-v$line-*" } else { "libs-v$line-*" }
+          "line=$line" >> $env:GITHUB_OUTPUT
           $lastTag = git describe --tags --abbrev=0 --match $tagPattern 2>$null
 
           if ($buildAll -or -not $lastTag) {
@@ -104,7 +111,7 @@ jobs:
           # written back to the repo; the version is composed at pack time via -p:Version.
           $rootVer = (Get-Content 'version.txt' -TotalCount 1).Trim()   # e.g. "4.8"
           $sha     = '${{ github.sha }}'.Substring(0, 7)
-          if ('${{ github.ref_name }}' -eq 'prerelease') {
+          if ('${{ github.ref_name }}'.StartsWith('prerelease/')) {
             $version = "$rootVer.${{ github.run_number }}-preview+$sha"
           } else {
             $version = "$rootVer.${{ github.run_number }}+$sha"
@@ -222,10 +229,10 @@ jobs:
         if: steps.changes.outputs.has_changes == 'True'
         uses: softprops/action-gh-release@v3
         with:
-          tag_name: ${{ github.ref_name == 'prerelease' && format('libs-preview-v{0}', github.run_number) || format('libs-v{0}', github.run_number) }}
-          name: ${{ github.ref_name == 'prerelease' && format('CodeLogic.Libs preview {0}', github.run_number) || format('CodeLogic.Libs release {0}', github.run_number) }}
+          tag_name: ${{ startsWith(github.ref_name, 'prerelease/') && format('libs-preview-v{0}-{1}', steps.changes.outputs.line, github.run_number) || format('libs-v{0}-{1}', steps.changes.outputs.line, github.run_number) }}
+          name: ${{ startsWith(github.ref_name, 'prerelease/') && format('CodeLogic.Libs {0} preview {1}', steps.changes.outputs.line, github.run_number) || format('CodeLogic.Libs {0} release {1}', steps.changes.outputs.line, github.run_number) }}
           body_path: artifacts/release-notes.md
-          prerelease: ${{ github.ref_name == 'prerelease' }}
+          prerelease: ${{ startsWith(github.ref_name, 'prerelease/') }}
           generate_release_notes: true
           files: |
             artifacts/*.nupkg
@@ -240,7 +247,8 @@ jobs:
       # Workflow:
       #   - dev pushes feature work to main (no version churn anywhere)
       #   - bump major/minor by editing version.txt when desired
-      #   - to publish: merge or fast-forward main → release
+      #   - to publish: run Promote (source main or support/<N>.x, channel prerelease|release),
+      #     which merges into <channel>/<N>.x and dispatches this workflow
       #   - this workflow fires, packs with the composed version, publishes
       #     to NuGet, and creates a GitHub release
       #
