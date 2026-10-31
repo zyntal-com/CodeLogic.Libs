@@ -39,7 +39,7 @@ public sealed class PostgreSqlFixture : ProviderFixture
             "DeletedAt" timestamptz NULL)
         """,
         """CREATE TABLE conf_tags ("ProductId" bigint NOT NULL, "Tag" varchar(32) NOT NULL, "Weight" integer NOT NULL, PRIMARY KEY ("ProductId", "Tag"))""",
-        """CREATE TABLE conf_notes ("Id" uuid PRIMARY KEY, "TenantId" integer NOT NULL, "Text" varchar(500) NOT NULL)""",
+        """CREATE TABLE conf_notes ("Id" uuid PRIMARY KEY, "TenantId" integer NOT NULL, "Text" varchar(500) NOT NULL, "Hits" integer NOT NULL DEFAULT 0)""",
     ];
 }
 
@@ -71,3 +71,4 @@ public sealed class PostgreSqlCollection : ICollectionFixture<PostgreSqlFixture>
 [Collection("postgresql")] public sealed class PostgreSqlTelemetryTests(PostgreSqlFixture f) : TelemetryConformance(f);
 [Collection("postgresql")] public sealed class PostgreSqlBulkTests(PostgreSqlFixture f) : BulkConformance(f);
 [Collection("postgresql")] public sealed class PostgreSqlServerTests(PostgreSqlFixture f) : ServerConformance(f);
+[Collection("postgresql")] public sealed class PostgreSqlTenantWriteTests(PostgreSqlFixture f) : TenantWriteConformance(f);

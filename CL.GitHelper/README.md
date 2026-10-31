@@ -54,24 +54,24 @@ Auto-generated on first run as `config.githelper.json`:
 
 ```json
 {
-  "Enabled": true,
-  "BaseDirectory": "",
-  "DefaultTimeoutSeconds": 300,
-  "MaxConcurrentOperations": 3,
-  "EnableRepositoryCaching": true,
-  "CacheTimeoutMinutes": 30,
-  "Repositories": [
+  "enabled": true,
+  "baseDirectory": "",
+  "defaultTimeoutSeconds": 300,
+  "maxConcurrentOperations": 3,
+  "enableRepositoryCaching": true,
+  "cacheTimeoutMinutes": 30,
+  "repositories": [
     {
-      "Id": "Default",
-      "Name": "My Repository",
-      "RepositoryUrl": "https://github.com/username/repository.git",
-      "LocalPath": "my-repo",
-      "DefaultBranch": "main",
-      "Username": null,
-      "Password": null,
-      "AutoFetch": false,
-      "AutoFetchIntervalMinutes": 0,
-      "TimeoutSeconds": 300
+      "id": "Default",
+      "name": "My Repository",
+      "repositoryUrl": "https://github.com/username/repository.git",
+      "localPath": "my-repo",
+      "defaultBranch": "main",
+      "username": null,
+      "password": null,
+      "autoFetch": false,
+      "autoFetchIntervalMinutes": 0,
+      "timeoutSeconds": 300
     }
   ]
 }
@@ -108,7 +108,7 @@ Full guide: **[CL.GitHelper documentation](https://zyntal-com.github.io/CodeLogi
 ## Requirements
 
 - [CodeLogic 5.0+](https://github.com/zyntal-com/CodeLogic) · .NET 11
-- LibGit2Sharp 0.30.x
+- LibGit2Sharp 0.32.x
 
 ## License
 

@@ -222,6 +222,8 @@ public sealed class SqlServerSqlDialect : SqlDialect
             Source(w, insert);
             w.Append(" ON ");
             KeyMatch(w, upsert.ConflictColumns, name);
+            if (upsert.GuardColumn is { } guard)
+                w.Append(" AND ").Identifier(name).Append('.').Identifier(guard).Append(" = ").Identifier(ExcludedAlias).Append('.').Identifier(guard);
             w.Append(";\n");
         }
 

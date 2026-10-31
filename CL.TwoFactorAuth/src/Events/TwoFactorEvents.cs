@@ -7,12 +7,12 @@ namespace CL.TwoFactorAuth.Events;
 /// </summary>
 /// <param name="UserId">Identifier of the user whose code was validated.</param>
 /// <param name="IsValid">Whether the TOTP code was valid.</param>
-/// <param name="MatchedWindow">The time window offset that matched, or <c>null</c> if validation failed.</param>
+/// <param name="MatchedWindow">The absolute time step that matched (Unix time / time step), or <c>null</c> if validation failed.</param>
 /// <param name="ValidatedAt">UTC timestamp of the validation attempt.</param>
 public record TotpValidatedEvent(
     string UserId,
     bool IsValid,
-    int? MatchedWindow,
+    long? MatchedWindow,
     DateTime ValidatedAt
 ) : IEvent;
 

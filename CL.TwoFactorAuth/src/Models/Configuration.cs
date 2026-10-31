@@ -40,21 +40,30 @@ public class TwoFactorAuthConfig : ConfigModelBase
         Group = "QR Code", Order = 21, Collapsed = true)]
     public QrErrorCorrectionLevel ErrorCorrectionLevel { get; set; } = QrErrorCorrectionLevel.Q;
 
+    /// <summary>Smallest accepted <see cref="TimeStepSeconds"/>.</summary>
+    public const int MinTimeStepSeconds = 1;
+    /// <summary>Largest accepted <see cref="TimeStepSeconds"/>.</summary>
+    public const int MaxTimeStepSeconds = 300;
+    /// <summary>Largest accepted <see cref="WindowSize"/>.</summary>
+    public const int MaxWindowSize = 10;
+    /// <summary>Largest accepted <see cref="QrCodeModuleSize"/>.</summary>
+    public const int MaxQrCodeModuleSize = 100;
+
     /// <inheritdoc/>
     public override ConfigValidationResult Validate()
     {
         var errors = new List<string>();
 
-        if (TimeStepSeconds <= 0)
-            errors.Add("TimeStepSeconds must be greater than 0");
+        if (TimeStepSeconds is < MinTimeStepSeconds or > MaxTimeStepSeconds)
+            errors.Add($"TimeStepSeconds must be between {MinTimeStepSeconds} and {MaxTimeStepSeconds}");
 
-        if (WindowSize < 0)
-            errors.Add("WindowSize must be 0 or greater");
+        if (WindowSize is < 0 or > MaxWindowSize)
+            errors.Add($"WindowSize must be between 0 and {MaxWindowSize}");
 
-        if (QrCodeModuleSize <= 0)
-            errors.Add("QrCodeModuleSize must be greater than 0");
+        if (QrCodeModuleSize is < 1 or > MaxQrCodeModuleSize)
+            errors.Add($"QrCodeModuleSize must be between 1 and {MaxQrCodeModuleSize}");
 
-        return errors.Any()
+        return errors.Count > 0
             ? ConfigValidationResult.Invalid(errors)
             : ConfigValidationResult.Valid();
     }
@@ -85,21 +94,34 @@ public record TotpValidationResult
     public required bool IsValid { get; init; }
 
     /// <summary>
-    /// The time window offset that matched, relative to the current window.
-    /// <c>0</c> means the current window matched; negative/positive values indicate past/future windows.
-    /// <c>null</c> when validation failed.
+    /// The absolute TOTP time step that matched: Unix time divided by the time step, the same unit as
+    /// <c>TwoFactorAuthenticator.GetCurrentTimeWindow()</c>. <c>null</c> when validation failed.
+    /// <para>
+    /// Use it to stop replay: store the last accepted step per user and reject a code whose step is not
+    /// greater. The check and the update must be one atomic operation (for example a conditional update
+    /// that only succeeds while the stored step is lower), or two concurrent requests can both accept the
+    /// same code.
+    /// </para>
     /// </summary>
-    public int? MatchedWindow { get; init; }
+    public long? MatchedWindow { get; init; }
+
+    /// <summary>
+    /// Clock drift of the match in time steps, relative to the step at validation time: <c>0</c> for the
+    /// current step, negative for a past step, positive for a future one. <c>null</c> when validation failed.
+    /// </summary>
+    public int? WindowOffset { get; init; }
 
     /// <summary>Human-readable error message when <see cref="IsValid"/> is <c>false</c>.</summary>
     public string? ErrorMessage { get; init; }
 
     /// <summary>Creates a successful validation result.</summary>
-    /// <param name="window">Optional matched time window offset.</param>
-    public static TotpValidationResult Valid(int? window = null) => new()
+    /// <param name="matchedWindow">The absolute time step that matched.</param>
+    /// <param name="windowOffset">The matched step relative to the step at validation time.</param>
+    public static TotpValidationResult Valid(long? matchedWindow = null, int? windowOffset = null) => new()
     {
         IsValid = true,
-        MatchedWindow = window
+        MatchedWindow = matchedWindow,
+        WindowOffset = windowOffset
     };
 
     /// <summary>Creates a failed validation result with an optional error message.</summary>

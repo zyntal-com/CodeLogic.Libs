@@ -2,10 +2,11 @@ using System.Net;
 using System.Net.Http.Headers;
 using CL.NetUtils.Models;
 using CodeLogic.Core.Logging;
+using MaxMind.Db;
 using MaxMind.GeoIP2;
 using MaxMind.GeoIP2.Exceptions;
-using SharpCompress.Archives;
-using SharpCompress.Common;
+using System.Formats.Tar;
+using System.IO.Compression;
 
 namespace CL.NetUtils.Services;
 
@@ -20,7 +21,8 @@ public class GeoIpService : IDisposable
     private readonly string _databasePath;
 
     private DatabaseReader? _databaseReader;
-    private readonly object _lock = new();
+    private readonly Lock _lock = new();
+    private readonly HttpMessageHandler? _httpHandler;
 
     /// <summary>
     /// Initializes a new <see cref="GeoIpService"/>.
@@ -32,9 +34,16 @@ public class GeoIpService : IDisposable
     /// <see cref="GeoIpConfig.DatabasePath"/> is not set.
     /// </param>
     public GeoIpService(GeoIpConfig config, ILogger? logger = null, string dataDirectory = "")
+        : this(config, logger, dataDirectory, httpHandler: null)
+    {
+    }
+
+    /// <summary>Test seam: downloads through <paramref name="httpHandler"/>.</summary>
+    internal GeoIpService(GeoIpConfig config, ILogger? logger, string dataDirectory, HttpMessageHandler? httpHandler)
     {
         _config = config ?? throw new ArgumentNullException(nameof(config));
         _logger = logger;
+        _httpHandler = httpHandler;
 
         _databasePath = !string.IsNullOrWhiteSpace(config.DatabasePath)
             ? config.DatabasePath
@@ -44,12 +53,51 @@ public class GeoIpService : IDisposable
     /// <summary>The <c>.mmdb</c> file this service reads (from <see cref="GeoIpConfig.DatabasePath"/> or the library data directory).</summary>
     public string DatabasePath => _databasePath;
 
+    /// <summary>English description of the database the open reader serves, or null before initialization (tests).</summary>
+    internal string? OpenDatabaseDescription
+    {
+        get
+        {
+            lock (_lock)
+                return _databaseReader?.Metadata.Description.TryGetValue("en", out var text) == true ? text : null;
+        }
+    }
+
     /// <summary><see langword="true"/> when MaxMind credentials are set, so a missing database can be downloaded.</summary>
     public bool CanDownload => _config.AccountId != 0 && !string.IsNullOrWhiteSpace(_config.LicenseKey);
 
     /// <summary>
-    /// Ensures the database file exists (downloading it when needed and permitted),
-    /// then opens the <see cref="DatabaseReader"/>.
+    /// Makes sure a database file is in place: downloads it when missing, and refreshes it when
+    /// <see cref="GeoIpConfig.AutoUpdate"/> is on and credentials are set. A failed refresh keeps the existing
+    /// database (it is only replaced by a verified download); a missing database that cannot be obtained throws.
+    /// </summary>
+    internal async Task EnsureDatabaseAsync(CancellationToken cancellationToken = default)
+    {
+        if (!File.Exists(_databasePath))
+        {
+            _logger?.Info("GeoIP database not found, downloading...");
+            await DownloadDatabaseAsync(cancellationToken).ConfigureAwait(false);
+        }
+        else if (_config.AutoUpdate && CanDownload)
+        {
+            _logger?.Info("GeoIP auto-update: refreshing the database...");
+            try
+            {
+                await DownloadDatabaseAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger?.Warning($"GeoIP auto-update failed; keeping the existing database: {ex.Message}");
+            }
+        }
+
+        if (!File.Exists(_databasePath))
+            throw new InvalidOperationException($"Failed to obtain GeoIP database at {_databasePath}");
+    }
+
+    /// <summary>
+    /// Ensures the database file exists (downloading it when missing, refreshing it when
+    /// <see cref="GeoIpConfig.AutoUpdate"/> is on), then opens the <see cref="DatabaseReader"/>.
     /// </summary>
     /// <param name="cancellationToken">Optional cancellation token.</param>
     /// <exception cref="InvalidOperationException">
@@ -57,18 +105,14 @@ public class GeoIpService : IDisposable
     /// </exception>
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
-        if (!File.Exists(_databasePath))
-        {
-            _logger?.Info("GeoIP database not found, downloading...");
-            await DownloadDatabaseAsync(cancellationToken).ConfigureAwait(false);
-        }
+        await EnsureDatabaseAsync(cancellationToken).ConfigureAwait(false);
 
-        if (!File.Exists(_databasePath))
-            throw new InvalidOperationException($"Failed to obtain GeoIP database at {_databasePath}");
-
+        var reader = OpenReader(_databasePath);
         lock (_lock)
         {
-            _databaseReader = new DatabaseReader(_databasePath);
+            var previous = _databaseReader;
+            _databaseReader = reader;
+            previous?.Dispose();
         }
 
         _logger?.Info($"GeoIP service initialized with database: {_databasePath}");
@@ -90,16 +134,16 @@ public class GeoIpService : IDisposable
                 return Task.FromResult(IpLocationResult.Error(ipAddress, "Invalid IP address format"));
             }
 
-            if (_databaseReader is null)
-            {
-                _logger?.Warning("GeoIP database reader not initialized");
-                return Task.FromResult(IpLocationResult.Error(ipAddress, "GeoIP service not initialized"));
-            }
-
             IpLocationResult result;
 
             lock (_lock)
             {
+                if (_databaseReader is null)
+                {
+                    _logger?.Warning("GeoIP database reader not initialized");
+                    return Task.FromResult(IpLocationResult.Error(ipAddress, "GeoIP service not initialized"));
+                }
+
                 var response = _databaseReader.City(ip);
 
                 result = new IpLocationResult
@@ -137,12 +181,22 @@ public class GeoIpService : IDisposable
     }
 
     /// <summary>
-    /// Downloads and extracts the MaxMind database archive using the configured credentials.
-    /// Does nothing (logs a warning) when account credentials are absent.
+    /// Downloads the MaxMind database archive using the configured credentials and installs its <c>.mmdb</c>.
+    /// Does nothing (logs a warning) when account credentials are absent, and refuses (logs an error, sends
+    /// nothing) when <see cref="GeoIpConfig.DownloadUrl"/> is not <c>https</c> on a host in
+    /// <see cref="GeoIpConfig.TrustedDownloadHosts"/>.
     /// </summary>
+    /// <remarks>
+    /// The archive is downloaded and unpacked in a private temporary directory next to the database. Only the
+    /// <c>.mmdb</c> entry is extracted (licence and readme files are ignored, and entry paths are never used as
+    /// output paths); it is checked for the MaxMind metadata marker and then moved over
+    /// <see cref="DatabasePath"/> in one rename, so readers never see a partial file. When the service is
+    /// already initialized, the open reader is switched to the new file.
+    /// </remarks>
     /// <param name="cancellationToken">Optional cancellation token.</param>
     public async Task DownloadDatabaseAsync(CancellationToken cancellationToken = default)
     {
+        string? workDir = null;
         try
         {
             if (!CanDownload)
@@ -151,25 +205,30 @@ public class GeoIpService : IDisposable
                 return;
             }
 
-            var dbDir = Path.GetDirectoryName(_databasePath) ?? string.Empty;
+            if (!_config.TryGetTrustedDownloadUri(out var downloadUri, out var urlError))
+            {
+                _logger?.Error($"GeoIP download refused: {urlError}");
+                return;
+            }
+
+            var dbDir = Path.GetDirectoryName(Path.GetFullPath(_databasePath)) ?? string.Empty;
             Directory.CreateDirectory(dbDir);
 
-            var tmpDir = Path.Combine(dbDir, "tmp");
-            Directory.CreateDirectory(tmpDir);
+            workDir = Path.Combine(dbDir, $".geoip-download-{Guid.NewGuid():N}");
+            Directory.CreateDirectory(workDir);
+            var downloadPath = Path.Combine(workDir, "database.tar.gz");
 
-            var downloadPath = Path.Combine(tmpDir, "database.tar.gz");
+            _logger?.Info($"Downloading GeoIP database from {downloadUri!.GetLeftPart(UriPartial.Path)}...");
 
-            _logger?.Info($"Downloading GeoIP database from {_config.DownloadUrl}...");
-
-            using var httpClient = new HttpClient
-            {
-                Timeout = TimeSpan.FromSeconds(_config.TimeoutSeconds)
-            };
+            using var httpClient = _httpHandler is null
+                ? new HttpClient()
+                : new HttpClient(_httpHandler, disposeHandler: false);
+            httpClient.Timeout = TimeSpan.FromSeconds(_config.TimeoutSeconds);
 
             var credentials = Convert.ToBase64String(
                 System.Text.Encoding.ASCII.GetBytes($"{_config.AccountId}:{_config.LicenseKey}"));
 
-            using var request = new HttpRequestMessage(HttpMethod.Get, _config.DownloadUrl);
+            using var request = new HttpRequestMessage(HttpMethod.Get, downloadUri);
             request.Headers.Authorization = new AuthenticationHeaderValue("Basic", credentials);
 
             using var response = await httpClient
@@ -191,25 +250,13 @@ public class GeoIpService : IDisposable
 
             _logger?.Info("GeoIP archive downloaded, extracting...");
 
-            await Task.Run(() => ExtractDatabase(downloadPath, dbDir), cancellationToken)
+            var stagedPath = Path.Combine(workDir, "database.mmdb");
+            await Task.Run(() => ExtractDatabase(downloadPath, stagedPath, $"{_config.DatabaseType}.mmdb"), cancellationToken)
                 .ConfigureAwait(false);
 
-            // Clean up temporary files
-            try
-            {
-                if (File.Exists(downloadPath))
-                    File.Delete(downloadPath);
+            InstallDatabase(stagedPath);
 
-                var extractTmpDir = Path.Combine(dbDir, _config.DatabaseType);
-                if (Directory.Exists(extractTmpDir))
-                    Directory.Delete(extractTmpDir, recursive: true);
-            }
-            catch (Exception ex)
-            {
-                _logger?.Warning($"Failed to clean up temporary GeoIP files: {ex.Message}");
-            }
-
-            _logger?.Info("GeoIP database downloaded and extracted successfully");
+            _logger?.Info("GeoIP database downloaded and installed successfully");
         }
         catch (OperationCanceledException)
         {
@@ -222,6 +269,21 @@ public class GeoIpService : IDisposable
         catch (Exception ex)
         {
             _logger?.Error("Failed to download GeoIP database", ex);
+        }
+        finally
+        {
+            if (workDir is not null)
+            {
+                try
+                {
+                    if (Directory.Exists(workDir))
+                        Directory.Delete(workDir, recursive: true);
+                }
+                catch (Exception ex)
+                {
+                    _logger?.Warning($"Failed to clean up temporary GeoIP files: {ex.Message}");
+                }
+            }
         }
     }
 
@@ -237,21 +299,134 @@ public class GeoIpService : IDisposable
 
     // ── Private helpers ───────────────────────────────────────────────────────
 
-    private static void ExtractDatabase(string archivePath, string extractionPath)
-    {
-        using var archive = ArchiveFactory.OpenArchive(archivePath);
+    /// <summary>
+    /// Opens a reader that loads the whole database into memory, so the file is never held open and can be replaced
+    /// while lookups continue (a memory-mapped reader locks the file on Windows).
+    /// </summary>
+    private static DatabaseReader OpenReader(string path) => new(path, FileAccessMode.Memory);
 
-        foreach (var entry in archive.Entries)
+    /// <summary>
+    /// Installs a validated staged database without a gap and without risking the working one: the replacement reader
+    /// is opened first, then the file is renamed over <see cref="DatabasePath"/>, then the readers are swapped. If any
+    /// step fails, the previous file and reader stay in use.
+    /// </summary>
+    private void InstallDatabase(string stagedPath)
+    {
+        var replacement = OpenReader(stagedPath);
+        try
         {
-            if (!entry.IsDirectory)
+            File.Move(stagedPath, _databasePath, overwrite: true);
+        }
+        catch
+        {
+            replacement.Dispose();
+            throw;
+        }
+
+        DatabaseReader? previous;
+        lock (_lock)
+        {
+            previous = _databaseReader;
+            // Only an initialized service gets the new reader; otherwise InitializeAsync opens the installed file.
+            _databaseReader = previous is null ? null : replacement;
+        }
+        previous?.Dispose();
+        if (previous is null) replacement.Dispose();
+    }
+
+    /// <summary>
+    /// Proves that <paramref name="path"/> is a usable MaxMind City database before it may replace the working one: the
+    /// metadata must parse, the database type must support City lookups (what <see cref="LookupIpAsync"/> uses), and a
+    /// lookup must walk the search tree. A marker alone is not enough; a corrupt file can contain it.
+    /// </summary>
+    /// <exception cref="InvalidDataException">The file is not a usable City database.</exception>
+    internal static void ValidateDatabase(string path)
+    {
+        try
+        {
+            using var reader = OpenReader(path);
+            var type = reader.Metadata.DatabaseType ?? "";
+            if (!type.Contains("City", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException($"The GeoIP database type '{type}' does not support City lookups");
+            reader.TryCity(IPAddress.Parse("8.8.8.8"), out _);
+            if (reader.Metadata.IPVersion == 6) reader.TryCity(IPAddress.Parse("2001:4860:4860::8888"), out _);
+        }
+        catch (InvalidDataException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidDataException($"The extracted file is not a usable MaxMind database: {ex.Message}", ex);
+        }
+    }
+
+    /// <summary>
+    /// Extracts the <c>.mmdb</c> entry of a <c>tar.gz</c> or <c>zip</c> archive to <paramref name="outputPath"/>.
+    /// Prefers an entry named <paramref name="preferredName"/>, else the first <c>.mmdb</c>; only the entry's
+    /// content is used, never its path, and no other entry is written anywhere.
+    /// </summary>
+    /// <exception cref="InvalidDataException">
+    /// The archive format is not supported, it holds no <c>.mmdb</c>, or the file is not a MaxMind database.
+    /// </exception>
+    internal static void ExtractDatabase(string archivePath, string outputPath, string preferredName)
+    {
+        static bool IsMmdb(string name) => name.EndsWith(".mmdb", StringComparison.OrdinalIgnoreCase);
+        bool IsPreferred(string name) =>
+            string.Equals(name.Replace('\\', '/').Split('/')[^1], preferredName, StringComparison.OrdinalIgnoreCase);
+
+        static void Write(Stream source, string path)
+        {
+            using var target = File.Create(path);
+            source.CopyTo(target);
+        }
+
+        var found = false;
+        using (var file = File.OpenRead(archivePath))
+        {
+            Span<byte> magic = stackalloc byte[4];
+            var read = file.ReadAtLeast(magic, magic.Length, throwOnEndOfStream: false);
+            file.Position = 0;
+
+            if (read >= 2 && magic[0] == 0x1F && magic[1] == 0x8B)
             {
-                var options = new ExtractionOptions
+                using var gzip = new GZipStream(file, CompressionMode.Decompress);
+                using var tar = new TarReader(gzip);
+                while (tar.GetNextEntry() is { } entry)
                 {
-                    ExtractFullPath = false,
-                    Overwrite = true
-                };
-                entry.WriteToDirectory(extractionPath, options);
+                    if (entry.EntryType is not (TarEntryType.RegularFile or TarEntryType.V7RegularFile)
+                        || entry.DataStream is null || !IsMmdb(entry.Name))
+                        continue;
+                    var preferred = IsPreferred(entry.Name);
+                    if (found && !preferred)
+                        continue;
+                    Write(entry.DataStream, outputPath);
+                    found = true;
+                    if (preferred)
+                        break;
+                }
+            }
+            else if (read >= 4 && magic[0] == (byte)'P' && magic[1] == (byte)'K')
+            {
+                using var zip = new ZipArchive(file, ZipArchiveMode.Read);
+                var candidates = zip.Entries.Where(e => !e.FullName.EndsWith('/') && IsMmdb(e.FullName)).ToList();
+                var entry = candidates.FirstOrDefault(e => IsPreferred(e.FullName)) ?? candidates.FirstOrDefault();
+                if (entry is not null)
+                {
+                    using var source = entry.Open();
+                    Write(source, outputPath);
+                    found = true;
+                }
+            }
+            else
+            {
+                throw new InvalidDataException("The GeoIP download is not a tar.gz or zip archive");
             }
         }
+
+        if (!found)
+            throw new InvalidDataException("The GeoIP archive contains no .mmdb file");
+
+        ValidateDatabase(outputPath);
     }
 }

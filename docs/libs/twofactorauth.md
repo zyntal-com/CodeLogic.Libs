@@ -40,7 +40,7 @@ TwoFactorKey key = tfa.GenerateNewKey("MyApp", "user@example.com");
 
 // Persist key.SecretKey with the user record — you need it to validate later.
 string secret = key.SecretKey;            // Base32
-string uri    = key.ProvisioningUri;      // otpauth://totp/MyApp:user@example.com?secret=...&issuer=MyApp
+string uri    = key.ProvisioningUri;      // otpauth://totp/MyApp:user%40example.com?secret=...&issuer=MyApp&period=30
 ```
 
 > **Store the secret encrypted.** Anyone with the Base32 secret can generate valid codes. Treat it like a password.
@@ -65,7 +65,7 @@ TotpValidationResult check = tfa.ValidateTotp("123456", key.SecretKey);
 if (check.IsValid)
 {
     // Mark 2FA as enabled for this user.
-    // check.MatchedWindow tells you which time window matched (drift offset).
+    // check.MatchedWindow is the absolute time step that matched; check.WindowOffset is the drift in steps.
 }
 ```
 
@@ -85,6 +85,23 @@ if (!result.IsValid)
 var auth = tfa.Authenticator;
 TotpValidationResult r = auth.ValidateTotp("123456", storedSecret, userId: "alice");
 ```
+
+### Preventing replay
+
+A code stays valid for its whole time step (and for the drift window around it), so a code that was
+intercepted or submitted twice validates again. `MatchedWindow` is the absolute time step that matched
+(Unix time divided by `TimeStepSeconds`, the same unit as `GetCurrentTimeWindow()`); store the last
+accepted step per user and reject a code whose step is not greater. Make the check and the update one
+atomic operation, for example a conditional update that only succeeds while the stored step is lower;
+a read followed by a separate write lets two concurrent requests accept the same code.
+
+```csharp
+TotpValidationResult r = tfa.ValidateTotp(userTypedCode, storedSecret);
+if (!r.IsValid || !await users.TryAdvanceTotpStepAsync(userId, r.MatchedWindow!.Value))
+    return Unauthorized("Invalid authentication code.");
+```
+
+`ValidateTotp(code, secret, timestampUtc, userId)` validates as of a given moment, which makes tests deterministic.
 
 The `WindowSize` setting controls how much clock drift is tolerated — `1` accepts the previous and next time step (≈ ±30s) in addition to the current one.
 
@@ -135,24 +152,29 @@ Module size and error-correction level come from configuration (`QrCodeModuleSiz
 ## TwoFactorKey
 
 ```csharp
-public sealed class TwoFactorKey
+public record TwoFactorKey(string SecretKey, string IssuerName, string UserName, int PeriodSeconds = 30)
 {
-    public string Issuer { get; }
-    public string AccountName { get; }
-    public string SecretKey { get; }        // Base32 — persist this
-    public string ProvisioningUri { get; }  // otpauth://totp/...
+    public string ProvisioningUri { get; }  // otpauth://totp/{issuer}:{user}?secret=...&issuer=...&period=...
 }
 ```
+
+`SecretKey` is the Base32 secret to persist. `GenerateNewKey` sets `PeriodSeconds` from `TimeStepSeconds`, and the URI's
+`period` parameter makes the authenticator app use the same step as the server. When you rebuild a key from a stored
+secret with a non-default step, pass the period too.
 
 ## TotpValidationResult
 
 ```csharp
-public sealed class TotpValidationResult
+public record TotpValidationResult
 {
     public bool IsValid { get; }
-    public long? MatchedWindow { get; }   // which time window matched (drift offset), null if invalid
+    public long? MatchedWindow { get; }   // absolute time step that matched (Unix time / TimeStepSeconds), null if invalid
+    public int? WindowOffset { get; }     // drift: matched step minus the current step (0, -1, +1, ...), null if invalid
+    public string? ErrorMessage { get; }
 }
 ```
+
+`TotpValidatedEvent.MatchedWindow` carries the same absolute step (`long?`).
 
 ## Configuration
 
@@ -160,11 +182,11 @@ The library writes `config.twofactorauth.json` with defaults on first run.
 
 ```json
 {
-  "Enabled": true,
-  "TimeStepSeconds": 30,
-  "WindowSize": 1,
-  "QrCodeModuleSize": 20,
-  "ErrorCorrectionLevel": "Q"
+  "enabled": true,
+  "timeStepSeconds": 30,
+  "windowSize": 1,
+  "qrCodeModuleSize": 20,
+  "errorCorrectionLevel": "q"
 }
 ```
 
@@ -175,6 +197,9 @@ The library writes `config.twofactorauth.json` with defaults on first run.
 | `WindowSize` | `int` | `1` | Steps before/after the current window to accept (0–10). `1` ≈ ±30s drift tolerance; raise only if users report clock-skew failures. |
 | `QrCodeModuleSize` | `int` | `20` | Pixel size of each QR module (1–100). Larger = bigger image. |
 | `ErrorCorrectionLevel` | `string` | `Q` | QR redundancy: `L` (~7%), `M` (~15%), `Q` (~25%), `H` (~30%). Higher tolerates more damage at the cost of density. |
+
+Keys are camelCase and matched case-sensitively; a PascalCase key is ignored and its default stays active. Values outside
+the listed ranges fail configuration validation.
 
 ## Events
 

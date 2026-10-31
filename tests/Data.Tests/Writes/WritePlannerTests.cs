@@ -162,20 +162,26 @@ public sealed class WritePlannerTests
     {
         var ctx = Pg();
         var user = new TestUser { Id = 5, Email = "x" };
-        var command = Assert.Single(WritePlanner.Upsert(Users, [user], ctx, new UpsertOptions { IncrementProperties = [nameof(TestUser.Score)] }).ValueOrThrow());
+        var planned = WritePlanner.Upsert(Users, [user], ctx, new UpsertOptions { IncrementProperties = [nameof(TestUser.Score)] }).ValueOrThrow();
+        // A tenant entity: an ownership pre-check (must return no rows), then the guarded upsert.
+        Assert.Equal(RowCheck.Empty, planned[0].Check);
+        Assert.Contains("\"TenantId\" <> ", Sql(planned[0], ctx));
+        var command = Assert.Single(planned, c => c.Check != RowCheck.Empty);
         var sql = Sql(command, ctx);
+        Assert.EndsWith("WHERE \"users\".\"TenantId\" = EXCLUDED.\"TenantId\"", sql);
         Assert.Contains("ON CONFLICT (\"Id\") DO UPDATE SET ", sql);
         Assert.Contains("\"Score\" = \"users\".\"Score\" + EXCLUDED.\"Score\"", sql);
         Assert.Contains("\"Version\" = \"users\".\"Version\" + 1", sql);
         Assert.Contains("\"Email\" = EXCLUDED.\"Email\"", sql);
         Assert.DoesNotContain("\"CreatedAt\" = EXCLUDED", sql);
-        Assert.DoesNotContain("\"TenantId\" = EXCLUDED", sql);
+        var setList = sql[sql.IndexOf(" DO UPDATE SET ", StringComparison.Ordinal)..sql.LastIndexOf(" WHERE ", StringComparison.Ordinal)];
+        Assert.DoesNotContain("\"TenantId\" =", setList);                     // the tenant is never reassigned
 
-        var ignore = Assert.Single(WritePlanner.Upsert(Users, [user], ctx, new UpsertOptions { IgnoreOnConflict = true }).ValueOrThrow());
+        var ignore = Assert.Single(WritePlanner.Upsert(Users, [user], ctx, new UpsertOptions { IgnoreOnConflict = true }).ValueOrThrow());   // nothing to guard
         Assert.EndsWith("DO NOTHING", Sql(ignore, ctx));
 
         // Generated identity: falls back to the unique composite index (TenantId, Email).
-        var generated = Assert.Single(WritePlanner.Upsert(Users, [NewUser()], ctx).ValueOrThrow());
+        var generated = Assert.Single(WritePlanner.Upsert(Users, [NewUser()], ctx).ValueOrThrow(), c => c.Check != RowCheck.Empty);
         Assert.Contains("ON CONFLICT (\"TenantId\", \"Email\")", Sql(generated, ctx));
     }
 
@@ -184,7 +190,7 @@ public sealed class WritePlannerTests
     {
         var ctx = Pg(limit: 48) with { Dialect = new SqlServerSqlDialect(), Capabilities = new ProviderCapabilities { ParameterLimit = 48 } };
         var users = Enumerable.Range(0, 5).Select(i => new TestUser { Id = i + 1, Email = $"u{i}" }).ToList();
-        var commands = WritePlanner.Upsert(Users, users, ctx).ValueOrThrow();
+        var commands = WritePlanner.Upsert(Users, users, ctx).ValueOrThrow().Where(c => c.Check != RowCheck.Empty).ToList();
         Assert.All(commands, c => Assert.True(c.RequiresTransaction));
         Assert.Equal([2, 2, 1], commands.Select(c => c.Rows));                  // 12 columns, each bound twice: 48 / 24 = 2 rows
     }

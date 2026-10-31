@@ -86,4 +86,6 @@ public sealed class TenantNote
     [TenantKey] public int TenantId { get; set; }
     /// <summary>Text.</summary>
     [Column(Size = 500)] public string Text { get; set; } = "";
+    /// <summary>A counter (tenant-scoped increments).</summary>
+    public int Hits { get; set; }
 }

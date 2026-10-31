@@ -16,7 +16,7 @@
     <Compile Remove="tests/**" />
   </ItemGroup>
   <ItemGroup>
-    <PackageReference Include="Npgsql" Version="10.*" />
+    <PackageReference Include="Npgsql" Version="10.0.3" />
   </ItemGroup>
   <ItemGroup>
     <!-- PrivateAssets="none" so the source generator (an analyzer asset of CodeLogic.Data) flows to

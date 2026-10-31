@@ -11,7 +11,7 @@ There is no standalone DNS-lookup service — DNS resolution is an internal deta
 | **Package** | [`CodeLogic.NetUtils`](https://www.nuget.org/packages/CodeLogic.NetUtils) |
 | **Library class** | `CL.NetUtils.NetUtilsLibrary` |
 | **Config file** | `config.netutils.json` (section `netutils`) |
-| **Dependencies** | MaxMind.GeoIP2 5.x · SharpCompress 0.x |
+| **Dependencies** | MaxMind.GeoIP2 6.x |
 
 ## Install & load
 
@@ -48,12 +48,22 @@ The no-request overload uses the zones from `config.netutils.json`:
 ```csharp
 DnsblCheckResult result = await net.Dnsbl.CheckIpAsync("203.0.113.1");
 
-if (result.IsBlacklisted)
-    Console.WriteLine($"Listed by {result.MatchedService}");
-else if (result.ErrorMessage is not null)
-    Console.WriteLine($"Check failed: {result.ErrorMessage}");
-else
-    Console.WriteLine("Clean.");
+switch (result.Status)
+{
+    case DnsblCheckStatus.Blacklisted:
+        Console.WriteLine($"Listed by {result.MatchedService}");
+        break;
+    case DnsblCheckStatus.Indeterminate:
+        // No zone that answered lists it, but these zones could not be checked.
+        Console.WriteLine($"Unknown: {string.Join(", ", result.FailedServices)} did not answer");
+        break;
+    case DnsblCheckStatus.Error:
+        Console.WriteLine($"Check failed: {result.ErrorMessage}");
+        break;
+    case DnsblCheckStatus.NotBlacklisted:
+        Console.WriteLine("Clean.");
+        break;
+}
 ```
 
 The default blacklist zones are:
@@ -63,7 +73,13 @@ The default blacklist zones are:
 | IPv4 | `zen.spamhaus.org`, `dnsbl.sorbs.net` | `b.barracudacentral.org` |
 | IPv6 | `zen.spamhaus.org`, `dnsbl6.sorbs.net` | `v6.b.barracudacentral.org` |
 
-The checker picks the IPv4 or IPv6 zone set based on the address it is given. Fallback zones are consulted only when the primary zones fail to answer. When `ParallelQueries` is `true`, zones in a set are queried concurrently.
+The checker picks the IPv4 or IPv6 zone set based on the address it is given, then:
+
+1. Queries the primary zones. With `ParallelQueries` (the default) they are queried concurrently and every zone's answer is collected; with `ParallelQueries` off they are queried one at a time and the check stops at the first listing.
+2. Queries the fallback zones the same way, but only when no primary zone lists the address (whether the primaries answered or failed).
+3. Reports `Blacklisted` with the first listing zone (in list order) if any zone lists the address. Otherwise, if any zone could not be checked, it reports `Indeterminate` with those zones in `FailedServices`; only when every queried zone answered "not listed" is the result `NotBlacklisted`.
+
+A zone counts as answered "not listed" on NXDOMAIN or no A record, or when it only returns addresses outside `127.0.0.0/8` (a parked or wildcarded dead zone). It counts as failed when the lookup times out (`TimeoutSeconds`, per zone), the resolver fails (SERVFAIL, network error), or it returns a DNSBL error code such as Spamhaus' `127.255.255.x` (public resolver blocked, query limit). Any other `127.x.x.x` answer is a listing.
 
 > **Private and local addresses are never queried.** Loopback, RFC 1918 (`10/8`, `172.16/12`, `192.168/16`), and IPv6 link-local / site-local / unique-local ranges are short-circuited and returned as **not blacklisted** without any DNS lookup.
 
@@ -96,6 +112,7 @@ DnsblCheckResult result = await net.Dnsbl.CheckIpAsync("203.0.113.1", request);
 | `Ipv6FallbackServices` | `IReadOnlyList<string>` | empty | IPv6 fallback zones. |
 | `IsAllowedAsync` | `Func<string, CancellationToken, Task<bool>>?` | `null` | Allowlist predicate; `true` skips all queries. |
 | `Timeout` | `TimeSpan` | `5s` | Per-zone DNS timeout. |
+| `ParallelQueries` | `bool` | `true` | Query the zones of a list concurrently; `false` queries them one at a time and stops at the first listing. |
 | `DetailedLogging` | `bool` | `false` | Log each zone query. |
 
 ### `DnsblCheckResult`
@@ -104,15 +121,17 @@ DnsblCheckResult result = await net.Dnsbl.CheckIpAsync("203.0.113.1", request);
 public sealed record DnsblCheckResult
 {
     public string IpAddress { get; init; }
+    public DnsblCheckStatus Status { get; init; }   // NotBlacklisted | Blacklisted | Indeterminate | Error
     public bool IsBlacklisted { get; init; }
     public string? MatchedService { get; init; }   // the zone that matched, or null
+    public IReadOnlyList<string> FailedServices { get; init; } // zones that could not be checked
     public IpAddressType AddressType { get; init; } // IPv4 | IPv6 | Unknown
-    public string? ErrorMessage { get; init; }      // non-null when the check itself failed
+    public string? ErrorMessage { get; init; }      // set for Error and Indeterminate
     public DateTime CheckedAt { get; init; }        // UTC
 }
 ```
 
-The record exposes `Blacklisted`, `NotBlacklisted`, and `Error` factory methods used internally to build each outcome.
+The record exposes `Blacklisted`, `NotBlacklisted`, `Indeterminate`, and `Error` factory methods used internally to build each outcome. `IsBlacklisted` is `false` for `Indeterminate`, so code that only checks `IsBlacklisted` treats an unchecked address as allowed; check `Status` to decide yourself.
 
 ## GeoIP
 
@@ -135,18 +154,21 @@ On startup the library calls `GeoIpService.InitializeAsync`, which loads (or dow
 - `GeoIp.DatabasePath` if set, otherwise
 - `{dataDir}/geoip/{DatabaseType}.mmdb` (default `GeoLite2-City.mmdb`).
 
-When `GeoIp.AutoUpdate` is `true`, `DownloadDatabaseAsync` runs during initialization. It is a **no-op** if `AccountId` is `0` or `LicenseKey` is empty. Otherwise it downloads the `tar.gz` from `DownloadUrl` using HTTP Basic Auth (`AccountId` : `LicenseKey`) and extracts the `.mmdb` to the resolved path.
+During initialization a missing database is always downloaded. When `GeoIp.AutoUpdate` is `true`, an existing database is also refreshed; a failed refresh is logged and the existing database stays in use. Downloads are a **no-op** if `AccountId` is `0` or `LicenseKey` is empty. Otherwise it downloads the archive from `DownloadUrl` using HTTP Basic Auth (`AccountId` : `LicenseKey`) and installs the `.mmdb` at the resolved path.
+
+- **Trusted URL only.** The credentials go to `DownloadUrl`, so it must be an `https` URL whose host is listed in `TrustedDownloadHosts` (default: `download.maxmind.com` only). Anything else is refused before a request is sent, and also fails configuration validation. Add a host only for a mirror you trust with the license key.
+- **Selective, atomic install.** The archive (`tar.gz` or `zip`) is unpacked in a private temporary directory next to the database. Only the `.mmdb` entry (preferring `{DatabaseType}.mmdb`) is extracted, by content only, so licence files and entry paths never reach the data directory. The extracted file is opened with the MaxMind reader: its metadata must parse, it must be a City database, and a test lookup must walk its search tree. Only then does it replace the database in one rename, and an open reader switches to it without a gap (readers load the database into memory, so the file is never locked). A failed, corrupt or wrong-type download leaves the existing database and reader in use.
 
 To download automatically, set your MaxMind credentials:
 
 ```json
 {
-  "GeoIp": {
-    "Enabled": true,
-    "AutoUpdate": true,
-    "AccountId": 123456,
-    "LicenseKey": "your-maxmind-license-key",
-    "DatabaseType": "GeoLite2-City"
+  "geoIp": {
+    "enabled": true,
+    "autoUpdate": true,
+    "accountId": 123456,
+    "licenseKey": "your-maxmind-license-key",
+    "databaseType": "GeoLite2-City"
   }
 }
 ```
@@ -176,30 +198,31 @@ public sealed record IpLocationResult
 
 ## Configuration
 
-The library writes `config.netutils.json` (section `netutils`) with defaults on first run.
+The library writes `config.netutils.json` (section `netutils`) with defaults on first run. Keys are camelCase and matched case-sensitively; a PascalCase key is ignored and its default stays active.
 
 ```json
 {
-  "Enabled": true,
-  "Dnsbl": {
-    "Enabled": true,
-    "Ipv4Services": ["zen.spamhaus.org", "dnsbl.sorbs.net"],
-    "Ipv4FallbackServices": ["b.barracudacentral.org"],
-    "Ipv6Services": ["zen.spamhaus.org", "dnsbl6.sorbs.net"],
-    "Ipv6FallbackServices": ["v6.b.barracudacentral.org"],
-    "TimeoutSeconds": 5,
-    "ParallelQueries": true,
-    "DetailedLogging": false
+  "enabled": true,
+  "dnsbl": {
+    "enabled": true,
+    "ipv4Services": ["zen.spamhaus.org", "dnsbl.sorbs.net"],
+    "ipv4FallbackServices": ["b.barracudacentral.org"],
+    "ipv6Services": ["zen.spamhaus.org", "dnsbl6.sorbs.net"],
+    "ipv6FallbackServices": ["v6.b.barracudacentral.org"],
+    "timeoutSeconds": 5,
+    "parallelQueries": true,
+    "detailedLogging": false
   },
-  "GeoIp": {
-    "Enabled": true,
-    "DatabasePath": "",
-    "AutoUpdate": false,
-    "AccountId": 0,
-    "LicenseKey": "",
-    "DownloadUrl": "https://download.maxmind.com/geoip/databases/GeoLite2-City/download?suffix=tar.gz",
-    "DatabaseType": "GeoLite2-City",
-    "TimeoutSeconds": 30
+  "geoIp": {
+    "enabled": true,
+    "databasePath": "",
+    "autoUpdate": false,
+    "accountId": 0,
+    "licenseKey": "",
+    "downloadUrl": "https://download.maxmind.com/geoip/databases/GeoLite2-City/download?suffix=tar.gz",
+    "trustedDownloadHosts": ["download.maxmind.com"],
+    "databaseType": "GeoLite2-City",
+    "timeoutSeconds": 30
   }
 }
 ```
@@ -209,18 +232,19 @@ The library writes `config.netutils.json` (section `netutils`) with defaults on 
 | `Enabled` | `bool` | `true` | Master switch; when `false` the services aren't created and health reports *disabled*. |
 | `Dnsbl.Enabled` | `bool` | `true` | Enable the DNSBL checker. |
 | `Dnsbl.Ipv4Services` | `string[]` | `["zen.spamhaus.org","dnsbl.sorbs.net"]` | Primary IPv4 blacklist zones. |
-| `Dnsbl.Ipv4FallbackServices` | `string[]` | `["b.barracudacentral.org"]` | IPv4 zones tried when primaries fail. |
+| `Dnsbl.Ipv4FallbackServices` | `string[]` | `["b.barracudacentral.org"]` | IPv4 zones queried when no primary zone lists the address. |
 | `Dnsbl.Ipv6Services` | `string[]` | `["zen.spamhaus.org","dnsbl6.sorbs.net"]` | Primary IPv6 blacklist zones. |
 | `Dnsbl.Ipv6FallbackServices` | `string[]` | `["v6.b.barracudacentral.org"]` | IPv6 fallback zones. |
-| `Dnsbl.TimeoutSeconds` | `int` | `5` | Per-check DNS timeout in seconds. |
-| `Dnsbl.ParallelQueries` | `bool` | `true` | Query zones concurrently rather than sequentially. |
+| `Dnsbl.TimeoutSeconds` | `int` | `5` | Per-zone DNS timeout in seconds; a zone that times out makes the result `Indeterminate` unless another zone lists the address. |
+| `Dnsbl.ParallelQueries` | `bool` | `true` | Query the zones of a list concurrently; `false` queries them one at a time and stops at the first listing. |
 | `Dnsbl.DetailedLogging` | `bool` | `false` | Log each individual zone query. |
 | `GeoIp.Enabled` | `bool` | `true` | Enable the GeoIP service. |
 | `GeoIp.DatabasePath` | `string` | `""` | Explicit `.mmdb` path; blank auto-resolves to `{dataDir}/geoip/{DatabaseType}.mmdb`. |
-| `GeoIp.AutoUpdate` | `bool` | `false` | Download/refresh the database on startup. |
+| `GeoIp.AutoUpdate` | `bool` | `false` | Refresh the database on startup when credentials are set (a missing database is always downloaded; a failed refresh keeps the old one). |
 | `GeoIp.AccountId` | `int` | `0` | MaxMind account id; required for download. |
 | `GeoIp.LicenseKey` | `string` | `""` | MaxMind license key (secret); required for download. |
-| `GeoIp.DownloadUrl` | `string` | MaxMind GeoLite2-City | Download endpoint returning a `tar.gz`. |
+| `GeoIp.DownloadUrl` | `string` | MaxMind GeoLite2-City | Download endpoint returning a `tar.gz` or `zip`. Must be `https` on a host in `TrustedDownloadHosts`. |
+| `GeoIp.TrustedDownloadHosts` | `string[]` | `["download.maxmind.com"]` | Hosts `DownloadUrl` may use (exact, case-insensitive). |
 | `GeoIp.DatabaseType` | `string` | `GeoLite2-City` | Database/edition id; also the default file name. |
 | `GeoIp.TimeoutSeconds` | `int` | `30` | Download timeout in seconds. |
 

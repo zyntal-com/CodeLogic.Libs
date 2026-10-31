@@ -27,7 +27,10 @@ public class NetUtilsConfig : ConfigModelBase
         if (Dnsbl.TimeoutSeconds <= 0)
             errors.Add("DNSBL timeout must be > 0");
 
-        return errors.Any()
+        if (!GeoIp.TryGetTrustedDownloadUri(out _, out var urlError))
+            errors.Add(urlError);
+
+        return errors.Count > 0
             ? ConfigValidationResult.Invalid(errors)
             : ConfigValidationResult.Valid();
     }
@@ -69,8 +72,8 @@ public class DnsblConfig
     [ConfigField(Label = "Timeout (s)", Min = 1, Max = 60, Group = "DNSBL", Order = 15)]
     public int TimeoutSeconds { get; set; } = 5;
 
-    /// <summary>Whether to run DNSBL queries in parallel.</summary>
-    [ConfigField(Label = "Parallel Queries", Description = "Query all zones concurrently.",
+    /// <summary>Whether to query the zones of a list concurrently (primaries together, then fallbacks together).</summary>
+    [ConfigField(Label = "Parallel Queries", Description = "Query the zones of each list concurrently. Off: one at a time, stopping at the first listing.",
         Group = "DNSBL", Order = 16, Collapsed = true)]
     public bool ParallelQueries { get; set; } = true;
 
@@ -97,8 +100,11 @@ public class GeoIpConfig
         RequiresRestart = true, Group = "GeoIP", Order = 21)]
     public string DatabasePath { get; set; } = string.Empty;
 
-    /// <summary>Whether to automatically download/update the database on startup.</summary>
-    [ConfigField(Label = "Auto Update", Description = "Download latest GeoIP database on startup.",
+    /// <summary>
+    /// Refresh the database on startup when credentials are set. A missing database is downloaded regardless; a failed
+    /// refresh keeps the existing one.
+    /// </summary>
+    [ConfigField(Label = "Auto Update", Description = "Refresh the GeoIP database on startup (a missing database is always downloaded).",
         Group = "GeoIP", Order = 22)]
     public bool AutoUpdate { get; set; } = false;
 
@@ -114,18 +120,66 @@ public class GeoIpConfig
         Group = "GeoIP", Order = 24, Collapsed = true)]
     public string LicenseKey { get; set; } = string.Empty;
 
-    /// <summary>URL used to download the GeoIP database archive.</summary>
+    /// <summary>
+    /// URL used to download the GeoIP database archive. The MaxMind credentials are sent to it, so it must be
+    /// <c>https</c> and its host must be listed in <see cref="TrustedDownloadHosts"/>.
+    /// </summary>
     [ConfigField(Label = "Download URL", InputType = ConfigInputType.Url,
+        Description = "Must be https and on a trusted host: the MaxMind credentials are sent to it.",
         Group = "GeoIP", Order = 25, Collapsed = true)]
     public string DownloadUrl { get; set; } =
         "https://download.maxmind.com/geoip/databases/GeoLite2-City/download?suffix=tar.gz";
 
+    /// <summary>
+    /// Hosts that <see cref="DownloadUrl"/> may point at (exact, case-insensitive host names). Default: MaxMind's
+    /// download host only. Add a host only if you run a mirror you trust with your MaxMind license key.
+    /// </summary>
+    [ConfigField(Label = "Trusted Download Hosts", InputType = ConfigInputType.Textarea,
+        Description = "One host per line. The download URL must use one of these hosts.",
+        Group = "GeoIP", Order = 26, Collapsed = true)]
+    public List<string> TrustedDownloadHosts { get; set; } = ["download.maxmind.com"];
+
     /// <summary>MaxMind database type (e.g. <c>GeoLite2-City</c>).</summary>
-    [ConfigField(Label = "Database Type", Group = "GeoIP", Order = 26, Collapsed = true)]
+    [ConfigField(Label = "Database Type", Group = "GeoIP", Order = 27, Collapsed = true)]
     public string DatabaseType { get; set; } = "GeoLite2-City";
 
     /// <summary>HTTP download timeout in seconds.</summary>
     [ConfigField(Label = "Download Timeout (s)", Min = 1, Max = 600,
-        Group = "GeoIP", Order = 27, Collapsed = true)]
+        Group = "GeoIP", Order = 28, Collapsed = true)]
     public int TimeoutSeconds { get; set; } = 30;
+
+    /// <summary>
+    /// Checks that <see cref="DownloadUrl"/> is an absolute <c>https</c> URL whose host is in
+    /// <see cref="TrustedDownloadHosts"/>.
+    /// </summary>
+    /// <param name="uri">The parsed URL when it is trusted.</param>
+    /// <param name="error">Why the URL is rejected; empty when it is trusted.</param>
+    public bool TryGetTrustedDownloadUri(out Uri? uri, out string error)
+    {
+        uri = null;
+        if (!Uri.TryCreate(DownloadUrl, UriKind.Absolute, out var parsed))
+        {
+            error = "GeoIp.DownloadUrl must be an absolute URL";
+            return false;
+        }
+        if (parsed.Scheme != Uri.UriSchemeHttps)
+        {
+            error = "GeoIp.DownloadUrl must use https (the MaxMind credentials are sent to it)";
+            return false;
+        }
+        if (!string.IsNullOrEmpty(parsed.UserInfo))
+        {
+            error = "GeoIp.DownloadUrl must not contain user info";
+            return false;
+        }
+        var trusted = TrustedDownloadHosts ?? [];
+        if (!trusted.Any(h => string.Equals(h?.Trim().TrimEnd('.'), parsed.IdnHost.TrimEnd('.'), StringComparison.OrdinalIgnoreCase)))
+        {
+            error = $"GeoIp.DownloadUrl host '{parsed.Host}' is not in GeoIp.TrustedDownloadHosts";
+            return false;
+        }
+        uri = parsed;
+        error = string.Empty;
+        return true;
+    }
 }

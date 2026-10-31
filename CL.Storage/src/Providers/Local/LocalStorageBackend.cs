@@ -40,7 +40,10 @@ public sealed class LocalStorageBackend : IStorageBackend, IStorageAttributeServ
     private readonly long _maxBufferedDownloadBytes;
     private readonly StorageCapabilities _capabilities;
 
-    /// <summary>Initializes a sandboxed local-filesystem backend.</summary>
+    /// <summary>
+    /// Initializes a root-confined local-filesystem backend. Path checks protect against traversal in
+    /// caller-supplied paths; they are not a sandbox against concurrent changes to the tree under the root.
+    /// </summary>
     /// <param name="connectionId">Unique connection ID exposed by the storage registry.</param>
     /// <param name="configuration">Local root and link-handling configuration.</param>
     /// <param name="maxBufferedDownloadBytes">Maximum size accepted by buffered download helpers.</param>

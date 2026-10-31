@@ -10,12 +10,28 @@ namespace CL.GameNetQuery.Minecraft;
 /// </summary>
 public sealed class MinecraftRconClient : IDisposable
 {
+    /// <summary>
+    /// Type of the end-of-response marker packet. Minecraft answers a request of an unknown type with an
+    /// "Unknown request" response carrying the same id, after any earlier response.
+    /// </summary>
+    internal const int SentinelPacketType = 200;
+
     private readonly IPAddress _serverIp;
     private readonly ushort _port;
     private readonly string _password;
-    private readonly int _requestId = 1;
+    private readonly SemaphoreSlim _gate = new(1, 1);
     private TcpClient? _tcpClient;
     private NetworkStream? _networkStream;
+    private RconSession? _session;
+
+    /// <summary>Time allowed for the server's reply to authentication or a command. Default 5 seconds.</summary>
+    public TimeSpan ResponseTimeout { get; set; } = TimeSpan.FromSeconds(5);
+
+    /// <summary>
+    /// Fallback for servers that do not answer the end-of-response marker: once part of a command's response has
+    /// arrived, a pause this long ends it. Default 500 ms.
+    /// </summary>
+    public TimeSpan MultiPacketIdleTimeout { get; set; } = TimeSpan.FromMilliseconds(500);
 
     /// <summary>Initializes a new Minecraft RCON client with the specified connection details.</summary>
     /// <param name="ip">The server IP address as a string.</param>
@@ -28,117 +44,93 @@ public sealed class MinecraftRconClient : IDisposable
         _password = password;
     }
 
-    /// <summary>Connects to the Minecraft RCON server and authenticates.</summary>
+    /// <summary>
+    /// Connects to the RCON server and authenticates.
+    /// </summary>
     /// <param name="timeoutMs">Connection timeout in milliseconds.</param>
-    /// <returns><c>true</c> if connection and authentication succeeded.</returns>
+    /// <returns>
+    /// <c>true</c> only when the server sent an auth response (<c>SERVERDATA_AUTH_RESPONSE</c>) carrying the
+    /// request id; <c>false</c> on a connection failure, a rejected password (response id <c>-1</c>) or no
+    /// auth response within <see cref="ResponseTimeout"/>.
+    /// </returns>
     public async Task<bool> ConnectAsync(int timeoutMs = 5000)
     {
+        await _gate.WaitAsync().ConfigureAwait(false);
         try
         {
-            _tcpClient = new TcpClient();
-            using var cts = new CancellationTokenSource(timeoutMs);
-            await _tcpClient.ConnectAsync(_serverIp, _port, cts.Token).ConfigureAwait(false);
+            CloseConnection();
+            _tcpClient = new TcpClient(_serverIp.AddressFamily) { NoDelay = true };
+            using (var cts = new CancellationTokenSource(timeoutMs))
+                await _tcpClient.ConnectAsync(_serverIp, _port, cts.Token).ConfigureAwait(false);
             _networkStream = _tcpClient.GetStream();
-            return await AuthenticateAsync().ConfigureAwait(false);
+            var session = new RconSession(_networkStream, SentinelPacketType);
+            if (!await session.AuthenticateAsync(_password, ResponseTimeout).ConfigureAwait(false))
+            {
+                CloseConnection();
+                return false;
+            }
+            _session = session;
+            return true;
         }
         catch
         {
+            CloseConnection();
             return false;
         }
+        finally
+        {
+            _gate.Release();
+        }
     }
 
-    /// <summary>Sends a command to the Minecraft server and returns the response.</summary>
+    /// <summary>
+    /// Sends a command and returns the response.
+    /// </summary>
     /// <param name="command">The command to execute.</param>
-    /// <returns>The server response string.</returns>
+    /// <returns>
+    /// The server response; a response split over several packets is joined in order. Empty when the
+    /// server did not answer within <see cref="ResponseTimeout"/> or the connection failed (the client
+    /// then disconnects).
+    /// </returns>
+    /// <exception cref="InvalidOperationException">The client is not connected and authenticated.</exception>
     public async Task<string> SendCommandAsync(string command)
     {
-        if (_networkStream is null)
-            throw new InvalidOperationException("Not connected to RCON server.");
-
+        await _gate.WaitAsync().ConfigureAwait(false);
         try
         {
-            var packet = MinecraftRconPacket.Create(_requestId, MinecraftPacketType.ExecCommand, command);
-            var bytes = packet.ToBytes();
-            await _networkStream.WriteAsync(bytes).ConfigureAwait(false);
-
-            var responses = await ReadResponsesAsync().ConfigureAwait(false);
-            return responses
-                .Where(r => r.Type == MinecraftPacketType.Response && r.Id == _requestId)
-                .Select(r => r.Body)
-                .FirstOrDefault() ?? string.Empty;
+            var session = _session ?? throw new InvalidOperationException("Not connected to RCON server.");
+            try
+            {
+                return await session.ExecuteAsync(command, ResponseTimeout, MultiPacketIdleTimeout).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                return string.Empty;            // no reply in time; late packets are skipped by id
+            }
+            catch
+            {
+                CloseConnection();              // closed or out of sync: the connection is unusable
+                return string.Empty;
+            }
         }
-        catch
+        finally
         {
-            return string.Empty;
+            _gate.Release();
         }
     }
 
-    /// <summary>Disconnects from the Minecraft RCON server.</summary>
-    public void Disconnect()
+    /// <summary>
+    /// Disconnects from the RCON server.
+    /// </summary>
+    public void Disconnect() => CloseConnection();
+
+    private void CloseConnection()
     {
+        _session = null;
         _networkStream?.Close();
         _tcpClient?.Close();
         _networkStream = null;
         _tcpClient = null;
-    }
-
-    private async Task<bool> AuthenticateAsync()
-    {
-        try
-        {
-            var packet = MinecraftRconPacket.Create(_requestId, MinecraftPacketType.Auth, _password);
-            var bytes = packet.ToBytes();
-            await _networkStream!.WriteAsync(bytes).ConfigureAwait(false);
-
-            var responses = await ReadResponsesAsync().ConfigureAwait(false);
-            return responses.Any(r => r.Type == MinecraftPacketType.AuthResponse && r.Id == _requestId);
-        }
-        catch
-        {
-            return false;
-        }
-    }
-
-    private async Task<MinecraftRconPacket[]> ReadResponsesAsync()
-    {
-        var buffer = new byte[4096];
-        var responses = new List<MinecraftRconPacket>();
-        var timeoutCounter = 0;
-
-        try
-        {
-            while (_networkStream!.DataAvailable || responses.Count == 0)
-            {
-                if (!_networkStream.DataAvailable)
-                {
-                    await Task.Delay(50).ConfigureAwait(false);
-                    if (++timeoutCounter > 100) break;
-                    continue;
-                }
-
-                var bytesRead = await _networkStream.ReadAsync(buffer).ConfigureAwait(false);
-                if (bytesRead == 0) break;
-
-                var offset = 0;
-                while (offset < bytesRead)
-                {
-                    if (bytesRead - offset < 4) break;
-                    var size = BitConverter.ToInt32(buffer, offset);
-                    if (size < 10 || size > buffer.Length || bytesRead - offset < size + 4) break;
-
-                    var packetData = new byte[size + 4];
-                    Array.Copy(buffer, offset, packetData, 0, size + 4);
-                    responses.Add(MinecraftRconPacket.FromBytes(packetData));
-                    offset += size + 4;
-                }
-            }
-
-            return responses.ToArray();
-        }
-        catch
-        {
-            return [];
-        }
     }
 
     /// <summary>Disposes the client by disconnecting from the server.</summary>

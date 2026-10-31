@@ -258,8 +258,11 @@ public sealed class MappingTests
         }
     }
 
+    // Deliberately private: this model exercises the reflection fallback, so the generator's CLD001 warning is expected.
+#pragma warning disable CLD001
     [Table]
     private sealed class NoGeneratedMapping
+#pragma warning restore CLD001
     {
         [Column(Primary = true)] public int Id { get; set; }
     }

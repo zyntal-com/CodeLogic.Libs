@@ -94,6 +94,9 @@ public static class WritePlanner
                 commands.Add(new WriteCommand(statement, WriteKind.Insert, names.Table, chunk.Length, [DataTags.Table(names.Table)])
                 {
                     FirstRow = chunk[0],
+                    // Rows with and without explicit identities are planned in separate groups, so a chunk's rows need not be
+                    // consecutive in the caller's list (generated, explicit, generated): returned values go back by index.
+                    RowIndices = chunk,
                     ReturnedColumns = useReturning ? generated : [],
                     IdentityFromLastInsertId = !useReturning && !explicitIdentity ? identity : null,
                 });
@@ -129,8 +132,10 @@ public static class WritePlanner
         }
 
         var key = accessor.GetKey(entity);
+        var tenantScope = TenantPredicate(map, names, ctx);
+        if (tenantScope.IsFailure) return tenantScope.Error!;
         var where = KeyPredicate(map, names, key);
-        where = And(where, TenantPredicate(map, names, ctx));
+        where = And(where, tenantScope.Value);
 
         Action? onSuccess = null;
         List<ColumnMap> returned = [];
@@ -204,7 +209,9 @@ public static class WritePlanner
 
     private static Result<WriteCommand> DeleteCore(EntityMap map, EntityNames names, EntityKey key, WriteContext ctx, bool hard, object? token)
     {
-        var where = And(KeyPredicate(map, names, key), TenantPredicate(map, names, ctx));
+        var tenantScope = TenantPredicate(map, names, ctx);
+        if (tenantScope.IsFailure) return tenantScope.Error!;
+        var where = And(KeyPredicate(map, names, key), tenantScope.Value);
         if (token is not null && map.ConcurrencyToken is { } t) where = And(where, Equal(names.Of(t), token, t));
         var table = TableOf(map, names, ctx);
 
@@ -299,11 +306,32 @@ public static class WritePlanner
             {
                 ExplicitIdentity = map.Identity is { } identityColumn && columns.Contains(identityColumn),
             };
+            var ignore = options.IgnoreOnConflict || updateSet.Count == 0;
             var statement = new UpsertStatement(insert, conflict.Select(names.Of).ToArray())
             {
                 UpdateSet = updateSet,
-                IgnoreOnConflict = options.IgnoreOnConflict || updateSet.Count == 0,
+                IgnoreOnConflict = ignore,
+                // The conflict update only touches a row of the same tenant (enforced in SQL by every dialect).
+                GuardColumn = !ignore && map.TenantKey is { } guardTenant ? names.Of(guardTenant) : null,
             };
+            if (!ignore && map.TenantKey is { } tenantColumn)
+            {
+                // Fail before writing when a conflicting row belongs to another tenant, so the caller gets an error rather
+                // than a silent no-op. The SQL guard above still protects against a row inserted in between.
+                SqlExpr? foreign = null;
+                foreach (var entity in chunk)
+                {
+                    SqlExpr? match = null;
+                    foreach (var column in conflict)
+                        match = And(match, Equal(names.Of(column), accessor.GetValue(entity, column.Ordinal), column));
+                    var owner = accessor.GetValue(entity, tenantColumn.Ordinal);
+                    match = And(match, new BinaryExpr(SqlBinaryOperator.NotEqual, new ColumnExpr(names.Of(tenantColumn)),
+                        new ParameterExpr(SqlParameterValue.ForColumn(owner, tenantColumn))));
+                    foreign = foreign is null ? match : new BinaryExpr(SqlBinaryOperator.Or, foreign, match!);
+                }
+                var check = new SelectStatement(table) { Projection = [new ProjectionItem(new LiteralExpr(1))], Where = foreign, Limit = new LiteralExpr(1) };
+                commands.Add(new WriteCommand(check, WriteKind.Upsert, names.Table, 0, []) { Check = RowCheck.Empty });
+            }
             commands.Add(new WriteCommand(statement, WriteKind.Upsert, names.Table, chunk.Length, [DataTags.Table(names.Table)])
             {
                 FirstRow = first,
@@ -339,7 +367,9 @@ public static class WritePlanner
         if (map.ConcurrencyToken is { } token && token.ValueType != typeof(byte[]) && token != column)
             set.Add(new SetItem(names.Of(token), new BinaryExpr(SqlBinaryOperator.Add, new ColumnExpr(names.Of(token)), new LiteralExpr(1))));
 
-        var where = And(KeyPredicate(map, names, key), TenantPredicate(map, names, ctx));
+        var tenantScope = TenantPredicate(map, names, ctx);
+        if (tenantScope.IsFailure) return tenantScope.Error!;
+        var where = And(KeyPredicate(map, names, key), tenantScope.Value);
         if (map.SoftDelete is { } soft) where = And(where, new IsNullExpr(new ColumnExpr(names.Of(soft))));
         return new WriteCommand(new UpdateStatement(TableOf(map, names, ctx), set) { Where = where }, WriteKind.Update, names.Table, 1,
             Tags(names.Table, key));
@@ -367,8 +397,17 @@ public static class WritePlanner
     }
 
     /// <summary><c>tenant = @tenant</c> when the entity is tenant-scoped and a tenant is set.</summary>
-    public static SqlExpr? TenantPredicate(EntityMap map, EntityNames names, WriteContext ctx) =>
-        map.TenantKey is { } tenant && ctx.Tenant is not null ? Equal(names.Of(tenant), ctx.Tenant, tenant) : null;
+    /// <summary>
+    /// The tenant condition for an update, delete or counter change of <paramref name="map"/>: null for entities without
+    /// <c>[TenantKey]</c>, <c>data.tenant_missing</c> when the entity has one but no tenant is set. Writes are scoped exactly
+    /// like reads, so a connection without a tenant can never change another tenant's rows.
+    /// </summary>
+    public static Result<SqlExpr?> TenantPredicate(EntityMap map, EntityNames names, WriteContext ctx)
+    {
+        if (map.TenantKey is not { } tenant) return Result<SqlExpr?>.Success(null);
+        if (ctx.Tenant is null) return DataErrors.TenantMissing(map.ClrType.Name);
+        return Equal(names.Of(tenant), ctx.Tenant, tenant);
+    }
 
     private static Error? Stamp<T>(IEntityAccessor<T> accessor, T entity, WriteContext ctx, DateTimeOffset now, bool insert)
     {

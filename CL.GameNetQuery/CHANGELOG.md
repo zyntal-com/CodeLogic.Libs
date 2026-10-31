@@ -29,6 +29,27 @@ All notable changes to **CodeLogic.GameNetQuery** are documented here. Versions 
   the challenge packet as server info, and replies are checked for the expected A2S header. Applies to
   `GetServerInfoAsync` / `GetPlayerListAsync` too (a wrong packet now gives `null` / empty, not garbage).
   The UDP socket now matches the address family, so IPv6 addresses work.
+- **`ValveRconClient.ConnectAsync` reported success for a wrong password.** It accepted the empty
+  `SERVERDATA_RESPONSE_VALUE` that Source servers send before the real answer. It now waits for the
+  `SERVERDATA_AUTH_RESPONSE`, requires the request id, and returns `false` for id `-1` (rejected password)
+  or when no auth response arrives within `ResponseTimeout`.
+- **RCON responses split across TCP reads were dropped.** Both `ValveRconClient` and `MinecraftRconClient`
+  now frame packets exactly from a persistent buffer, so a packet split over several segments (or several
+  packets in one segment) is reassembled, and a malformed size field closes the connection instead of
+  desynchronising it.
+- **Multi-packet responses are complete.** `ValveRconClient.SendCommandAsync` returned only the first
+  response packet (about 4 KiB, which truncated `status`/`cvarlist` on busy servers). Both clients now send
+  an end-of-response marker after each command (Valve: an empty `SERVERDATA_RESPONSE_VALUE`; Minecraft: a
+  packet of unknown type 200, answered with "Unknown request") and return every body up to its reply,
+  joined in order. Servers that don't answer the marker fall back to `MultiPacketIdleTimeout`.
+- Each request uses a fresh id, so a late reply to a timed-out command is skipped instead of being
+  returned as the answer to the next one. Calls on one client are serialised. Request bodies and responses
+  are UTF-8 (Minecraft used ASCII).
+
+### Added
+
+- `ValveRconClient` / `MinecraftRconClient`: `ResponseTimeout` (default 5 s, was a fixed poll of about
+  5 s) and `MultiPacketIdleTimeout` (default 500 ms).
 
 ## 2026-10-24
 

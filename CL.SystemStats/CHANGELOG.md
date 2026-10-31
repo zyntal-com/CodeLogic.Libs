@@ -16,6 +16,11 @@ All notable changes to **CodeLogic.SystemStats** are documented here. Versions f
 
 - `System.Diagnostics.PerformanceCounter` and `System.Management` 11.0 (RC3 until .NET 11 GA).
 
+### Documentation
+
+- Configuration examples in the README and the docs use the camelCase keys the CodeLogic loader reads.
+  The PascalCase keys shown before are matched case-sensitively and were ignored, leaving defaults active.
+
 ## 2026-10-24
 
 ### Changed
