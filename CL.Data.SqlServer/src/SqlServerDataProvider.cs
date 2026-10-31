@@ -61,6 +61,9 @@ public sealed class SqlServerDataProvider : DataProvider
     /// <inheritdoc />
     public override ITypeMapper Types { get; } = new SqlServerTypeMapper();
 
+    /// <inheritdoc/>
+    public override string? GetColumnCollation(ColumnMap column) => column.Hint<SqlServerColumnAttribute>()?.Collation;
+
     /// <inheritdoc />
     public override IErrorClassifier Errors { get; } = new SqlServerErrorClassifier();
 

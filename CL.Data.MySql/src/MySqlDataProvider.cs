@@ -60,6 +60,9 @@ public sealed class MySqlDataProvider : DataProvider
     /// <inheritdoc />
     public override ITypeMapper Types { get; } = new MySqlTypeMapper();
 
+    /// <inheritdoc/>
+    public override string? GetColumnCollation(ColumnMap column) => column.Hint<MySqlColumnAttribute>()?.Collation;
+
     /// <inheritdoc />
     public override IErrorClassifier Errors { get; } = new MySqlErrorClassifier();
 

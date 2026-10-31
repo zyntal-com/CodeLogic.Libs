@@ -1,6 +1,7 @@
 using System.Data.Common;
 using CL.Data.Configuration;
 using CL.Data.Errors;
+using CL.Data.Mapping;
 using CL.Data.Providers;
 using CL.Data.Sql;
 using CodeLogic.Core.Configuration;
@@ -52,6 +53,9 @@ public sealed class SqliteDataProvider : DataProvider
 
     /// <inheritdoc />
     public override ITypeMapper Types { get; } = new SqliteTypeMapper();
+
+    /// <inheritdoc/>
+    public override string? GetColumnCollation(ColumnMap column) => column.Hint<SqliteColumnAttribute>()?.Collation;
 
     /// <inheritdoc />
     public override IErrorClassifier Errors { get; } = new SqliteErrorClassifier();

@@ -27,6 +27,19 @@ public sealed class DdlItem
     [ForeignKey<DdlOwner>(nameof(DdlOwner.Id), OnDelete = ForeignKeyAction.Cascade)] public long OwnerId { get; set; }
 }
 
+[Table(Name = "ddl_keys")]
+public sealed class DdlKey
+{
+    [Column(Primary = true, Size = 64)]
+    [MySqlColumn(Collation = "utf8mb4_bin")]
+    [PostgresColumn(Collation = "C")]
+    [SqlServerColumn(Collation = "Latin1_General_100_BIN2")]
+    [SqliteColumn(Collation = "BINARY")]
+    public string Key { get; set; } = "";
+
+    [Column(Size = 64)] public string Plain { get; set; } = "";
+}
+
 public sealed class DdlGoldenTests
 {
     private static TableSchema Desired(DataProvider provider)
@@ -110,5 +123,20 @@ public sealed class DdlGoldenTests
         Assert.Equal(["ALTER TABLE `t` DROP FOREIGN KEY `fk`"], MySqlDataProvider.Instance.Ddl.Generate(new DropForeignKeyChange("t", null, "fk", desired)));
         Assert.Equal(["ALTER TABLE [t] DROP CONSTRAINT [fk]"], SqlServerDataProvider.Instance.Ddl.Generate(new DropForeignKeyChange("t", null, "fk", desired)));
         Assert.Equal(4, SqliteDataProvider.Instance.Ddl.Generate(new DropForeignKeyChange("t", null, "fk", desired)).Count);   // rebuild
+    }
+
+    [Fact]
+    public void Column_collation_comes_only_from_the_providers_own_hint()
+    {
+        // Regression: the first hint of any provider was used, so SQL Server got COLLATE utf8mb4_bin.
+        static string? Collation(DataProvider provider, string column) =>
+            SchemaBuilder.FromMap(EntityAccessorRegistry.Get<DdlKey>().ValueOrThrow().Map, provider, new DataConnectionConfig())
+                .ValueOrThrow().Columns.Single(c => c.Name == column).Collation;
+
+        Assert.Equal("utf8mb4_bin", Collation(MySqlDataProvider.Instance, "Key"));
+        Assert.Equal("C", Collation(PostgreSqlDataProvider.Instance, "Key"));
+        Assert.Equal("Latin1_General_100_BIN2", Collation(SqlServerDataProvider.Instance, "Key"));
+        Assert.Equal("BINARY", Collation(SqliteDataProvider.Instance, "Key"));
+        Assert.Null(Collation(SqlServerDataProvider.Instance, "Plain"));
     }
 }
