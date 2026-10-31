@@ -16,3 +16,6 @@ CLD008 | CL.Data.Mapping | Error | Unknown property in index
 CLD009 | CL.Data.Mapping | Error | Invalid or duplicate column name
 CLD010 | CL.Data.Mapping | Error | SET NULL on a non-nullable column
 CLD011 | CL.Data.Mapping | Error | Table maps no columns
+CLD101 | CL.Data.Query | Warning | Method cannot be translated to SQL
+CLD102 | CL.Data.Query | Warning | Member cannot be translated to SQL
+CLD103 | CL.Data.Query | Warning | Property is not a mapped column

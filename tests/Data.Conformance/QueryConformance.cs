@@ -126,7 +126,9 @@ public abstract class QueryConformance(ProviderFixture fixture) : ConformanceSui
     public async Task Untranslatable_lambdas_fail_the_terminal_call()
     {
         RequireProvider();
+#pragma warning disable CLD101 // intentionally untranslatable
         var result = await Db.Query<Product>().Where(p => p.Name.GetHashCode() == 1).ToListAsync();
+#pragma warning restore CLD101
         Assert.Equal(DataErrors.TranslationFailedCode, result.Error!.Code);
     }
 

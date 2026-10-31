@@ -243,3 +243,8 @@
   - **Variants:** shapes that depend on an argument (null checks, `IN` list lengths) get their own variant.
   - **Restriction:** non-lambda arguments in the chain (`Take(10)`) must not depend on the arguments.
   - **Measured on in-memory SQLite (by id):** 41.7 → 30.4 µs per call and 8.5 → 4.2 KB allocated.
+- **Query lambda analyzer:** `QueryBuilder` predicate and ordering lambdas that can't be translated are reported at build time instead of as `data.translation_failed` at runtime.
+  - **CLD101** unsupported method, or `Contains` on a collection that depends on the row
+  - **CLD102** unsupported member on a row value
+  - **CLD103** unmapped or `[Ignore]` property
+  - **Severity:** warnings (raise them to errors with `.editorconfig`). The checks mirror the translator's supported surface; parts that don't read the row are never flagged.

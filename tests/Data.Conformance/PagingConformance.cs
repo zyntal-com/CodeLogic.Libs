@@ -108,7 +108,9 @@ public abstract class PagingConformance(ProviderFixture fixture) : ConformanceSu
         RequireProvider();
         var ex = await Assert.ThrowsAsync<DataQueryException>(async () =>
         {
+#pragma warning disable CLD101 // intentionally untranslatable
             await foreach (var _ in Db.Query<Product>().Where(p => p.Name.GetHashCode() == 0).AsAsyncEnumerable()) { }
+#pragma warning restore CLD101
         });
         Assert.Equal(DataErrors.TranslationFailedCode, ex.Error.Code);
     }

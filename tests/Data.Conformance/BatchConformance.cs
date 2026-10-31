@@ -50,7 +50,9 @@ public abstract class BatchConformance(ProviderFixture fixture) : ConformanceSui
         RequireProvider();
         var batch = Db.Batch();
         var ok = batch.Count(Db.Query<Product>());
+#pragma warning disable CLD101 // intentionally untranslatable
         batch.Add(Db.Query<Product>().Where(p => p.Name.GetHashCode() == 1));
+#pragma warning restore CLD101
         var result = await batch.ExecuteAsync();
         Assert.Equal(DataErrors.TranslationFailedCode, result.Error!.Code);
         Assert.Throws<InvalidOperationException>(() => ok.Value);
