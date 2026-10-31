@@ -166,7 +166,7 @@ public sealed class WritePlannerTests
         // A tenant entity: an ownership pre-check (must return no rows), then the guarded upsert.
         Assert.Equal(RowCheck.Empty, planned[0].Check);
         Assert.Contains("\"TenantId\" <> ", Sql(planned[0], ctx));
-        var command = Assert.Single(planned.Where(c => c.Check != RowCheck.Empty));
+        var command = Assert.Single(planned, c => c.Check != RowCheck.Empty);
         var sql = Sql(command, ctx);
         Assert.EndsWith("WHERE \"users\".\"TenantId\" = EXCLUDED.\"TenantId\"", sql);
         Assert.Contains("ON CONFLICT (\"Id\") DO UPDATE SET ", sql);
@@ -181,7 +181,7 @@ public sealed class WritePlannerTests
         Assert.EndsWith("DO NOTHING", Sql(ignore, ctx));
 
         // Generated identity: falls back to the unique composite index (TenantId, Email).
-        var generated = Assert.Single(WritePlanner.Upsert(Users, [NewUser()], ctx).ValueOrThrow().Where(c => c.Check != RowCheck.Empty));
+        var generated = Assert.Single(WritePlanner.Upsert(Users, [NewUser()], ctx).ValueOrThrow(), c => c.Check != RowCheck.Empty);
         Assert.Contains("ON CONFLICT (\"TenantId\", \"Email\")", Sql(generated, ctx));
     }
 

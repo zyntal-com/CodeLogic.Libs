@@ -16,7 +16,7 @@
     <Compile Remove="tests/**" />
   </ItemGroup>
   <ItemGroup>
-    <PackageReference Include="MySqlConnector" Version="2.*" />
+    <PackageReference Include="MySqlConnector" Version="2.6.2" />
   </ItemGroup>
   <ItemGroup>
     <!-- PrivateAssets="none" so the source generator (an analyzer asset of CodeLogic.Data) flows to
