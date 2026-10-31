@@ -67,3 +67,6 @@ public sealed class SqlitePagingTests(SqliteFixture fixture) : PagingConformance
 
 [Collection("sqlite")]
 public sealed class SqliteProjectionTests(SqliteFixture fixture) : ProjectionConformance(fixture);
+
+[Collection("sqlite")]
+public sealed class SqliteJoinTests(SqliteFixture fixture) : JoinConformance(fixture);

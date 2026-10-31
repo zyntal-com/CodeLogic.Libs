@@ -138,6 +138,60 @@ public sealed class QueryBuilder<T>
 
     internal TranslationScope ScopeFor(EntityMap map, ParameterExpression parameter) => Scope(map, parameter);
 
+    // ── Joins ───────────────────────────────────────────────────────────────
+
+    /// <summary>Inner-joins <typeparamref name="T2"/> on <paramref name="on"/>; this query's conditions apply to the first table.</summary>
+    public JoinedQuery<T, T2> Join<T2>(Expression<Func<T, T2, bool>> on)
+    {
+        ArgumentNullException.ThrowIfNull(on);
+        InnerMaps.Ensure<T2>();
+        return new JoinedQuery<T, T2>(JoinCore.Start(_db, JoinSource()).Join(typeof(T2), SqlJoinKind.Inner, on));
+    }
+
+    /// <summary>Left-joins <typeparamref name="T2"/> on <paramref name="on"/> (the joined entity is null when nothing matched).</summary>
+    public JoinedQuery<T, T2> LeftJoin<T2>(Expression<Func<T, T2, bool>> on)
+    {
+        ArgumentNullException.ThrowIfNull(on);
+        InnerMaps.Ensure<T2>();
+        return new JoinedQuery<T, T2>(JoinCore.Start(_db, JoinSource()).Join(typeof(T2), SqlJoinKind.Left, on));
+    }
+
+    /// <summary>
+    /// Inner-joins <typeparamref name="T2"/> where <paramref name="leftKey"/> equals <paramref name="rightKey"/>. Composite keys
+    /// use anonymous types with matching members: <c>Join&lt;Line, object&gt;(o =&gt; new { o.Id, o.Shop }, l =&gt; new { Id = l.OrderId, l.Shop })</c>.
+    /// </summary>
+    public JoinedQuery<T, T2> Join<T2, TKey>(Expression<Func<T, TKey>> leftKey, Expression<Func<T2, TKey>> rightKey) =>
+        Join(KeyJoin(leftKey, rightKey));
+
+    private static Expression<Func<T, T2, bool>> KeyJoin<T2, TKey>(Expression<Func<T, TKey>> leftKey, Expression<Func<T2, TKey>> rightKey)
+    {
+        var left = leftKey.Body;
+        var right = rightKey.Body;
+        Expression body;
+        if (left is NewExpression l && right is NewExpression r && l.Arguments.Count == r.Arguments.Count)
+        {
+            body = l.Arguments.Zip(r.Arguments, (a, b) => (Expression)Expression.Equal(a, b))
+                .Aggregate(Expression.AndAlso);
+        }
+        else
+        {
+            body = Expression.Equal(left, right);
+        }
+        return Expression.Lambda<Func<T, T2, bool>>(body, leftKey.Parameters[0], rightKey.Parameters[0]);
+    }
+
+    private Func<Result<(SelectStatement, EntityMap)>> JoinSource()
+    {
+        var source = With(_state with { Correlated = true });
+        return () =>
+        {
+            var plan = source.BuildSelect(ignorePaging: true);
+            return plan.IsFailure
+                ? Result<(SelectStatement, EntityMap)>.Failure(plan.Error!)
+                : Result<(SelectStatement, EntityMap)>.Success((plan.Value!.Select, plan.Value.Accessor.Map));
+        };
+    }
+
     // ── Reading ─────────────────────────────────────────────────────────────
 
     /// <summary>Runs the query and returns every row.</summary>

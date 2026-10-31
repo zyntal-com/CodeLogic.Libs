@@ -125,3 +125,9 @@
   - `Distinct()` removes duplicate results.
   - A projected column keeps its column converter, so enums stored as text come back as enums.
   - Rows are built with the constructor and setters named in the expression (no extra reflection; Native AOT safe).
+- **Joins:** typed `Join`/`LeftJoin` over 2 to 5 tables, including self-joins and key-selector joins (composite keys
+  through anonymous types).
+  - Lambdas take one parameter per table.
+  - `Where`/`OrderBy`/`ThenBy`/`Take`/`Skip`, `Select` projections, `CountAsync`, and `ToListAsync` returning
+    entity tuples (null for an unmatched LEFT JOIN).
+  - Joined entities' soft-delete and tenant filters go into their ON clause.
