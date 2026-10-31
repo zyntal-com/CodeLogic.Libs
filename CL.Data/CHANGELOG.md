@@ -13,3 +13,9 @@
   synced and drift, migration, seed, retention, bulk copy, node health, circuit state). Each event carries the
   connection, provider and node.
 - **Localization:** `DataStrings`, the localizable log messages (section `data`).
+- **Configuration:**
+  - `data` section (`DataConfig`): named connections (`DataConnectionConfig`) with provider, server, failover hosts,
+    TLS, pooling, naming policy, sync mode, performance, diagnostics, resilience and replica settings, plus typed
+    per-provider options (`MySql`, `PostgreSql`, `SqlServer`, `Sqlite`).
+  - `data.cache` section (`DataCacheConfig`).
+  - Validation reports field paths. Connection names stay case-insensitive after loading from JSON.

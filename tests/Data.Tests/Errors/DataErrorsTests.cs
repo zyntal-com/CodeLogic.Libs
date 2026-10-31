@@ -64,7 +64,7 @@ public sealed class DataErrorsTests
         Assert.All(codes, c => Assert.Matches("^data\\.[a-z]+(_[a-z]+)*$", c));
 
         var covered = Factories.Select(row => (string)row[2]).ToHashSet();
-        Assert.Empty(codes.Where(c => !covered.Contains(c)));
+        Assert.All(codes, c => Assert.Contains(c, covered));
     }
 
     [Fact]
