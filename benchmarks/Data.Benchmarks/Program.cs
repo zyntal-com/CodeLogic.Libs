@@ -53,7 +53,10 @@ public class MySqlBenchmarks
     public async Task Setup()
     {
         var cs = Environment.GetEnvironmentVariable("CL_DATA_MYSQL_CS") ?? throw new InvalidOperationException("Set CL_DATA_MYSQL_CS.");
-        _db = Database.Create("bench", MySqlDataProvider.Instance, new DataConnectionConfig { Provider = "mysql", ConnectionString = cs }).ValueOrThrow();
+        _db = Database.Create("bench", MySqlDataProvider.Instance, new DataConnectionConfig
+        {
+            Provider = "mysql", ConnectionString = cs, MySql = new MySqlOptions { AllowLoadLocalInfile = true },
+        }).ValueOrThrow();
         _source = new MySqlDataSource(cs);
         _cached = Database.Create("bench-cached", MySqlDataProvider.Instance, new DataConnectionConfig { Provider = "mysql", ConnectionString = cs },
             new DatabaseOptions { Cache = new CL.Data.Caching.DataCache(new DataCacheConfig { EntityCache = true }) }).ValueOrThrow();
@@ -155,6 +158,14 @@ public class MySqlBenchmarks
 
     [Benchmark, BenchmarkCategory("InsertMany100")]
     public async Task<int> CLData_InsertMany100() => (await _db.Repository<BenchItem>().InsertManyAsync(NewRows(100))).Value;
+
+    // ── Insert 5,000: multi-row batches vs native bulk copy ─────────────────
+
+    [Benchmark(Baseline = true), BenchmarkCategory("Insert5000")]
+    public async Task<int> CLData_InsertMany5000() => (await _db.Repository<BenchItem>().InsertManyAsync(NewRows(5000))).Value;
+
+    [Benchmark, BenchmarkCategory("Insert5000")]
+    public async Task<long> CLData_Bulk5000() => (await _db.Bulk<BenchItem>().InsertAsync(NewRows(5000))).Value!.Rows;
 
     // ── Update one ──────────────────────────────────────────────────────────
 

@@ -74,6 +74,9 @@ public sealed class PostgreSqlDataProvider : DataProvider
     public override CL.Data.Routing.ReplicaProbe ReplicaProbe { get; } = new PostgreSqlReplicaProbe();
 
     /// <inheritdoc />
+    public override CL.Data.Bulk.BulkCopier BulkCopier { get; } = new PostgreSqlBulkCopier();
+
+    /// <inheritdoc />
     public override CL.Data.Telemetry.QueryExplainer Explainer { get; } = new CL.Data.Telemetry.PrefixExplainer("EXPLAIN ");
 
     /// <inheritdoc />
@@ -323,4 +326,49 @@ public sealed class PostgreSqlReplicaProbe : CL.Data.Routing.ReplicaProbe
     /// <inheritdoc />
     public override ValueTask<long?> ReadLagMsAsync(System.Data.Common.DbDataReader reader, CancellationToken ct) =>
         ValueTask.FromResult(Number(reader, "lag_ms") is { } ms ? (long?)(long)Math.Max(0, ms) : null);
+}
+
+/// <summary>
+/// PostgreSQL bulk copy through <c>COPY ... FROM STDIN (FORMAT BINARY)</c>. Each value is written with the column's own type
+/// (read from <c>pg_attribute</c>), so numeric, timestamp, uuid, jsonb and enum columns get exactly their binary form.
+/// </summary>
+public sealed class PostgreSqlBulkCopier : CL.Data.Bulk.BulkCopier
+{
+    /// <inheritdoc />
+    public override async Task<long?> CopyAsync(CL.Data.Bulk.BulkCopyRequest request, CancellationToken ct)
+    {
+        var connection = (NpgsqlConnection)request.Connection;
+        var dialect = request.Database.Provider.Dialect;
+        var types = await ColumnTypesAsync(connection, request.QuotedTable, ct).ConfigureAwait(false);
+        var typeNames = new string?[request.Columns.Count];
+        for (var c = 0; c < typeNames.Length; c++) typeNames[c] = types.GetValueOrDefault(request.Columns[c]);
+
+        var columns = string.Join(", ", request.Columns.Select(dialect.QuoteIdentifier));
+        await using var writer = await connection.BeginBinaryImportAsync($"COPY {request.QuotedTable} ({columns}) FROM STDIN (FORMAT BINARY)", ct)
+            .ConfigureAwait(false);
+        for (var row = 0; row < request.Rows.Count; row++)
+        {
+            await writer.StartRowAsync(ct).ConfigureAwait(false);
+            for (var c = 0; c < typeNames.Length; c++)
+            {
+                var value = request.StoreValue(row, c);
+                if (value is DBNull) await writer.WriteNullAsync(ct).ConfigureAwait(false);
+                else if (typeNames[c] is { } typeName) await writer.WriteAsync(value, typeName, ct).ConfigureAwait(false);
+                else await writer.WriteAsync(value, ct).ConfigureAwait(false);
+            }
+        }
+        return (long)await writer.CompleteAsync(ct).ConfigureAwait(false);
+    }
+
+    private static async Task<Dictionary<string, string>> ColumnTypesAsync(NpgsqlConnection connection, string quotedTable, CancellationToken ct)
+    {
+        await using var command = new NpgsqlCommand(
+            "SELECT attname, format_type(atttypid, NULL) FROM pg_attribute WHERE attrelid = to_regclass($1) AND attnum > 0 AND NOT attisdropped",
+            connection);
+        command.Parameters.Add(new NpgsqlParameter<string> { TypedValue = quotedTable });
+        Dictionary<string, string> types = new(StringComparer.Ordinal);
+        await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
+        while (await reader.ReadAsync(ct).ConfigureAwait(false)) types[reader.GetString(0)] = reader.GetString(1);
+        return types;
+    }
 }

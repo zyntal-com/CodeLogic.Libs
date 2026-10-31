@@ -20,7 +20,11 @@ public sealed class SqlWriter
     private readonly StringBuilder _sb = new(256);
     private readonly List<SqlParameterValue> _parameters = [];
 
-    private readonly int _offset;
+    private int _offset;
+
+    // Rendering is synchronous, so one writer per thread is reused: its buffers keep their capacity between renders.
+    // A dialect hook that renders recursively finds the slot empty and gets a fresh writer.
+    [ThreadStatic] private static SqlWriter? _cached;
 
     private SqlWriter(SqlDialect dialect, int parameterOffset = 0)
     {
@@ -29,14 +33,45 @@ public sealed class SqlWriter
     }
 
     /// <summary>The dialect being rendered.</summary>
-    public SqlDialect Dialect { get; }
+    public SqlDialect Dialect { get; private set; }
+
+    private static SqlWriter Rent(SqlDialect dialect, int parameterOffset)
+    {
+        var writer = _cached;
+        if (writer is null) return new SqlWriter(dialect, parameterOffset);
+        _cached = null;
+        writer.Dialect = dialect;
+        writer._offset = parameterOffset;
+        return writer;
+    }
+
+    private RenderedSql Finish()
+    {
+        var rendered = new RenderedSql(_sb.ToString(), _parameters.Count == 0 ? [] : _parameters.ToArray());
+        if (_sb.Capacity <= 64 * 1024)
+        {
+            _sb.Clear();
+            _parameters.Clear();
+            _cached = this;
+        }
+        return rendered;
+    }
 
     /// <summary>Renders <paramref name="statement"/>; placeholders start at <paramref name="parameterOffset"/>.</summary>
     public static RenderedSql Render(SqlStatement statement, SqlDialect dialect, int parameterOffset = 0)
     {
-        var writer = new SqlWriter(dialect, parameterOffset);
-        writer.Statement(statement);
-        return new RenderedSql(writer._sb.ToString(), writer._parameters.ToArray());
+        var writer = Rent(dialect, parameterOffset);
+        try
+        {
+            writer.Statement(statement);
+            return writer.Finish();
+        }
+        catch
+        {
+            writer._sb.Clear();
+            writer._parameters.Clear();
+            throw;
+        }
     }
 
     /// <summary>

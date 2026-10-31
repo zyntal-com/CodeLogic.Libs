@@ -307,3 +307,10 @@
   - `NPlusOneDetectedEvent` fires once per one-second window.
   - `QueryExecutedEvent` is opt-in (`PublishQueryEvents`).
   - `CircuitStateChangedEvent` is published on every breaker transition.
+- **Bulk copy (WP-A1):** `db.Bulk<T>().InsertAsync(IEnumerable<T> | IAsyncEnumerable<T>, BulkOptions)` returns a `BulkCopyReceipt`.
+  - **Native paths:** MySqlBulkCopy, SqlBulkCopy, PostgreSQL `COPY BINARY` with each column's real type, and prepared inserts in one transaction on SQLite. Without a native path, rows are batched into multi-row inserts.
+  - **Same rows as an insert:** values are stamped and converted exactly as an insert does.
+  - **Large input:** input is streamed in chunks.
+  - **Transactions and cache:** a copy joins a transaction view and drops the table's cached results.
+  - **`InsertManyAsync`** switches to bulk at `BulkThreshold` when nothing has to be read back.
+- **Faster write path:** placeholder names are cached per dialect, and the SQL writer is reused on each thread. Inserting 100 rows went from 5.90 ms / 298 KB to 5.51 ms / 226 KB, which beats CL.MySQL2 4.9.

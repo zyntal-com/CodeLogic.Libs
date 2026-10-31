@@ -72,6 +72,9 @@ public sealed class MySqlDataProvider : DataProvider
     public override CL.Data.Routing.ReplicaProbe ReplicaProbe { get; } = new MySqlReplicaProbe();
 
     /// <inheritdoc />
+    public override CL.Data.Bulk.BulkCopier BulkCopier { get; } = new MySqlBulkCopier();
+
+    /// <inheritdoc />
     public override CL.Data.Telemetry.QueryExplainer Explainer { get; } = new CL.Data.Telemetry.PrefixExplainer("EXPLAIN FORMAT=TREE ");
 
     /// <inheritdoc />
@@ -302,4 +305,37 @@ public sealed class MySqlReplicaProbe : CL.Data.Routing.ReplicaProbe
     /// <inheritdoc />
     public override ValueTask<long?> ReadLagMsAsync(System.Data.Common.DbDataReader reader, CancellationToken ct) =>
         ValueTask.FromResult<long?>(Number(reader, "Seconds_Behind_Source") is { } seconds ? (long)(seconds * 1000) : Broken);
+}
+
+/// <summary>
+/// MySQL bulk copy through <c>MySqlBulkCopy</c> (<c>LOAD DATA LOCAL INFILE</c>). Needs <c>MySql.AllowLoadLocalInfile</c> and the
+/// server's <c>local_infile</c>; when either is off, CL.Data falls back to batched multi-row inserts.
+/// </summary>
+public sealed class MySqlBulkCopier : CL.Data.Bulk.BulkCopier
+{
+    private volatile bool _serverRefused;
+
+    /// <inheritdoc />
+    public override async Task<long?> CopyAsync(CL.Data.Bulk.BulkCopyRequest request, CancellationToken ct)
+    {
+        if (_serverRefused || request.Database.Config.MySql?.AllowLoadLocalInfile != true) return null;
+        var bulk = new MySqlBulkCopy((MySqlConnection)request.Connection, (MySqlTransaction?)request.Transaction)
+        {
+            DestinationTableName = request.QuotedTable,
+            BulkCopyTimeout = request.TimeoutSeconds,
+        };
+        for (var i = 0; i < request.Columns.Count; i++)
+            bulk.ColumnMappings.Add(new MySqlBulkCopyColumnMapping(i, request.Columns[i]));   // MySqlBulkCopy quotes names itself
+        try
+        {
+            var result = await bulk.WriteToServerAsync(request.CreateReader(), ct).ConfigureAwait(false);
+            return result.RowsInserted;
+        }
+        catch (MySqlException ex) when (ex.Number is 3948 or 1148)
+        {
+            // The server has local_infile off: remember it and batch inserts from now on.
+            _serverRefused = true;
+            return null;
+        }
+    }
 }

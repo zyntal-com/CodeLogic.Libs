@@ -150,6 +150,9 @@ public abstract class DataProvider
     /// <summary>Default server port (0 when not applicable).</summary>
     public virtual int DefaultPort => 0;
 
+    /// <summary>Native bulk copy; null when the provider has none (CL.Data then batches multi-row inserts).</summary>
+    public virtual CL.Data.Bulk.BulkCopier? BulkCopier => null;
+
     /// <summary>Captures execution plans of slow reads (<c>CaptureExplainOnSlowQuery</c>); null when unsupported.</summary>
     public virtual CL.Data.Telemetry.QueryExplainer? Explainer => null;
 

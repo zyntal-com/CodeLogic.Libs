@@ -14,7 +14,8 @@ and the allocation column shows library overhead better than the time column doe
 |---|---|
 | Against hand-written code | CL.Data is within 1–4% of raw ADO.NET and Dapper in every scenario. Compiled queries allocate about as little as Dapper (filter of 100 rows: 34.9 KB against 35.8 KB). |
 | Against CL.MySQL2 4.9 | 2–6% faster on single-row reads and writes, and 20–42% less memory per call (get by key: 16.3 KB → 10.4–13.6 KB). |
-| **Regression to fix** | Inserting a batch of 100 rows is **7% slower and allocates 16% more** than 4.9. Bulk copy (WP-A1) must beat it. |
+| Batch insert of 100 rows (fixed in WP-A1) | It was 7% slower and allocated 16% more than 4.9 (5.90 ms / 298 KB against 5.53 ms / 256 KB). Now **5.51 ms / 226 KB**: faster than 4.9, with 12% less memory. The fixes are cached parameter names per dialect, a reused SQL writer per thread, and one value collector per plan. Planning plus rendering 100 rows dropped from 114 KB to 55 KB, and `InsertAllocationBudget` guards that number. |
+| Bulk copy | 5,000 rows on MySQL take **29.7 ms through bulk copy against 62.1 ms** with multi-row `InsertMany` (2.1× faster), using 5.3 MB against 11.1 MB. Bulk copy still creates one driver parameter per value to get the exact stored form, about 1 KB per row; there is room to trim that. |
 | Result cache | A get by key costs **1.66 µs** from the entity cache against 1.47 ms from the database (~880×). A 100-row filter costs **18.4 µs** against 1.61 ms (~87×). Each hit builds fresh objects. |
 | Retries and routing | Retries are on by default and cost no measurable time: GetById is still 1.02× raw ADO.NET. They add about 0.3 KB per command (the async step). |
 | Telemetry | With no listener, telemetry adds nothing (GetById allocations unchanged: 14.42 → 14.43 KB, time equal to raw ADO.NET). Spans and metrics are only built when a listener is attached. Slow-query and N+1 checks are integer comparisons when they are off. |
@@ -54,6 +55,10 @@ and the allocation column shows library overhead better than the time column doe
   - `DatabaseCacheBus` polls, so other nodes see an invalidation up to one poll interval late (500 ms by default).
 - **Reads inside a transaction never use the cache.** Invalidations from a transaction wait for commit, and a rollback drops nothing.
 - **SQL Server connection strings:** the `SqlServer` options (`Encrypt = true` by default, `TrustServerCertificate`) override `Encrypt` and `TrustServerCertificate` written in an explicit connection string. **Open decision:** should values in the connection string win?
+- **Bulk copy does not read back server-generated identities.** `InsertManyAsync` therefore switches to bulk at `BulkThreshold` (5,000 by default) only when nothing has to be read back: every row already carries its identity and the table has no row version.
+  - Bulk copy skips entity save hooks and the command pipeline (interceptors, retries). It joins a transaction view, and it drops the table's cached results.
+  - MySQL needs `MySql.AllowLoadLocalInfile` and the server's `local_infile`. Without both, CL.Data batches multi-row inserts, and it remembers when the server refuses.
+  - PostgreSQL reads the column types from `pg_attribute` once per chunk and writes binary COPY with them.
 - **Telemetry granularity:** each span and duration measurement covers a whole logical command, retries included (`cl.data.attempts` on the span).
   - Slow-query, N+1 and `QueryExecutedEvent` checks run per attempt, so a retried command can report each slow attempt.
   - EXPLAIN runs in the background on its own connection, for reads outside transactions only, and never executes the statement. The event arrives after the query has returned.

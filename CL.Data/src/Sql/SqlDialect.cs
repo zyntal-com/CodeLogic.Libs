@@ -37,7 +37,29 @@ public abstract class SqlDialect
         schema is null ? QuoteIdentifier(table) : QuoteIdentifier(schema) + "." + QuoteIdentifier(table);
 
     /// <summary>Placeholder for the parameter at <paramref name="index"/> (<c>@p0</c>).</summary>
-    public virtual string ParameterName(int index) => string.Create(null, stackalloc char[16], $"{ParameterPrefix}p{index}");
+    public virtual string ParameterName(int index)
+    {
+        var names = _parameterNames;
+        return (uint)index < (uint)names.Length ? names[index] : GrowParameterNames(index);
+    }
+
+    // Placeholder names are built once per dialect and index: a 100-row insert needs 500 of them, twice (render and bind).
+    private string[] _parameterNames = [];
+
+    private string GrowParameterNames(int index)
+    {
+        if (index >= MaxCachedParameterNames) return string.Create(null, stackalloc char[16], $"{ParameterPrefix}p{index}");
+        var size = Math.Min(MaxCachedParameterNames, Math.Max(64, (int)System.Numerics.BitOperations.RoundUpToPowerOf2((uint)index + 1)));
+        var current = _parameterNames;
+        var grown = new string[size];
+        current.CopyTo(grown, 0);
+        Span<char> buffer = stackalloc char[16];
+        for (var i = current.Length; i < size; i++) grown[i] = string.Create(null, buffer, $"{ParameterPrefix}p{i}");
+        _parameterNames = grown;   // a racing thread builds the same names; either array is correct
+        return grown[index];
+    }
+
+    private const int MaxCachedParameterNames = 65536;
 
     /// <summary>Escapes LIKE wildcards in <paramref name="value"/> so it matches literally.</summary>
     public virtual string EscapeLike(string value)

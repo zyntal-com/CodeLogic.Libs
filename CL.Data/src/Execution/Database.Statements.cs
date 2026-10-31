@@ -38,6 +38,9 @@ public sealed partial class Database
     /// <summary>A query over <typeparamref name="T"/>.</summary>
     public QueryBuilder<T> Query<T>() => new(this);
 
+    /// <summary>Bulk inserts for <typeparamref name="T"/> through the provider's native bulk path.</summary>
+    public CL.Data.Bulk.DataBulk<T> Bulk<T>() => new(this);
+
     /// <summary>A batch of queries sent in one round trip.</summary>
     public DataBatch Batch() => new(this);
 

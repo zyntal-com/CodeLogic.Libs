@@ -63,6 +63,9 @@ public sealed class SqliteDataProvider : DataProvider
     public override CL.Data.Schema.SchemaIntrospector Introspector { get; } = new SqliteSchemaIntrospector();
 
     /// <inheritdoc />
+    public override CL.Data.Bulk.BulkCopier BulkCopier { get; } = new SqliteBulkCopier();
+
+    /// <inheritdoc />
     public override CL.Data.Telemetry.QueryExplainer Explainer { get; } = new CL.Data.Telemetry.PrefixExplainer("EXPLAIN QUERY PLAN ");
 
     /// <inheritdoc />
@@ -146,4 +149,51 @@ public sealed class SqliteDataProvider : DataProvider
 
     internal static bool IsMemory(string database) =>
         string.Equals(database.Trim(), ":memory:", StringComparison.OrdinalIgnoreCase);
+}
+
+/// <summary>SQLite bulk insert: one prepared INSERT executed per row inside a single transaction (SQLite's fastest path).</summary>
+public sealed class SqliteBulkCopier : CL.Data.Bulk.BulkCopier
+{
+    /// <inheritdoc />
+    public override Task<long?> CopyAsync(CL.Data.Bulk.BulkCopyRequest request, CancellationToken ct)
+    {
+        var connection = (SqliteConnection)request.Connection;
+        var dialect = request.Database.Provider.Dialect;
+        var owned = request.Transaction is null ? connection.BeginTransaction() : null;
+        try
+        {
+            using var command = connection.CreateCommand();
+            command.Transaction = (SqliteTransaction?)(request.Transaction ?? owned);
+            command.CommandTimeout = request.TimeoutSeconds;
+            var placeholders = new string[request.Columns.Count];
+            var parameters = new SqliteParameter[request.Columns.Count];
+            for (var c = 0; c < parameters.Length; c++)
+            {
+                placeholders[c] = dialect.ParameterName(c);
+                parameters[c] = command.Parameters.Add(placeholders[c], SqliteType.Text);
+            }
+            command.CommandText = $"INSERT INTO {request.QuotedTable} ({string.Join(", ", request.Columns.Select(dialect.QuoteIdentifier))}) VALUES ({string.Join(", ", placeholders)})";
+            command.Prepare();
+
+            long total = 0;
+            for (var row = 0; row < request.Rows.Count; row++)
+            {
+                ct.ThrowIfCancellationRequested();
+                for (var c = 0; c < parameters.Length; c++)
+                {
+                    var source = request.Parameter(row, c);
+                    if (source is SqliteParameter typed) parameters[c].SqliteType = typed.SqliteType;
+                    else parameters[c].DbType = source.DbType;
+                    parameters[c].Value = source.Value ?? DBNull.Value;
+                }
+                total += command.ExecuteNonQuery();
+            }
+            owned?.Commit();
+            return Task.FromResult<long?>(total);
+        }
+        finally
+        {
+            owned?.Dispose();
+        }
+    }
 }

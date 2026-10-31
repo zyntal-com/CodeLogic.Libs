@@ -74,10 +74,19 @@ public static class WritePlanner
             if (useReturning && !ctx.Capabilities.ReturningPreservesOrder) perStatement = 1;
             // Without RETURNING, generated identities come from the last-insert-id, which covers one statement at a time.
 
+            var columnNames = columns.Select(names.Of).ToArray();
+            var collector = new ValueCollector();
             foreach (var chunk in rows.Chunk(perStatement))
             {
-                var values = chunk.Select(i => (IReadOnlyList<SqlExpr>)columns.Select(c => Value(accessor, entities[i], c)).ToArray()).ToArray();
-                var statement = new InsertStatement(table, columns.Select(names.Of).ToArray(), values)
+                var values = new IReadOnlyList<SqlExpr>[chunk.Length];
+                for (var r = 0; r < chunk.Length; r++)
+                {
+                    var entity = entities[chunk[r]];
+                    var row = new SqlExpr[columns.Length];
+                    for (var c = 0; c < columns.Length; c++) row[c] = Value(accessor, entity, columns[c], collector);
+                    values[r] = row;
+                }
+                var statement = new InsertStatement(table, columnNames, values)
                 {
                     Returning = useReturning ? generated.Select(names.Of).ToArray() : [],
                     ExplicitIdentity = explicitIdentity && identity is not null,
@@ -400,9 +409,41 @@ public static class WritePlanner
 
     private static bool IsWritable(ColumnMap column) => column.DataType != DataType.RowVersion;
 
-    private static SqlExpr Value<T>(IEntityAccessor<T> accessor, T entity, ColumnMap column)
+    /// <summary>True when inserting <paramref name="entities"/> needs nothing read back, so the bulk path may take them.</summary>
+    internal static bool CanBulkInsert<T>(IEntityAccessor<T> accessor, IReadOnlyList<T> entities)
     {
+        var map = accessor.Map;
+        if (map.Columns.Any(c => c.DataType == DataType.RowVersion)) return false;   // server-generated values to read back
+        if (map.Identity is not { } identity) return true;
+        foreach (var entity in entities)
+            if (IsDefault(accessor.GetValue(entity, identity.Ordinal))) return false;   // the server assigns it: InsertMany reads it back
+        return true;
+    }
+
+    /// <summary>
+    /// One bulk-copy row: stamps <paramref name="entity"/> like an insert (audit, tenant, concurrency token) and returns the
+    /// stored values of <paramref name="columns"/> (null = SQL NULL).
+    /// </summary>
+    internal static Result<SqlParameterValue?[]> BulkRow<T>(IEntityAccessor<T> accessor, T entity, ColumnMap[] columns, WriteContext ctx)
+    {
+        if (Stamp(accessor, entity, ctx, ctx.Time.GetUtcNow(), insert: true) is { } error) return error;
+        var row = new SqlParameterValue?[columns.Length];
         var collector = new ValueCollector();
+        for (var c = 0; c < columns.Length; c++)
+        {
+            collector.Result = null;
+            accessor.WriteColumn(entity, columns[c].Ordinal, collector);
+            row[c] = collector.Result;
+        }
+        return row;
+    }
+
+    private static SqlExpr Value<T>(IEntityAccessor<T> accessor, T entity, ColumnMap column) =>
+        Value(accessor, entity, column, new ValueCollector());
+
+    private static SqlExpr Value<T>(IEntityAccessor<T> accessor, T entity, ColumnMap column, ValueCollector collector)
+    {
+        collector.Result = null;
         accessor.WriteColumn(entity, column.Ordinal, collector);
         return collector.Result is null ? NullExpr.Instance : new ParameterExpr(collector.Result);
     }

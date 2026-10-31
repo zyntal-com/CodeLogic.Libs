@@ -50,6 +50,13 @@ public sealed class Repository<T>
         var list = entities as IReadOnlyList<T> ?? entities.ToList();
         return await SaveAsync(SaveKind.Insert, list, null, async () =>
         {
+            // Large inserts with nothing to read back (no server-generated identity or row version) take the native bulk path.
+            if (_db.Config.BulkThreshold > 0 && list.Count >= _db.Config.BulkThreshold && WritePlanner.CanBulkInsert(accessor.Value!, list))
+            {
+                var receipt = await _db.Bulk<T>().InsertAsync(list, new CL.Data.Bulk.BulkOptions { KeepIdentity = accessor.Value!.Map.Identity is not null }, ct)
+                    .ConfigureAwait(false);
+                return receipt.IsFailure ? receipt.Error! : (int)receipt.Value!.Rows;
+            }
             var plan = WritePlanner.Insert(accessor.Value!, list, _db.WriteContext);
             if (plan.IsFailure) return plan.Error!;
             return await _db.ExecuteWritesAsync(plan.Value!, list, accessor.Value!, ct).ConfigureAwait(false);

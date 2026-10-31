@@ -74,6 +74,9 @@ public sealed class SqlServerDataProvider : DataProvider
     public override CL.Data.Routing.ReplicaProbe ReplicaProbe { get; } = new SqlServerReplicaProbe();
 
     /// <inheritdoc />
+    public override CL.Data.Bulk.BulkCopier BulkCopier { get; } = new SqlServerBulkCopier();
+
+    /// <inheritdoc />
     public override CL.Data.Telemetry.QueryExplainer Explainer { get; } = new SqlServerExplainer();
 
     /// <inheritdoc />
@@ -372,4 +375,24 @@ public sealed class SqlServerExplainer : CL.Data.Telemetry.QueryExplainer
         System.Data.SqlDbType.Structured or System.Data.SqlDbType.Udt or System.Data.SqlDbType.Variant => "sql_variant",
         _ => p.SqlDbType.ToString().ToLowerInvariant(),
     };
+}
+
+/// <summary>SQL Server bulk copy through <c>SqlBulkCopy</c> (streamed, constraints checked, identity kept on request).</summary>
+public sealed class SqlServerBulkCopier : CL.Data.Bulk.BulkCopier
+{
+    /// <inheritdoc />
+    public override async Task<long?> CopyAsync(CL.Data.Bulk.BulkCopyRequest request, CancellationToken ct)
+    {
+        var options = SqlBulkCopyOptions.CheckConstraints | (request.KeepIdentity ? SqlBulkCopyOptions.KeepIdentity : SqlBulkCopyOptions.Default);
+        using var bulk = new SqlBulkCopy((SqlConnection)request.Connection, options, (SqlTransaction?)request.Transaction)
+        {
+            DestinationTableName = request.QuotedTable,
+            BulkCopyTimeout = request.TimeoutSeconds,
+            EnableStreaming = true,
+        };
+        foreach (var column in request.Columns) bulk.ColumnMappings.Add(column, column);
+        await using var reader = request.CreateReader();
+        await bulk.WriteToServerAsync(reader, ct).ConfigureAwait(false);
+        return bulk.RowsCopied64;
+    }
 }

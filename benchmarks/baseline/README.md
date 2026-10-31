@@ -30,6 +30,14 @@ from the buffered rows, so callers can never change what is cached.
 | Get by key (entity cache) | 1,465 µs | **1.66 µs** (~880×) | 5.2 KB |
 | Filter, 100 rows (`WithCache()`) | 1,611 µs | **18.4 µs** (~87×) | 17.5 KB |
 
+## Write path and bulk copy (WP-A1)
+
+| Scenario | Before | **Now** | CL.MySQL2 4.9 |
+|---|---|---|---|
+| Insert 100 (multi-row) | 5.902 ms / 298.2 KB | **5.514 ms / 226.4 KB** | 5.533 ms / 255.9 KB |
+| Insert 5,000: `InsertMany` (multi-row) | | 62.1 ms / 11.07 MB | |
+| Insert 5,000: `Bulk<T>().InsertAsync` (MySqlBulkCopy) | | **29.7 ms / 5.3 MB** | |
+
 ## Findings
 
 - **CL.Data runs at the speed of hand-written ADO.NET and Dapper** (within 1–2%) in every scenario; the database round
@@ -37,8 +45,8 @@ from the buffered rows, so callers can never change what is cached.
 - **Against CL.MySQL2 4.9:** 2–6% faster on single-row reads and writes (the gap is the library overhead, since the
   round trip is the same), and **20–42% less memory** per call (get by key 16.3 → 10.4–13.6 KB, filter 60.3 → 34.9–41.3 KB,
   count 18.2 → 11.8 KB).
-- **To improve:** batch insert of 100 rows is 7% slower and allocates 16% more than 4.9. WP-A1 (bulk copy, and the
-  automatic switch to it for large `InsertMany`) is where to fix it; this row is the regression budget to beat.
+- **Fixed in WP-A1:** batch insert of 100 rows was 7% slower and allocated 16% more than 4.9. It is now faster than 4.9,
+  with 12% less memory.
 - On a remote database with a few ms of latency the time differences shrink further; on a busy server the lower
   allocations matter more than the microseconds.
 

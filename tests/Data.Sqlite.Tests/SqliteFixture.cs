@@ -108,3 +108,6 @@ public sealed class SqliteReplicaTests(SqliteFixture fixture) : ReplicaConforman
 
 [Collection("sqlite")]
 public sealed class SqliteTelemetryTests(SqliteFixture fixture) : TelemetryConformance(fixture);
+
+[Collection("sqlite")]
+public sealed class SqliteBulkTests(SqliteFixture fixture) : BulkConformance(fixture);
