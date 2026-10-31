@@ -147,6 +147,96 @@ jobs:
       - name: Run MSSQL tests
         run: dotnet test tests/MSSQL.Tests/MSSQL.Tests.csproj --configuration Release -p:CodeLogicFromNuGet=true --logger "console;verbosity=normal"
 
+  # CL.Data live conformance suites. Each provider test project derives from tests/Data.Conformance and
+  # self-skips without its CL_DATA_*_CS connection string; SQLite runs in-process in the `test` job above.
+  data-mysql:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ALLOW_EMPTY_PASSWORD: 'yes'
+          MYSQL_DATABASE: cl_data
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    env:
+      CL_DATA_MYSQL_CS: Server=127.0.0.1;Port=3306;Database=cl_data;User ID=root;Password=;AllowUserVariables=true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup .NET 11
+        uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+
+      - name: Run CL.Data MySQL tests
+        run: dotnet test tests/Data.MySql.Tests/Data.MySql.Tests.csproj --configuration Release -p:CodeLogicFromNuGet=true --logger "console;verbosity=normal"
+
+  data-postgresql:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: cl_data_pw
+          POSTGRES_DB: cl_data
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    env:
+      CL_DATA_PG_CS: Host=127.0.0.1;Port=5432;Database=cl_data;Username=postgres;Password=cl_data_pw
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup .NET 11
+        uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+
+      - name: Run CL.Data PostgreSQL tests
+        run: dotnet test tests/Data.PostgreSql.Tests/Data.PostgreSql.Tests.csproj --configuration Release -p:CodeLogicFromNuGet=true --logger "console;verbosity=normal"
+
+  data-sqlserver:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      MSSQL_SA_PASSWORD: Your_strong_password123!
+      CL_DATA_MSSQL_CS: Server=127.0.0.1,1433;Database=cl_data;User ID=sa;Password=Your_strong_password123!;Encrypt=False;TrustServerCertificate=True
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup .NET 11
+        uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+
+      - name: Start SQL Server 2019
+        shell: bash
+        run: |
+          docker run --name cl-data-mssql -e ACCEPT_EULA=Y -e MSSQL_SA_PASSWORD="$MSSQL_SA_PASSWORD" -p 1433:1433 -d mcr.microsoft.com/mssql/server:2019-latest
+          for i in {1..60}; do
+            if docker exec cl-data-mssql /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$MSSQL_SA_PASSWORD" -C -Q "SELECT 1" >/dev/null 2>&1; then break; fi
+            sleep 2
+          done
+          docker exec cl-data-mssql /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$MSSQL_SA_PASSWORD" -C -Q "IF DB_ID(N'cl_data') IS NULL CREATE DATABASE [cl_data]"
+
+      - name: Run CL.Data SQL Server tests
+        run: dotnet test tests/Data.SqlServer.Tests/Data.SqlServer.Tests.csproj --configuration Release -p:CodeLogicFromNuGet=true --logger "console;verbosity=normal"
+
   # The Linux job below proves TLS against OpenSSL; Windows classifies TLS failures through SChannel and keeps
   # a client certificate's key in a temporary key container, and neither ran in CI while every live test
   # skipped on the windows job above. GitHub's Windows runners cannot start the Linux containers, so this job
