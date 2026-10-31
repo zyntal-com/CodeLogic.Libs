@@ -1,4 +1,7 @@
+using CL.Data;
 using CL.Data.Errors;
+using CL.Data.Execution;
+using CL.Data.Pipeline;
 using CodeLogic.Core.Results;
 
 namespace Data.Conformance;
@@ -113,5 +116,38 @@ public abstract class PagingConformance(ProviderFixture fixture) : ConformanceSu
 #pragma warning restore CLD101
         });
         Assert.Equal(DataErrors.TranslationFailedCode, ex.Error.Code);
+    }
+
+    private sealed class Gate(Error? refuse) : IDataInterceptor
+    {
+        public List<string?> Operations { get; } = [];
+
+        public ValueTask<Error?> OnExecutingAsync(CommandContext context)
+        {
+            lock (Operations) Operations.Add(context.Operation);
+            return ValueTask.FromResult(refuse);
+        }
+    }
+
+    [SkippableFact]
+    public async Task Streams_run_through_the_command_pipeline()
+    {
+        RequireProvider();
+        await SeedAsync(5);
+
+        var seen = new Gate(null);
+        await using (var db = Fixture.CreateDatabase(new DatabaseOptions { Interceptors = [seen] }))
+        {
+            var count = 0;
+            await foreach (var _ in db.Query<Product>().AsAsyncEnumerable()) count++;
+            Assert.Equal(5, count);
+        }
+        Assert.Contains("select", seen.Operations);
+
+        // An interceptor can refuse a stream like any other command.
+        var refused = DataErrors.Validation("refused by policy");
+        await using var guarded = Fixture.CreateDatabase(new DatabaseOptions { Interceptors = [new Gate(refused)] });
+        var ex = await Assert.ThrowsAsync<DataQueryException>(async () => { await foreach (var _ in guarded.Query<Product>().AsAsyncEnumerable()) { } });
+        Assert.Equal(refused.Code, ex.Error.Code);
     }
 }

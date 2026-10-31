@@ -238,6 +238,37 @@ public static class WritePlanner
     public static Result<IReadOnlyList<WriteCommand>> Upsert<T>(IEntityAccessor<T> accessor, IReadOnlyList<T> entities, WriteContext ctx,
         UpsertOptions? options = null)
     {
+        // Rows that bring their own identity and rows that leave it to the server need different column lists. Mixed in
+        // one statement, the identity column would be dropped for every row and explicit identities silently replaced.
+        if (accessor.Map.Identity is { } identity && entities.Count > 1)
+        {
+            var explicitRows = new List<int>();
+            var generatedRows = new List<int>();
+            for (var i = 0; i < entities.Count; i++)
+                (IsDefault(accessor.GetValue(entities[i], identity.Ordinal)) ? generatedRows : explicitRows).Add(i);
+            if (explicitRows.Count > 0 && generatedRows.Count > 0)
+            {
+                List<WriteCommand> all = [];
+                foreach (var group in new[] { explicitRows, generatedRows })
+                {
+                    var planned = UpsertGroup(accessor, group.Select(i => entities[i]).ToList(), ctx, options);
+                    if (planned.IsFailure) return planned.Error!;
+                    // Map each command's rows back to the caller's entity indices.
+                    all.AddRange(planned.Value!.Select(c => c.Rows == 0 ? c : c with
+                    {
+                        RowIndices = Enumerable.Range(0, c.Rows).Select(r => group[c.EntityIndex(r)]).ToArray(),
+                        FirstRow = group[c.EntityIndex(0)],
+                    }));
+                }
+                return all;
+            }
+        }
+        return UpsertGroup(accessor, entities, ctx, options);
+    }
+
+    private static Result<IReadOnlyList<WriteCommand>> UpsertGroup<T>(IEntityAccessor<T> accessor, IReadOnlyList<T> entities, WriteContext ctx,
+        UpsertOptions? options)
+    {
         options ??= new UpsertOptions();
         var map = accessor.Map;
         if (!map.IsTable) return DataErrors.Unsupported($"'{map.ClrType.Name}' is a [DataRow] type and cannot be written.");
@@ -422,17 +453,13 @@ public static class WritePlanner
 
         if (map.TenantKey is { } tenant)
         {
+            // Every write of a tenant entity needs a tenant, including inserts, upserts and bulk copy: a tenant value set on
+            // the entity is not authority to write for that tenant. Write for a specific tenant through db.ForTenant(id).
+            if (ctx.Tenant is null) return DataErrors.TenantMissing(map.ClrType.Name);
             var current = accessor.GetValue(entity, tenant.Ordinal);
-            if (ctx.Tenant is not null)
-            {
-                if (insert) accessor.SetValue(entity, tenant.Ordinal, ctx.Tenant);
-                else if (!IsDefault(current) && !Equals(EntityKey.Of(current), EntityKey.Of(ctx.Tenant)))
-                    return DataErrors.Validation($"'{map.ClrType.Name}' belongs to another tenant.");
-            }
-            else if (IsDefault(current))
-            {
-                return DataErrors.TenantMissing(map.ClrType.Name);
-            }
+            if (insert) accessor.SetValue(entity, tenant.Ordinal, ctx.Tenant);
+            else if (!IsDefault(current) && !Equals(EntityKey.Of(current), EntityKey.Of(ctx.Tenant)))
+                return DataErrors.Validation($"'{map.ClrType.Name}' belongs to another tenant.");
         }
 
         if (insert && map.ConcurrencyToken is { } token && token.ValueType != typeof(byte[]) && IsDefault(accessor.GetValue(entity, token.Ordinal)))
