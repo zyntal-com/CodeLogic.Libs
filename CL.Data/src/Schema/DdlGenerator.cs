@@ -26,6 +26,12 @@ public class DdlGenerator(SqlDialect dialect)
         DropForeignKeyChange d => DropForeignKey(d),
     };
 
+    /// <summary>
+    /// The statements for one table's <paramref name="changes"/> (in plan order). Default: <see cref="Generate"/> for each
+    /// change. Providers whose ALTER TABLE takes several clauses override it so a table is rebuilt once, not once per column.
+    /// </summary>
+    public virtual IReadOnlyList<string> GenerateAll(IReadOnlyList<SchemaChange> changes) => changes.SelectMany(Generate).ToArray();
+
     /// <summary>True when DDL can run in a transaction (all but MySQL); a failed table plan then rolls back completely.</summary>
     public virtual bool TransactionalDdl => true;
 
@@ -101,13 +107,12 @@ public class DdlGenerator(SqlDialect dialect)
     // ── Columns ─────────────────────────────────────────────────────────────
 
     /// <summary>ALTER TABLE ADD COLUMN. A NOT NULL column without a default gets one, so existing rows stay valid.</summary>
-    protected virtual string AddColumn(AddColumnChange change)
-    {
-        var column = change.Column;
-        if (!column.Nullable && column.DefaultSql is null && !column.Identity)
-            column = column with { DefaultSql = ImplicitDefault(column) };
-        return $"ALTER TABLE {Table(change.Table, change.Schema)} {AddColumnKeyword} {ColumnDefinition(column, null)}";
-    }
+    protected virtual string AddColumn(AddColumnChange change) =>
+        $"ALTER TABLE {Table(change.Table, change.Schema)} {AddColumnKeyword} {ColumnDefinition(ColumnToAdd(change.Column), null)}";
+
+    /// <summary><paramref name="column"/> as added to a table that may have rows: NOT NULL without a default gets an implicit one.</summary>
+    protected ColumnSchema ColumnToAdd(ColumnSchema column) =>
+        !column.Nullable && column.DefaultSql is null && !column.Identity ? column with { DefaultSql = ImplicitDefault(column) } : column;
 
     /// <summary><c>ADD COLUMN</c> (<c>ADD</c> on SQL Server).</summary>
     protected virtual string AddColumnKeyword => "ADD COLUMN";

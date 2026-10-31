@@ -165,7 +165,7 @@ public sealed class SchemaSync
             var plan = SchemaDiff.Compare(desired.Value, actual.Value, level);
             if (plan.IsEmpty) continue;
             var key = desired.Value.Schema is null ? desired.Value.Name : desired.Value.Schema + "." + desired.Value.Name;
-            tables.Add(new SchemaScriptTable(key, plan.Apply, plan.Pending, plan.Apply.SelectMany(ddl.Generate).ToArray()));
+            tables.Add(new SchemaScriptTable(key, plan.Apply, plan.Pending, ddl.GenerateAll(plan.Apply)));
         }
         return new SchemaScript(provider.Name, level, ddl.SessionSetup, ddl.SessionTeardown, tables);
     }
@@ -247,14 +247,13 @@ public sealed class SchemaSync
                 if (begun.IsFailure) return begun.Error!;
             }
 
-            foreach (var change in changes)
-            foreach (var statement in ddl.Generate(change))
+            foreach (var statement in ddl.GenerateAll(changes))
             {
                 var executed = await session.ExecuteAsync(SqlText.Raw(statement), ct).ConfigureAwait(false);
                 if (executed.IsFailure)
                 {
                     await session.RollbackAsync().ConfigureAwait(false);
-                    return DataErrors.SchemaSyncFailed(table, $"{change.Describe()}: {statement}", executed.Error);
+                    return DataErrors.SchemaSyncFailed(table, statement, executed.Error);
                 }
             }
 

@@ -187,6 +187,32 @@ public sealed class DdlGoldenTests
     }
 
     [Fact]
+    public void MySql_merges_a_tables_column_changes_into_one_alter_after_the_backfills()
+    {
+        var desired = new TableSchema("t", null, [new ColumnSchema("Name", "varchar(80)", false), new ColumnSchema("Body", "longtext", true)], []);
+        SchemaChange[] changes =
+        [
+            new DropIndexChange("t", null, "ix_old"),
+            new AddColumnChange("t", null, new ColumnSchema("Qty", "int", false)),
+            new AlterColumnChange("t", null, new ColumnSchema("Name", "varchar(80)", true), desired.Columns[0], desired),
+            new AlterColumnChange("t", null, new ColumnSchema("Body", "text", true), desired.Columns[1], desired),
+            new DropColumnChange("t", null, "Old", desired),
+            new CreateIndexChange("t", null, new IndexSchema("ix_new", false, ["Name"])),
+        ];
+        Assert.Equal(
+        [
+            "DROP INDEX `ix_old` ON `t`",
+            "UPDATE `t` SET `Name` = '' WHERE `Name` IS NULL",
+            "ALTER TABLE `t` ADD COLUMN `Qty` int NOT NULL DEFAULT 0, MODIFY COLUMN `Name` varchar(80) NOT NULL, " +
+            "MODIFY COLUMN `Body` longtext NULL, DROP COLUMN `Old`",
+            "CREATE INDEX `ix_new` ON `t` (`Name`)",
+        ], MySqlDataProvider.Instance.Ddl.GenerateAll(changes));
+
+        // Other providers keep one statement list per change.
+        Assert.Equal(changes.SelectMany(PostgreSqlDataProvider.Instance.Ddl.Generate), PostgreSqlDataProvider.Instance.Ddl.GenerateAll(changes));
+    }
+
+    [Fact]
     public void Script_renders_changes_with_comments_and_pending_items()
     {
         var desired = new TableSchema("t", null, [new ColumnSchema("Name", "varchar(80)", false)], []);
