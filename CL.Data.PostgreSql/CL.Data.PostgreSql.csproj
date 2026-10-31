@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>CL.Data.PostgreSql</RootNamespace>
+    <AssemblyName>CL.Data.PostgreSql</AssemblyName>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <IsAotCompatible>true</IsAotCompatible>
+    <PackageId>CodeLogic.Data.PostgreSql</PackageId>
+    <PackageTags>database;orm;postgresql;postgres;npgsql;codelogic</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <Description>PostgreSQL provider for CodeLogic.Data (Npgsql).</Description>
+    <WarningsAsErrors>$(WarningsAsErrors);CS1591</WarningsAsErrors>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Remove="tests/**" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Npgsql" Version="10.*" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- PrivateAssets="none" so the source generator (an analyzer asset of CodeLogic.Data) flows to
+         consumers that install only this provider package. -->
+    <ProjectReference Include="../CL.Data/CL.Data.csproj" PrivateAssets="none" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Data.PostgreSql.Tests" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
+</Project>

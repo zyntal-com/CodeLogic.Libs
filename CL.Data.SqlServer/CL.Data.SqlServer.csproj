@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>CL.Data.SqlServer</RootNamespace>
+    <AssemblyName>CL.Data.SqlServer</AssemblyName>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <IsAotCompatible>true</IsAotCompatible>
+    <PackageId>CodeLogic.Data.SqlServer</PackageId>
+    <PackageTags>database;orm;sqlserver;mssql;azure-sql;codelogic</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <Description>SQL Server / Azure SQL provider for CodeLogic.Data (Microsoft.Data.SqlClient).</Description>
+    <WarningsAsErrors>$(WarningsAsErrors);CS1591</WarningsAsErrors>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Remove="tests/**" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.SqlClient" Version="7.*" />
+    <PackageReference Include="Microsoft.Data.SqlClient.Extensions.Azure" Version="7.*" />
+    <PackageReference Include="System.Security.Cryptography.Pkcs" Version="11.0.0-rc.3.26522.148" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- PrivateAssets="none" so the source generator (an analyzer asset of CodeLogic.Data) flows to
+         consumers that install only this provider package. -->
+    <ProjectReference Include="../CL.Data/CL.Data.csproj" PrivateAssets="none" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Data.SqlServer.Tests" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
+</Project>

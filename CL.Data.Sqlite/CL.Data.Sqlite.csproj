@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>CL.Data.Sqlite</RootNamespace>
+    <AssemblyName>CL.Data.Sqlite</AssemblyName>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <IsAotCompatible>true</IsAotCompatible>
+    <PackageId>CodeLogic.Data.Sqlite</PackageId>
+    <PackageTags>database;orm;sqlite;embedded;codelogic</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <Description>SQLite provider for CodeLogic.Data (Microsoft.Data.Sqlite).</Description>
+    <WarningsAsErrors>$(WarningsAsErrors);CS1591</WarningsAsErrors>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Remove="tests/**" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="11.0.0-rc.3.26522.148" />
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.5" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- PrivateAssets="none" so the source generator (an analyzer asset of CodeLogic.Data) flows to
+         consumers that install only this provider package. -->
+    <ProjectReference Include="../CL.Data/CL.Data.csproj" PrivateAssets="none" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Data.Sqlite.Tests" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
+</Project>

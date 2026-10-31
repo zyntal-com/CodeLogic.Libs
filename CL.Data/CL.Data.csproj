@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>CL.Data</RootNamespace>
+    <AssemblyName>CL.Data</AssemblyName>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <IsAotCompatible>true</IsAotCompatible>
+    <PackageId>CodeLogic.Data</PackageId>
+    <PackageTags>database;orm;sql;mysql;postgresql;sqlserver;sqlite;linq;repository;codelogic</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <Description>Provider-neutral database framework (ORM) for CodeLogic 5 applications: typed LINQ queries, repositories, schema sync, migrations, caching, replicas and telemetry. Install a provider package (CodeLogic.Data.MySql, .PostgreSql, .SqlServer or .Sqlite) next to it.</Description>
+    <WarningsAsErrors>$(WarningsAsErrors);CS1591</WarningsAsErrors>
+  </PropertyGroup>
+
+  <!-- The generator and test sources live under this folder but are separate projects. -->
+  <ItemGroup>
+    <Compile Remove="generator/**;tests/**" />
+    <None Remove="generator/**;tests/**" />
+    <EmbeddedResource Remove="generator/**;tests/**" />
+  </ItemGroup>
+
+  <!-- The source generator runs for CL.Data itself and ships inside the package as an analyzer. -->
+  <ItemGroup>
+    <ProjectReference Include="generator/CL.Data.Generator/CL.Data.Generator.csproj"
+                      ReferenceOutputAssembly="false" OutputItemType="Analyzer" PrivateAssets="all" />
+    <None Include="generator/CL.Data.Generator/bin/$(Configuration)/netstandard2.0/CL.Data.Generator.dll"
+          Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Data.Tests" />
+    <InternalsVisibleTo Include="Data.Conformance" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,5 @@
+<Project>
+  <!-- Intentionally empty: prevents test projects from inheriting the repo-root
+       Directory.Build.targets (CodeLogic ProjectReference swap, AssemblyVersion
+       derivation, changelog/release-notes injection). Test projects need none of it. -->
+</Project>

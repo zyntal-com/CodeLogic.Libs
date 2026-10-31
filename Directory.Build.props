@@ -74,9 +74,9 @@
   -->
   <PropertyGroup>
     <CodeLogicFromNuGet Condition="'$(CodeLogicFromNuGet)' == ''">true</CodeLogicFromNuGet>
-    <!-- Restore/build floor: CodeLogic 5.0 (net11, union Result/Error). "-*" admits 5.0 previews until
-         GA; switch to "5.0.*" once CodeLogic 5.0 is stable. The release
+    <!-- Pinned to the latest CodeLogic 5.0 preview on nuget.org (net11, union Result/Error). Bump it
+         as new previews ship; switch to a 5.0.x GA version once CodeLogic 5.0 is stable. The release
          pipeline rewrites each published nuspec's CodeLogic dependency to the supported range. -->
-    <CodeLogicPackageVersion Condition="'$(CodeLogicPackageVersion)' == ''">5.0.*-*</CodeLogicPackageVersion>
+    <CodeLogicPackageVersion Condition="'$(CodeLogicPackageVersion)' == ''">5.0.29-preview</CodeLogicPackageVersion>
   </PropertyGroup>
 </Project>
