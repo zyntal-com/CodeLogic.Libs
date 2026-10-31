@@ -71,6 +71,15 @@ a non-root path. Link targets, raw-command
 paths, and every other path the library resolves stay inside the mount; only raw commands (off by
 default) can reach outside it.
 
+> **Local roots: traversal protection, not a sandbox.** For `storage.local`, the checks above stop a
+> caller-supplied path from naming something outside the root: `..`, rooted or drive-qualified paths, and
+> links that lead out (or any link, unless `FollowLinks` is on). They are evaluated when the path is
+> resolved, and the file is opened afterwards with ordinary file APIs. If another process or user can change
+> the directory tree under the root at the same time, it can swap a checked folder or file for a link
+> between the check and the open, and the operation then follows that link. Don't rely on the root alone
+> to contain a hostile local actor: give the application its own directory that nobody else can write to,
+> or isolate it at the OS level (a dedicated account, container, or mount).
+
 ## Configuration
 
 The main `storage` section contains the master enable switch, default connection ID, bounded byte

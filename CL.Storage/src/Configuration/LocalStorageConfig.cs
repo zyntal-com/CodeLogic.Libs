@@ -28,7 +28,13 @@ public sealed class LocalStorageConfig : ConfigModelBase
     }
 }
 
-/// <summary>Defines one sandboxed local or mounted-filesystem connection.</summary>
+/// <summary>Defines one root-confined local or mounted-filesystem connection.</summary>
+/// <remarks>
+/// Paths are checked against <see cref="RootPath"/> (no parent traversal, no rooted paths, no links leading out)
+/// when they are resolved. This is traversal protection for caller-supplied paths, not a sandbox: a process that
+/// can modify the tree under the root concurrently can replace a checked path with a link between the check
+/// and the file being opened.
+/// </remarks>
 public sealed class LocalConnectionConfig
 {
     /// <summary>Gets or sets whether this connection is enabled.</summary>
