@@ -206,6 +206,101 @@ public abstract class CacheConformance(ProviderFixture fixture) : ConformanceSui
     }
 
     [SkippableFact]
+    public async Task Shielded_warm_results_survive_writes_and_reload_at_the_next_tick()
+    {
+        RequireProvider();
+        var (db, reads, clock) = Cached();
+        await using var __ = db;
+        await SeedAsync(db);
+        var policy = new CachePolicy { Ttl = TimeSpan.FromMinutes(5), Refresh = TimeSpan.FromMinutes(5), InvalidateOnWrite = false, Tags = ["board"] };
+        Task<long> Count() => db.Query<Product>().WithCache(policy).CountAsync().AsTask().ContinueWith(t => t.Result.ValueOrThrow());
+
+        Assert.Equal(3L, await Count());
+        (await db.Repository<Product>().InsertAsync(new Product { Sku = "S-1", Name = "s", Price = 1, Stock = 1 })).ValueOrThrow();
+        var before = reads.Count;
+        Assert.Equal(3L, await Count());                                     // the write did not drop it: no cold read
+        Assert.Equal(before, reads.Count);
+
+        // The write made it due now, long before its 5-minute period.
+        clock.Now = clock.Now.AddSeconds(1);
+        Assert.Equal(1, await db.Options.Cache!.RefreshDueAsync());
+        Assert.Equal(4L, await Count());
+        Assert.Equal(0, await db.Options.Cache.RefreshDueAsync());           // nothing written since: not due again
+
+        // Its own policy tag still drops it.
+        db.Options.Cache.Invalidate(["board"]);
+        before = reads.Count;
+        Assert.Equal(4L, await Count());
+        Assert.Equal(before + 1, reads.Count);
+    }
+
+    [SkippableFact]
+    public async Task Shielded_results_without_a_refresh_period_live_until_their_ttl()
+    {
+        RequireProvider();
+        var (db, _, clock) = Cached();
+        await using var __ = db;
+        await SeedAsync(db);
+        var policy = new CachePolicy { Ttl = TimeSpan.FromMinutes(1), InvalidateOnWrite = false };
+        Task<List<string>> Skus() => db.Query<Product>().OrderBy(p => p.Sku).Select(p => p.Sku).WithCache(policy).ToListAsync().AsTask().ContinueWith(t => t.Result.ValueOrThrow());
+
+        Assert.Equal(3, (await Skus()).Count);
+        (await db.Repository<Product>().InsertAsync(new Product { Sku = "S-2", Name = "s", Price = 1, Stock = 1 })).ValueOrThrow();
+        Assert.Equal(3, (await Skus()).Count);                               // stale on purpose
+        Assert.Equal(1, await db.Options.Cache!.RefreshDueAsync());          // dirty: reloaded at the next tick
+        Assert.Equal(4, (await Skus()).Count);
+
+        clock.Now = clock.Now.AddMinutes(2);                                 // expired: no longer tracked
+        await db.Options.Cache.RefreshDueAsync();
+        Assert.Equal(0, db.Options.Cache.WarmQueries);
+    }
+
+    [SkippableFact]
+    public async Task RefreshAsync_reloads_warm_results_in_place_and_drops_the_rest()
+    {
+        RequireProvider();
+        var (db, reads, _) = Cached();
+        await using var __ = db;
+        await SeedAsync(db);
+        var warm = new CachePolicy { Refresh = TimeSpan.FromMinutes(5), InvalidateOnWrite = false, Tags = ["stats"] };
+        var plain = new CachePolicy { Tags = ["stats"] };
+        Task<long> WarmCount() => db.Query<Product>().WithCache(warm).CountAsync().AsTask().ContinueWith(t => t.Result.ValueOrThrow());
+        Task<long> PlainCount() => db.Query<Product>().Where(p => p.Stock > 0).WithCache(plain).CountAsync().AsTask().ContinueWith(t => t.Result.ValueOrThrow());
+
+        Assert.Equal(3L, await WarmCount());
+        Assert.Equal(3L, await PlainCount());
+        // A change CL.Data does not see (another process): only an explicit refresh can pick it up.
+        (await Db.Repository<Product>().InsertAsync(new Product { Sku = "R-1", Name = "r", Price = 1, Stock = 1 })).ValueOrThrow();
+
+        Assert.Equal(1, await db.Options.Cache!.RefreshAsync(["stats"]));
+        var before = reads.Count;
+        Assert.Equal(4L, await WarmCount());                                 // reloaded in place: a hit
+        Assert.Equal(before, reads.Count);
+        Assert.Equal(4L, await PlainCount());                                // dropped: read again
+        Assert.Equal(before + 1, reads.Count);
+    }
+
+    [SkippableFact]
+    public async Task Raw_sql_with_tables_drops_only_those_tables()
+    {
+        RequireProvider();
+        var (db, reads, _) = Cached();
+        await using var __ = db;
+        var rows = await SeedAsync(db);
+        (await db.Repository<ProductTag>().InsertAsync(new ProductTag { ProductId = rows[0].Id, Tag = "t", Weight = 1 })).ValueOrThrow();
+        Task<long> Tags() => db.Query<ProductTag>().WithCache().CountAsync().AsTask().ContinueWith(t => t.Result.ValueOrThrow());
+
+        Assert.Equal(1L, await Tags());
+        Assert.Equal(3, (await AllAsync(db)).Count);
+        (await db.ExecuteSqlAsync($"UPDATE conf_products SET {Sql.Identifier("Name")} = {"raw"}", ["conf_products"])).ValueOrThrow();
+
+        var before = reads.Count;
+        Assert.Equal(1L, await Tags());                                      // other tables stay cached
+        Assert.Equal(before, reads.Count);
+        Assert.All(await AllAsync(db), p => Assert.Equal("raw", p.Name));    // the written table was dropped
+    }
+
+    [SkippableFact]
     public async Task Invalidations_reach_other_nodes_through_the_bus()
     {
         RequireProvider();

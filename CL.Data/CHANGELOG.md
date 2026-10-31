@@ -33,6 +33,8 @@
 ### Added
 
 - **Schema scripts:** `db.Schema.ScriptAsync(maps, level)` / `ScriptAsync<T>()` compares the models with the database and returns the DDL table sync would run, without running it (`SchemaScript`: per-table changes, pending items, `Statements`, `ToSql()`). Generate reviewed migration scripts from the models against a copy of production; an empty script means the database matches.
+- **Stale-while-refresh cache:** `CachePolicy.InvalidateOnWrite = false` keeps a result through writes to its tables and reloads it at the next refresh tick (CL.MySQL2 SmartCache pools behaved like this). `DataCache.RefreshAsync(tags)` reloads warm results in place and drops the rest. `WithCache` on `ProjectedQuery` (after `Select`).
+- **Scoped raw SQL invalidation:** `ExecuteSqlAsync(sql, tables)` drops only the cached results reading those tables instead of the whole connection's.
 - **Whole-second time columns:** `[Column(Precision = 0)]` on a time type gives MySQL `DATETIME`, SQL Server `datetime2(0)`, PostgreSQL `timestamptz(0)`. `Precision` now defaults to `-1` (unset: the provider maximum for time types, 18 for decimals).
 - New package, part of the CL.Data database framework that replaces CL.MySQL2, CL.MSSQL, CL.PostgreSQL and
   CL.SQLite in the CodeLogic 5 line. Targets .NET 11 and CodeLogic 5.
