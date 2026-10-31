@@ -112,6 +112,12 @@ internal sealed class PlanRecorder
     private readonly Dictionary<ParameterExpr, (int Root, Func<object?, SqlParameterValue> Binder)> _slots = new(ReferenceEqualityComparer.Instance);
     private bool _uncacheable;
 
+    /// <summary>
+    /// The arguments parameter of a compiled query and the value to plan with. Roots that read it are evaluated with
+    /// the probe value now and read the real arguments on every call.
+    /// </summary>
+    public (ParameterExpression Parameter, object? Probe)? Arguments { get; init; }
+
     /// <summary>Evaluates <paramref name="expression"/> as a root; returns the shaped value and its root index.</summary>
     public (object? Value, int Root) Evaluate(Expression expression, RootKind kind)
     {
@@ -121,7 +127,8 @@ internal sealed class PlanRecorder
             _roots.Add((expression, kind));
             root = _roots.Count - 1;
         }
-        return (Shape(ValueEvaluator.Evaluate(expression), kind), root);
+        var evaluated = Arguments is { } args ? new ArgumentSubstitution(args.Parameter, args.Probe).Visit(expression) : expression;
+        return (Shape(ValueEvaluator.Evaluate(evaluated), kind), root);
     }
 
     /// <summary>Records that the translation depended on <paramref name="fact"/> of a root being <paramref name="expected"/>.</summary>
@@ -138,23 +145,36 @@ internal sealed class PlanRecorder
     public PlanVariant? Build(SqlExpr template, IReadOnlyList<ConstantExpression> slotConstants)
     {
         if (_uncacheable || PlanBinder.HasSubquery(template)) return null;
+        var compiled = CompileRoots(slotConstants);
+        var withSlots = new HashSet<SqlExpr>(ReferenceEqualityComparer.Instance);
+        PlanBinder.MarkSlotted(template, compiled.Slots, withSlots);
+        return new PlanVariant(template, compiled, withSlots);
+    }
+
+    /// <summary>True when a guard could not be described compactly (the shape must not be reused).</summary>
+    public bool IsUncacheable => _uncacheable;
+
+    /// <summary>
+    /// Compiles the recorded roots to read from a slot array: closure constants from <paramref name="slotConstants"/>, and
+    /// the compiled-query arguments (when <see cref="Arguments"/> is set) from the slot after them.
+    /// </summary>
+    public CompiledRoots CompileRoots(IReadOnlyList<ConstantExpression> slotConstants)
+    {
         var parameter = Expression.Parameter(typeof(object?[]), "slots");
         var map = new Dictionary<ConstantExpression, int>(ReferenceEqualityComparer.Instance);
         for (var i = 0; i < slotConstants.Count; i++) map[slotConstants[i]] = i;
+        var arguments = Arguments is { } args ? (args.Parameter, slotConstants.Count) : ((ParameterExpression, int)?)null;
 
         var roots = new (Func<object?[], object?> Read, RootKind Kind)[_roots.Count];
         for (var i = 0; i < roots.Length; i++)
         {
             var (expression, kind) = _roots[i];
-            var rewritten = new SlotRewriter(map, parameter).Visit(expression);
+            var rewritten = new SlotRewriter(map, parameter, arguments).Visit(expression);
             var body = rewritten.Type.IsValueType ? Expression.Convert(rewritten, typeof(object)) : rewritten;
             roots[i] = (Expression.Lambda<Func<object?[], object?>>(body, parameter).Compile(), kind);
         }
-
-        var slots = new Dictionary<ParameterExpr, (int, Func<object?, SqlParameterValue>)>(_slots, ReferenceEqualityComparer.Instance);
-        var withSlots = new HashSet<SqlExpr>(ReferenceEqualityComparer.Instance);
-        PlanBinder.MarkSlotted(template, slots, withSlots);
-        return new PlanVariant(template, roots, [.. _guards], slots, withSlots);
+        return new CompiledRoots(roots, [.. _guards],
+            new Dictionary<ParameterExpr, (int, Func<object?, SqlParameterValue>)>(_slots, ReferenceEqualityComparer.Instance));
     }
 
     internal static object? Shape(object? value, RootKind kind) => kind switch
@@ -186,29 +206,42 @@ internal sealed class PlanRecorder
         return new InValues(list, hasNull);
     }
 
-    /// <summary>Replaces closure constants by reads from the slot array, so a root evaluates against new closures.</summary>
-    private sealed class SlotRewriter(Dictionary<ConstantExpression, int> map, ParameterExpression slots) : ExpressionVisitor
+    /// <summary>Replaces closure constants (and the compiled-query arguments) by reads from the slot array.</summary>
+    private sealed class SlotRewriter(Dictionary<ConstantExpression, int> map, ParameterExpression slots, (ParameterExpression Parameter, int Index)? arguments = null)
+        : ExpressionVisitor
     {
         protected override Expression VisitConstant(ConstantExpression node) =>
             map.TryGetValue(node, out var index)
                 ? Expression.Convert(Expression.ArrayIndex(slots, Expression.Constant(index)), node.Type)
                 : node;
+
+        protected override Expression VisitParameter(ParameterExpression node) =>
+            arguments is { } args && node == args.Parameter
+                ? Expression.Convert(Expression.ArrayIndex(slots, Expression.Constant(args.Index)), node.Type)
+                : node;
+    }
+
+    /// <summary>Replaces the compiled-query arguments by the probe value, so roots can be evaluated while planning.</summary>
+    private sealed class ArgumentSubstitution(ParameterExpression parameter, object? probe) : ExpressionVisitor
+    {
+        protected override Expression VisitParameter(ParameterExpression node) =>
+            node == parameter ? Expression.Constant(probe, node.Type) : node;
     }
 }
 
-/// <summary>One cached translation: the SQL template, how to read its captured values, and the guards that must hold.</summary>
-internal sealed class PlanVariant(
-    SqlExpr template,
+/// <summary>Compiled root readers, the guards that must hold, and how each bound parameter is computed from a root.</summary>
+internal sealed class CompiledRoots(
     (Func<object?[], object?> Read, RootKind Kind)[] roots,
     (int Root, Func<object?, long> Fact, long Expected)[] guards,
-    Dictionary<ParameterExpr, (int Root, Func<object?, SqlParameterValue> Binder)> slots,
-    HashSet<SqlExpr> withSlots)
+    Dictionary<ParameterExpr, (int Root, Func<object?, SqlParameterValue> Binder)> slots)
 {
-    /// <summary>Binds <paramref name="slotValues"/> into the template when every guard holds.</summary>
-    public bool TryBind(object?[] slotValues, out SqlExpr result)
+    /// <summary>Bound parameters by node.</summary>
+    public Dictionary<ParameterExpr, (int Root, Func<object?, SqlParameterValue> Binder)> Slots { get; } = slots;
+
+    /// <summary>Reads every root from <paramref name="slotValues"/>; false when reading throws or a guard does not hold.</summary>
+    public bool TryEvaluate(object?[] slotValues, out object?[] values)
     {
-        result = null!;
-        var values = roots.Length == 0 ? [] : new object?[roots.Length];
+        values = roots.Length == 0 ? [] : new object?[roots.Length];
         try
         {
             for (var i = 0; i < roots.Length; i++) values[i] = PlanRecorder.Shape(roots[i].Read(slotValues), roots[i].Kind);
@@ -220,8 +253,19 @@ internal sealed class PlanVariant(
 
         foreach (var (root, fact, expected) in guards)
             if (fact(values[root]) != expected) return false;
+        return true;
+    }
+}
 
-        result = slots.Count == 0 ? template : new PlanBinder(slots, withSlots, values).Bind(template);
+/// <summary>One cached translation: the SQL template, how to read its captured values, and the guards that must hold.</summary>
+internal sealed class PlanVariant(SqlExpr template, CompiledRoots roots, HashSet<SqlExpr> withSlots)
+{
+    /// <summary>Binds <paramref name="slotValues"/> into the template when every guard holds.</summary>
+    public bool TryBind(object?[] slotValues, out SqlExpr result)
+    {
+        result = null!;
+        if (!roots.TryEvaluate(slotValues, out var values)) return false;
+        result = roots.Slots.Count == 0 ? template : new PlanBinder(roots.Slots, withSlots, values).Bind(template);
         return true;
     }
 }

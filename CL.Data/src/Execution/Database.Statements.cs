@@ -137,8 +137,15 @@ public sealed partial class Database
     {
         var rendered = Render(statement);
         if (rendered.IsFailure) return rendered.Error!;
-        var isWrite = statement is not SelectStatement;
-        var context = new CommandContext(this, new CommandSpec(rendered.Value!.Text, rendered.Value.Parameters), CommandKind.Query, ct)
+        return await QuerySpecAsync(new CommandSpec(rendered.Value!.Text, rendered.Value.Parameters), statement is not SelectStatement,
+            accessor, table, tags, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>Runs a pre-rendered query and materializes every row (compiled queries).</summary>
+    internal async ValueTask<Result<List<T>>> QuerySpecAsync<T>(CommandSpec spec, bool isWrite, IEntityAccessor<T>? accessor, string? table,
+        IReadOnlyList<string> tags, CancellationToken ct)
+    {
+        var context = new CommandContext(this, spec, CommandKind.Query, ct)
         {
             Operation = isWrite ? "update" : "select",
             Table = table,
@@ -182,7 +189,13 @@ public sealed partial class Database
     {
         var rendered = Render(statement);
         if (rendered.IsFailure) return rendered.Error!;
-        var context = new CommandContext(this, new CommandSpec(rendered.Value!.Text, rendered.Value.Parameters), CommandKind.Scalar, ct)
+        return await ScalarSpecAsync<T>(new CommandSpec(rendered.Value!.Text, rendered.Value.Parameters), table, tags, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>Runs a pre-rendered statement that returns one value (compiled queries).</summary>
+    internal async ValueTask<Result<T?>> ScalarSpecAsync<T>(CommandSpec spec, string? table, IReadOnlyList<string> tags, CancellationToken ct)
+    {
+        var context = new CommandContext(this, spec, CommandKind.Scalar, ct)
         {
             Operation = "select",
             Table = table,

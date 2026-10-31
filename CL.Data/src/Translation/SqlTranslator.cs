@@ -34,10 +34,29 @@ public static class SqlTranslator
     public static Result<SqlExpr> TranslateValue(Expression body, TranslationScope scope) =>
         Run(body, scope, ValueMode);
 
+    /// <summary>
+    /// Set while a compiled query is planned (on this thread; planning is synchronous): every translation records into
+    /// this recorder, reads the compiled-query arguments symbolically and bypasses the plan cache.
+    /// </summary>
+    [ThreadStatic] internal static PlanRecorder? Compiling;
+
     private static Result<SqlExpr> Run(Expression body, TranslationScope scope, int mode)
     {
         ArgumentNullException.ThrowIfNull(body);
         ArgumentNullException.ThrowIfNull(scope);
+
+        if (Compiling is { } compiling)
+        {
+            try
+            {
+                var translator = new ExpressionTranslator(scope) { Recorder = compiling };
+                return mode == PredicateMode ? translator.Predicate(body) : translator.Value(body);
+            }
+            catch (TranslationException ex)
+            {
+                return DataErrors.TranslationFailed(ex.Message, ex.Details ?? body.ToString());
+            }
+        }
 
         // Plan cache: the same shape with new captured values is bound, not translated.
         UInt128? key = null;

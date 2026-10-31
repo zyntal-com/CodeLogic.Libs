@@ -63,3 +63,4 @@ public sealed class MySqlCollection : ICollectionFixture<MySqlFixture>;
 [Collection("mysql")] public sealed class MySqlAdminTests(MySqlFixture f) : AdminConformance(f);
 [Collection("mysql")] public sealed class MySqlBackupTests(MySqlFixture f) : BackupConformance(f);
 [Collection("mysql")] public sealed class MySqlChangedUpdateTests(MySqlFixture f) : ChangedUpdateConformance(f);
+[Collection("mysql")] public sealed class MySqlCompiledQueryTests(MySqlFixture f) : CompiledQueryConformance(f);

@@ -237,3 +237,9 @@
   - **In-place changes:** byte arrays are copied and converter columns are compared in stored form, so they are detected.
   - **Effect:** a concurrent change to another column is no longer overwritten.
 - **Breaking:** `IEntityAccessor<T>` gains `Snapshot`.
+- **Compiled queries:** `CompiledQuery.For<T, TArgs>((q, args) => q.Where(p => p.Id == args)...)` plans a query once per database (and tenant) and replays it.
+  - **Per call:** only the arguments are bound. Building expression trees, translating and rendering SQL are skipped.
+  - **Terminals:** `ToListAsync`, `FirstOrDefaultAsync`, `CountAsync` and `AnyAsync`.
+  - **Variants:** shapes that depend on an argument (null checks, `IN` list lengths) get their own variant.
+  - **Restriction:** non-lambda arguments in the chain (`Take(10)`) must not depend on the arguments.
+  - **Measured on in-memory SQLite (by id):** 41.7 → 30.4 µs per call and 8.5 → 4.2 KB allocated.

@@ -152,6 +152,34 @@ public sealed class QueryBuilder<T>
 
     internal Result<(SelectStatement Select, IEntityAccessor<T> Accessor, string Table)> PlanSelect() => BuildSelect();
 
+    /// <summary>The statement a terminal runs (compiled queries plan it once and replay it).</summary>
+    internal Result<(SelectStatement Select, IEntityAccessor<T> Accessor, string Table)> PlanTerminal(CompiledTerminal terminal)
+    {
+        switch (terminal)
+        {
+            case CompiledTerminal.List:
+                return BuildSelect();
+            case CompiledTerminal.First:
+                return Take(1).BuildSelect();
+            case CompiledTerminal.Count:
+            {
+                var plan = BuildSelect(ignorePaging: true);
+                if (plan.IsFailure) return plan;
+                var (select, accessor, table) = plan.Value!;
+                return (select with { Projection = [new ProjectionItem(new AggregateExpr(SqlAggregate.Count, null))], OrderBy = [] }, accessor, table);
+            }
+            case CompiledTerminal.Any:
+            {
+                var plan = BuildSelect(projectKeyOnly: true, ignorePaging: true);
+                if (plan.IsFailure) return plan;
+                var (select, accessor, table) = plan.Value!;
+                return (select with { Projection = [new ProjectionItem(new LiteralExpr(1))], Limit = LimitParam(1), OrderBy = [] }, accessor, table);
+            }
+            default:
+                throw new ArgumentOutOfRangeException(nameof(terminal), terminal, null);
+        }
+    }
+
     internal TranslationScope ScopeFor(EntityMap map, ParameterExpression parameter) => Scope(map, parameter);
 
     // ── Joins ───────────────────────────────────────────────────────────────
