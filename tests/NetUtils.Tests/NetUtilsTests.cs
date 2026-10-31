@@ -148,6 +148,71 @@ public sealed class DnsblCheckerLocalShortCircuitTests
         Assert.Equal(IpAddressType.IPv6, result.AddressType);
     }
 
+    [Theory]
+    [InlineData("169.254.10.20")]      // link-local
+    [InlineData("100.64.0.1")]         // CGNAT
+    [InlineData("100.127.255.254")]
+    [InlineData("0.0.0.0")]
+    [InlineData("192.0.2.5")]          // TEST-NET-1
+    [InlineData("198.51.100.7")]       // TEST-NET-2
+    [InlineData("203.0.113.9")]        // TEST-NET-3
+    [InlineData("198.18.0.1")]         // benchmarking
+    [InlineData("224.0.0.251")]        // multicast
+    [InlineData("255.255.255.255")]
+    [InlineData("::")]
+    [InlineData("fe80::1")]
+    [InlineData("fd12:3456::1")]
+    [InlineData("2001:db8::1")]
+    [InlineData("::ffff:192.168.1.1")] // IPv4-mapped private
+    [InlineData("::ffff:169.254.1.1")]
+    public async Task Non_routable_addresses_skip_every_lookup(string ip)
+    {
+        var allowlistAsked = false;
+        var request = new DnsblCheckRequest
+        {
+            Ipv4Services = ["dnsbl.invalid"],
+            Ipv6Services = ["dnsbl.invalid"],
+            IsAllowedAsync = (_, _) => { allowlistAsked = true; return Task.FromResult(true); }
+        };
+
+        var result = await NewChecker().CheckIpAsync(ip, request);
+
+        Assert.False(result.IsBlacklisted);
+        Assert.Null(result.ErrorMessage);
+        Assert.False(allowlistAsked);   // short-circuited before the allowlist and any DNS query
+    }
+
+    [Theory]
+    [InlineData("8.8.8.8")]
+    [InlineData("100.63.255.255")]     // just below CGNAT
+    [InlineData("100.128.0.0")]        // just above CGNAT
+    [InlineData("169.253.1.1")]
+    [InlineData("172.32.0.1")]
+    [InlineData("2606:4700::1111")]
+    [InlineData("::ffff:8.8.8.8")]
+    public void Public_addresses_are_checked(string ip)
+        => Assert.False(DnsblChecker.IsLocalOrPrivateIp(System.Net.IPAddress.Parse(ip)));
+
+    [Theory]
+    [InlineData("1.2.3.4", "4.3.2.1")]
+    [InlineData("1.2.3", "3.0.2.1")]               // shorthand: 1.2.0.3
+    [InlineData("0x01.0x02.0x03.0x04", "4.3.2.1")] // hex octets
+    [InlineData("16909060", "4.3.2.1")]            // single 32-bit number
+    [InlineData("::ffff:1.2.3.4", "4.3.2.1")]      // mapped, after MapToIPv4
+    public void Ipv4_lookup_label_comes_from_the_address_bytes(string input, string expected)
+    {
+        var ip = System.Net.IPAddress.Parse(input);
+        if (ip.IsIPv4MappedToIPv6) ip = ip.MapToIPv4();
+
+        Assert.Equal(expected, DnsblChecker.ReverseLookupLabel(ip));
+    }
+
+    [Fact]
+    public void Ipv6_lookup_label_is_the_reversed_nibbles()
+        => Assert.Equal(
+            "1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.8.b.d.0.1.0.0.2",
+            DnsblChecker.ReverseLookupLabel(System.Net.IPAddress.Parse("2001:db8::1")));
+
     [Fact]
     public async Task Invalid_ip_returns_error_result()
     {

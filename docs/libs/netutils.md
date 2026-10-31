@@ -81,7 +81,7 @@ The checker picks the IPv4 or IPv6 zone set based on the address it is given, th
 
 A zone counts as answered "not listed" on NXDOMAIN or no A record, or when it only returns addresses outside `127.0.0.0/8` (a parked or wildcarded dead zone). It counts as failed when the lookup times out (`TimeoutSeconds`, per zone), the resolver fails (SERVFAIL, network error), or it returns a DNSBL error code such as Spamhaus' `127.255.255.x` (public resolver blocked, query limit). Any other `127.x.x.x` answer is a listing.
 
-> **Private and local addresses are never queried.** Loopback, RFC 1918 (`10/8`, `172.16/12`, `192.168/16`), and IPv6 link-local / site-local / unique-local ranges are short-circuited and returned as **not blacklisted** without any DNS lookup.
+> **Private and local addresses are never queried.** Loopback, RFC 1918 (`10/8`, `172.16/12`, `192.168/16`), link-local `169.254/16`, CGNAT `100.64/10`, `0/8`, the documentation and benchmarking ranges, multicast/reserved/broadcast, and IPv6 `::`, link-local / site-local / unique-local, multicast and `2001:db8::/32` are short-circuited and returned as **not blacklisted** without any DNS lookup.
 
 ### Per-call overrides with `DnsblCheckRequest`
 
