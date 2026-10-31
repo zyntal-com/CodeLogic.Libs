@@ -151,3 +151,5 @@
 - **Fixes found on MySQL:**
   - Upserts qualify target columns (shared `QualifyColumns`), because the incoming-row alias has the same column names.
   - Savepoints fall back to standard `SAVEPOINT` SQL when a driver has no savepoint API.
+- **Upsert fix (found on PostgreSQL):** `ON CONFLICT DO UPDATE` qualifies target columns, because PostgreSQL treats a
+  bare name as ambiguous with `EXCLUDED`.

@@ -103,7 +103,7 @@ public sealed class SqlWriterTests
         {
             UpdateSet = [new("Hits", B(SqlBinaryOperator.Add, C("Hits"), new ExcludedExpr("Hits")))],
         };
-        Assert.Equal("INSERT INTO \"app\".\"users\" (\"Id\", \"Hits\") VALUES (@p0, @p1) ON CONFLICT (\"Id\") DO UPDATE SET \"Hits\" = \"Hits\" + EXCLUDED.\"Hits\"",
+        Assert.Equal("INSERT INTO \"app\".\"users\" (\"Id\", \"Hits\") VALUES (@p0, @p1) ON CONFLICT (\"Id\") DO UPDATE SET \"Hits\" = \"users\".\"Hits\" + EXCLUDED.\"Hits\"",
             Render(upsert).Text);
         Assert.EndsWith("DO NOTHING", Render(upsert with { IgnoreOnConflict = true }).Text);
     }

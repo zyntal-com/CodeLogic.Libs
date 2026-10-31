@@ -165,8 +165,8 @@ public sealed class WritePlannerTests
         var command = Assert.Single(WritePlanner.Upsert(Users, [user], ctx, new UpsertOptions { IncrementProperties = [nameof(TestUser.Score)] }).ValueOrThrow());
         var sql = Sql(command, ctx);
         Assert.Contains("ON CONFLICT (\"Id\") DO UPDATE SET ", sql);
-        Assert.Contains("\"Score\" = \"Score\" + EXCLUDED.\"Score\"", sql);
-        Assert.Contains("\"Version\" = \"Version\" + 1", sql);
+        Assert.Contains("\"Score\" = \"users\".\"Score\" + EXCLUDED.\"Score\"", sql);
+        Assert.Contains("\"Version\" = \"users\".\"Version\" + 1", sql);
         Assert.Contains("\"Email\" = EXCLUDED.\"Email\"", sql);
         Assert.DoesNotContain("\"CreatedAt\" = EXCLUDED", sql);
         Assert.DoesNotContain("\"TenantId\" = EXCLUDED", sql);

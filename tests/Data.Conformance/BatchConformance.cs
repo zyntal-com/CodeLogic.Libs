@@ -1,6 +1,7 @@
 using CL.Data.Errors;
 using CL.Data.Execution;
 using CL.Data.Pipeline;
+using CL.Data.Sql;
 using CodeLogic.Core.Results;
 
 namespace Data.Conformance;
@@ -32,7 +33,7 @@ public abstract class BatchConformance(ProviderFixture fixture) : ConformanceSui
         var cheap = batch.Add(db.Query<Product>().Where(p => p.Price < 3m).OrderBy(p => p.Sku));
         var total = batch.Count(db.Query<Product>());
         var expensive = batch.Count(db.Query<Product>().Where(p => p.Price >= 3m));
-        var names = batch.Sql<string>($"SELECT Name FROM conf_products WHERE Stock = {5}");
+        var names = batch.Sql<string>($"SELECT {Sql.Identifier("Name")} FROM conf_products WHERE {Sql.Identifier("Stock")} = {5}");
 
         (await batch.ExecuteAsync()).Ensure();
 

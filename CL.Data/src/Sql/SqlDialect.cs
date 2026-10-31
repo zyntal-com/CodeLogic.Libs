@@ -270,8 +270,10 @@ public abstract class SqlDialect
         if (upsert.IgnoreOnConflict || upsert.UpdateSet.Count == 0) w.Append(" DO NOTHING");
         else
         {
+            // Target columns in the expressions are qualified: PostgreSQL treats a bare name as ambiguous with EXCLUDED.
+            var table = insert.Table.Name;
             w.Append(" DO UPDATE SET ");
-            w.List(upsert.UpdateSet, static (writer, s) => writer.Identifier(s.Column).Append(" = ").Expr(s.Value));
+            w.List(upsert.UpdateSet, (writer, s) => writer.Identifier(s.Column).Append(" = ").Expr(QualifyColumns(s.Value, table)));
         }
         if (insert.Returning.Count > 0) RenderReturning(w, insert.Returning);
     }

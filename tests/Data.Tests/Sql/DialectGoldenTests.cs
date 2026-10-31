@@ -139,12 +139,12 @@ public sealed class DialectGoldenTests
         };
         Golden(upsert,
             "INSERT INTO `counters` (`Key`, `Hits`) VALUES (@p0, @p1) AS `excluded` ON DUPLICATE KEY UPDATE `counters`.`Hits` = `counters`.`Hits` + `excluded`.`Hits`",
-            "INSERT INTO \"counters\" (\"Key\", \"Hits\") VALUES (@p0, @p1) ON CONFLICT (\"Key\") DO UPDATE SET \"Hits\" = \"Hits\" + EXCLUDED.\"Hits\"",
+            "INSERT INTO \"counters\" (\"Key\", \"Hits\") VALUES (@p0, @p1) ON CONFLICT (\"Key\") DO UPDATE SET \"Hits\" = \"counters\".\"Hits\" + EXCLUDED.\"Hits\"",
             "UPDATE [counters] SET [counters].[Hits] = [counters].[Hits] + [excluded].[Hits] FROM [counters] WITH (UPDLOCK, SERIALIZABLE) " +
             "INNER JOIN ( VALUES (@p0, @p1)) AS [excluded] ([Key], [Hits]) ON [counters].[Key] = [excluded].[Key];\n" +
             "INSERT INTO [counters] ([Key], [Hits]) SELECT [excluded].[Key], [excluded].[Hits] FROM ( VALUES (@p2, @p3)) AS [excluded] ([Key], [Hits]) " +
             "WHERE NOT EXISTS (SELECT 1 FROM [counters] WITH (UPDLOCK, SERIALIZABLE) WHERE [counters].[Key] = [excluded].[Key]);",
-            "INSERT INTO \"counters\" (\"Key\", \"Hits\") VALUES (@p0, @p1) ON CONFLICT (\"Key\") DO UPDATE SET \"Hits\" = \"Hits\" + EXCLUDED.\"Hits\"");
+            "INSERT INTO \"counters\" (\"Key\", \"Hits\") VALUES (@p0, @p1) ON CONFLICT (\"Key\") DO UPDATE SET \"Hits\" = \"counters\".\"Hits\" + EXCLUDED.\"Hits\"");
 
         var ignore = upsert with { IgnoreOnConflict = true };
         Assert.EndsWith("ON DUPLICATE KEY UPDATE `counters`.`Key` = `counters`.`Key`", SqlWriter.Render(ignore, MySql).Text);
