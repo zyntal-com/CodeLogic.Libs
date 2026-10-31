@@ -38,3 +38,8 @@
   - The fallback can be switched off with `CLDataReflectionMapping=false`; Native AOT publishes switch it off by default.
 - **Value conversion:** `ValueReader<T>` / `ValueConversion` handle driver differences: integers as booleans or enums,
   bytes or text as GUIDs, `DateTime` as `DateTimeOffset` (UTC), and double → decimal through round-trip text.
+- **Provider contract:**
+  - `DataProvider` with `ProviderCapabilities`, `ITypeMapper`, `IErrorClassifier`, connection-string building per
+    `NodeEndpoint` (the primary or a replica) and a `DbDataSource` per node.
+  - `DataProviderRegistry` checks the contract version of each provider.
+  - `SqlDialect` base with ANSI quoting, parameter names and LIKE escaping.
