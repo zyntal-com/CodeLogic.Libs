@@ -53,7 +53,7 @@ public sealed class TwoFactorAuthenticator
     public TwoFactorKey GenerateNewKey(string issuerName, string userName)
     {
         var secretKey = GenerateSecretKey();
-        var key = new TwoFactorKey(secretKey, issuerName, userName);
+        var key = new TwoFactorKey(secretKey, issuerName, userName, _config.TimeStepSeconds);
 
         _logger?.Info($"Generated new 2FA key for {issuerName}:{userName}");
         _events?.Publish(new SecretKeyGeneratedEvent(issuerName, userName, DateTime.UtcNow));
@@ -94,8 +94,24 @@ public sealed class TwoFactorAuthenticator
     /// <param name="code">The 6-digit TOTP code to validate.</param>
     /// <param name="secretKey">The Base32-encoded TOTP secret key.</param>
     /// <param name="userId">Optional user identifier for event publishing.</param>
+    /// <returns>
+    /// A <see cref="TotpValidationResult"/> indicating success or failure. On success
+    /// <see cref="TotpValidationResult.MatchedWindow"/> is the absolute time step for replay tracking and
+    /// <see cref="TotpValidationResult.WindowOffset"/> the drift in steps.
+    /// </returns>
+    public TotpValidationResult ValidateTotp(string code, string secretKey, string? userId = null) =>
+        ValidateTotp(code, secretKey, DateTime.UtcNow, userId);
+
+    /// <summary>
+    /// Validates a TOTP code as of <paramref name="timestampUtc"/> instead of the current time.
+    /// Otherwise identical to <see cref="ValidateTotp(string, string, string?)"/>.
+    /// </summary>
+    /// <param name="code">The TOTP code to validate.</param>
+    /// <param name="secretKey">The Base32-encoded TOTP secret key.</param>
+    /// <param name="timestampUtc">The moment to validate at (UTC).</param>
+    /// <param name="userId">Optional user identifier for event publishing.</param>
     /// <returns>A <see cref="TotpValidationResult"/> indicating success or failure.</returns>
-    public TotpValidationResult ValidateTotp(string code, string secretKey, string? userId = null)
+    public TotpValidationResult ValidateTotp(string code, string secretKey, DateTime timestampUtc, string? userId = null)
     {
         try
         {
@@ -103,11 +119,19 @@ public sealed class TwoFactorAuthenticator
             var totp = new Totp(secretBytes, step: _config.TimeStepSeconds);
 
             var window = new VerificationWindow(previous: _config.WindowSize, future: _config.WindowSize);
-            var isValid = totp.VerifyTotp(code, out long matchedWindow, window);
+            var isValid = totp.VerifyTotp(timestampUtc, code, out long matchedWindow, window);
 
-            var result = isValid
-                ? TotpValidationResult.Valid((int)matchedWindow)
-                : TotpValidationResult.Invalid();
+            TotpValidationResult result;
+            if (isValid)
+            {
+                var currentStep = new DateTimeOffset(DateTime.SpecifyKind(timestampUtc, DateTimeKind.Utc)).ToUnixTimeSeconds()
+                    / _config.TimeStepSeconds;
+                result = TotpValidationResult.Valid(matchedWindow, checked((int)(matchedWindow - currentStep)));
+            }
+            else
+            {
+                result = TotpValidationResult.Invalid();
+            }
 
             if (userId is not null)
                 _events?.Publish(new TotpValidatedEvent(userId, isValid, result.MatchedWindow, DateTime.UtcNow));

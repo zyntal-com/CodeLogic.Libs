@@ -9,8 +9,34 @@ All notable changes to **CodeLogic.TwoFactorAuth** are documented here. Versions
 
 - Targets **.NET 11** (`net11.0`) and requires **CodeLogic 5.0** (`[5.0.0, 6.0.0)`). On .NET 10, stay on
   4.9.x. CodeLogic 5 makes `Result<T>` / `Result` C# 15 unions and `Error` a closed record with
-  kind subtypes (`NotFoundError`, `ValidationError`, ...). This library's API is unchanged, and
-  its results can now be matched exhaustively with `switch`.
+  kind subtypes (`NotFoundError`, `ValidationError`, ...). Results can now be matched exhaustively
+  with `switch`.
+- **`TotpValidationResult.MatchedWindow` is a `long?` holding the absolute time step** that matched
+  (Unix time / `TimeStepSeconds`, what Otp.NET reports and what `GetCurrentTimeWindow()` returns). It
+  was an `int?` documented as a drift offset, and the narrowing could overflow with short periods. Use it
+  for replay tracking (store the last accepted step per user, atomically). `TotpValidatedEvent.MatchedWindow`
+  is `long?` too, and `TotpValidationResult.Valid(...)` takes `(long? matchedWindow, int? windowOffset)`.
+- **Configuration validation enforces the documented upper limits:** `TimeStepSeconds` 1–300,
+  `WindowSize` 0–10, `QrCodeModuleSize` 1–100. Only the lower bounds were checked before, so a config with
+  larger values loaded and now fails validation.
+
+### Added
+
+- `TotpValidationResult.WindowOffset` (`int?`): the drift in steps (0 = current step, -1 = previous, +1 = next).
+- `ValidateTotp(code, secretKey, DateTime timestampUtc, userId)` validates as of a given moment.
+- `TwoFactorKey.PeriodSeconds` (default 30) and the `MinTimeStepSeconds` / `MaxTimeStepSeconds` /
+  `MaxWindowSize` / `MaxQrCodeModuleSize` constants on `TwoFactorAuthConfig`.
+
+### Fixed
+
+- **The provisioning URI carries the time step.** `ProvisioningUri` omitted `period`, so with a
+  non-default `TimeStepSeconds` the authenticator app generated 30-second codes the server rejected.
+  `GenerateNewKey` now sets `PeriodSeconds` from the configuration and the URI always ends in
+  `&period=<seconds>`, which also changes the QR code content.
+
+### Documentation
+
+- Configuration examples use the camelCase keys the CodeLogic loader reads (PascalCase keys were ignored).
 
 ## 2026-10-24
 
