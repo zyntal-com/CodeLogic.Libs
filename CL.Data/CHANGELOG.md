@@ -82,3 +82,6 @@
     `Round`/`Floor`/`Ceiling`/`Abs`.
   - `SqlFn.Json.Value/Exists/Contains` and `SqlFn.FullText.Match` translate to neutral function nodes that each
     provider renders.
+- **Dialect hooks:** conditions and boolean literals are rendered through dialect hooks (`RenderConditionLiteral`),
+  `SqlPredicates.IsPredicate` is public, and dialects declare when an upsert needs a transaction
+  (`UpsertRequiresTransaction`, `UpsertParameterMultiplier`).

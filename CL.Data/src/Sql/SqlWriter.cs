@@ -184,6 +184,22 @@ public sealed class SqlWriter
         return this;
     }
 
+    /// <summary>
+    /// Appends a condition operand: a boolean literal goes through <see cref="SqlDialect.RenderConditionLiteral"/>
+    /// (SQL Server needs <c>1 = 1</c>), anything else renders normally.
+    /// </summary>
+    public SqlWriter Condition(SqlExpr expression)
+    {
+        Condition(expression, 0, false);
+        return this;
+    }
+
+    private void Condition(SqlExpr expression, int parentPrecedence, bool rightOperand)
+    {
+        if (expression is LiteralExpr { Value: bool value }) Dialect.RenderConditionLiteral(this, value);
+        else Expression(expression, parentPrecedence, rightOperand);
+    }
+
     // ── Expressions ─────────────────────────────────────────────────────────
 
     private void Expression(SqlExpr expression, int parentPrecedence, bool rightOperand)
@@ -213,7 +229,8 @@ public sealed class SqlWriter
             case UnaryExpr { Operator: SqlUnaryOperator.Not } not:
                 // Always parenthesize: MySQL's HIGH_NOT_PRECEDENCE mode makes NOT bind tighter than comparisons.
                 _sb.Append("NOT ");
-                Expression(not.Operand, 8, false);
+                if (not.Operand is LiteralExpr { Value: bool }) { _sb.Append('('); Condition(not.Operand, 0, false); _sb.Append(')'); }
+                else Expression(not.Operand, 8, false);
                 break;
             case UnaryExpr negate:
                 _sb.Append('-');
@@ -297,7 +314,9 @@ public sealed class SqlWriter
             return;
         }
 
-        Expression(binary.Left, precedence, false);
+        var logical = binary.Operator is SqlBinaryOperator.And or SqlBinaryOperator.Or;
+        if (logical) Condition(binary.Left, precedence, false);
+        else Expression(binary.Left, precedence, false);
         _sb.Append(binary.Operator switch
         {
             SqlBinaryOperator.Add => " + ",
@@ -316,7 +335,8 @@ public sealed class SqlWriter
             SqlBinaryOperator.Concat => throw new InvalidOperationException(),
             _ => throw new ArgumentOutOfRangeException(nameof(binary), binary.Operator, null),
         });
-        Expression(binary.Right, precedence, true);
+        if (logical) Condition(binary.Right, precedence, true);
+        else Expression(binary.Right, precedence, true);
     }
 
     /// <summary>Appends <paramref name="expression"/> wrapped in parentheses.</summary>

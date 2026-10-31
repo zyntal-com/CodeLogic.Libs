@@ -62,7 +62,10 @@ public abstract class SqlDialect
         w.Append(value is bool b ? (b ? "TRUE" : "FALSE") : SqlWriter.FormatNumber(value));
 
     /// <summary>Writes an expression in a condition (WHERE, ON, HAVING, WHEN). Default: unchanged.</summary>
-    public virtual void RenderPredicate(SqlWriter w, SqlExpr expression) => w.Expr(expression);
+    public virtual void RenderPredicate(SqlWriter w, SqlExpr expression) => w.Condition(expression);
+
+    /// <summary>Writes a boolean literal used as a condition. Default: the literal.</summary>
+    public virtual void RenderConditionLiteral(SqlWriter w, bool value) => RenderLiteral(w, value);
 
     /// <summary>Writes an expression in a value position (projection, THEN/ELSE). Default: unchanged.</summary>
     public virtual void RenderProjection(SqlWriter w, SqlExpr expression) => w.Expr(expression);
@@ -166,6 +169,15 @@ public abstract class SqlDialect
 
     private static void Extract(SqlWriter w, string part, SqlExpr value) =>
         w.Append("EXTRACT(").Append(part).Append(" FROM ").Expr(value).Append(')');
+
+    /// <summary>
+    /// True when <see cref="RenderUpsert"/> writes more than one statement and must run inside a serializable
+    /// transaction to be atomic (SQL Server). The executor opens one when the caller has none.
+    /// </summary>
+    public virtual bool UpsertRequiresTransaction => false;
+
+    /// <summary>How many times an upsert binds each row's parameters (SQL Server's two-statement upsert binds them twice).</summary>
+    public virtual int UpsertParameterMultiplier => 1;
 
     /// <summary>Writes the incoming value of a column in an upsert's update arm. Default: <c>EXCLUDED.col</c>.</summary>
     public virtual void RenderExcluded(SqlWriter w, string column) => w.Append("EXCLUDED.").Identifier(column);

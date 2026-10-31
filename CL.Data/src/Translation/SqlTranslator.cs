@@ -243,17 +243,7 @@ internal sealed partial class ExpressionTranslator(TranslationScope scope)
         ? new CaseExpr([new CaseWhen(expression, new LiteralExpr(true))], new LiteralExpr(false))
         : expression;
 
-    internal static bool IsPredicateNode(SqlExpr expression) => expression switch
-    {
-        BinaryExpr { Operator: SqlBinaryOperator.And or SqlBinaryOperator.Or or SqlBinaryOperator.Equal or SqlBinaryOperator.NotEqual
-            or SqlBinaryOperator.LessThan or SqlBinaryOperator.LessThanOrEqual or SqlBinaryOperator.GreaterThan
-            or SqlBinaryOperator.GreaterThanOrEqual } => true,
-        UnaryExpr { Operator: SqlUnaryOperator.Not } => true,
-        IsNullExpr or InListExpr or InSubqueryExpr or ExistsExpr or LikeExpr => true,
-        LiteralExpr { Value: bool } => true,
-        FunctionExpr { Function: SqlFunction.JsonExists or SqlFunction.JsonContains or SqlFunction.FullTextMatch } => true,
-        _ => false,
-    };
+    internal static bool IsPredicateNode(SqlExpr expression) => SqlPredicates.IsPredicate(expression);
 
     private static bool IsBool(Type type) => (Nullable.GetUnderlyingType(type) ?? type) == typeof(bool);
 

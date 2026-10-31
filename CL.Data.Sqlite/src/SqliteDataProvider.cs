@@ -42,7 +42,7 @@ public sealed class SqliteDataProvider : DataProvider
         Replicas = false,
         NativeBulkCopy = false,
         Json = true,
-        FullText = true,
+        FullText = false,
         IncludeColumns = false,
         FilteredIndexes = true,
     };

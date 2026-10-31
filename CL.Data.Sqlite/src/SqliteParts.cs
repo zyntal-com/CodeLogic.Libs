@@ -10,9 +10,6 @@ using Microsoft.Data.Sqlite;
 
 namespace CL.Data.Sqlite;
 
-/// <summary>SQLite SQL dialect: double-quoted identifiers, <c>@p</c> parameters, backslash LIKE escape.</summary>
-public sealed class SqliteSqlDialect : SqlDialect;
-
 /// <summary>
 /// Pooled SQLite connections with per-connection PRAGMAs (foreign keys, synchronous, busy timeout). For
 /// <c>:memory:</c> databases it keeps one connection open so the shared in-memory database lives as long as

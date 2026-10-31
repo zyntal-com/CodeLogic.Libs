@@ -14,3 +14,9 @@
   - Errors are mapped from SQLite result codes: busy/locked → `data.lock_timeout` (transient), unique/primary key →
     `data.duplicate_key`, foreign key → `data.foreign_key_violation`, read-only/auth → `data.access_denied`.
   - `SqliteDataLibrary` registers the provider with CodeLogic.
+- **SQLite SQL dialect:**
+  - `strftime` date parts over UTC ISO-8601 text.
+  - Floor and ceiling built from casts, since math functions are not always compiled in. Multi-argument `MIN`/`MAX`.
+  - JSON through `json_extract`, `json_type` and `json_each`.
+  - Row locks render nothing; transactions take the write lock instead.
+  - Full-text search is not a capability, because it needs an FTS5 table.
