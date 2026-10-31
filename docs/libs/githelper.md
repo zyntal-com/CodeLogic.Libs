@@ -176,12 +176,12 @@ Credentials are configured **per repository** on the repository entry, and only 
 
 ```json
 {
-  "Id": "Private",
-  "RepositoryUrl": "https://github.com/org/private.git",
-  "LocalPath": "private",
-  "DefaultBranch": "main",
-  "Username": null,
-  "Password": "ghp_yourPersonalAccessToken"
+  "id": "Private",
+  "repositoryUrl": "https://github.com/org/private.git",
+  "localPath": "private",
+  "defaultBranch": "main",
+  "username": null,
+  "password": "ghp_yourPersonalAccessToken"
 }
 ```
 
@@ -293,26 +293,26 @@ The library writes `config.githelper.json` (section `githelper`) with defaults o
 
 ```json
 {
-  "Enabled": true,
-  "BaseDirectory": "",
-  "DefaultTimeoutSeconds": 300,
-  "MaxConcurrentOperations": 3,
-  "EnableRepositoryCaching": true,
-  "CacheTimeoutMinutes": 30,
-  "Repositories": [
+  "enabled": true,
+  "baseDirectory": "",
+  "defaultTimeoutSeconds": 300,
+  "maxConcurrentOperations": 3,
+  "enableRepositoryCaching": true,
+  "cacheTimeoutMinutes": 30,
+  "repositories": [
     {
-      "Id": "Default",
-      "Name": "My Repository",
-      "RepositoryUrl": "https://github.com/username/repository.git",
-      "LocalPath": "my-repo",
-      "DefaultBranch": "main",
-      "Username": null,
-      "Password": null,
-      "SshKeyPath": null,
-      "SshPassphrase": null,
-      "AutoFetch": false,
-      "AutoFetchIntervalMinutes": 0,
-      "TimeoutSeconds": 300
+      "id": "Default",
+      "name": "My Repository",
+      "repositoryUrl": "https://github.com/username/repository.git",
+      "localPath": "my-repo",
+      "defaultBranch": "main",
+      "username": null,
+      "password": null,
+      "sshKeyPath": null,
+      "sshPassphrase": null,
+      "autoFetch": false,
+      "autoFetchIntervalMinutes": 0,
+      "timeoutSeconds": 300
     }
   ]
 }

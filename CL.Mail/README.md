@@ -56,28 +56,28 @@ Auto-generated on first run as `config.mail.json`. The `Imap` section is optiona
 
 ```json
 {
-  "Enabled": true,
-  "Smtp": {
-    "Host": "smtp.example.com",
-    "Port": 587,
-    "Username": "noreply@example.com",
-    "Password": "your-password-or-app-password",
-    "SecurityMode": "StartTls",
-    "TimeoutSeconds": 30
+  "enabled": true,
+  "smtp": {
+    "host": "smtp.example.com",
+    "port": 587,
+    "username": "noreply@example.com",
+    "password": "your-password-or-app-password",
+    "securityMode": "StartTls",
+    "timeoutSeconds": 30
   },
-  "Imap": {
-    "Host": "imap.example.com",
-    "Port": 993,
-    "Username": "inbox@example.com",
-    "Password": "your-password-or-app-password",
-    "SecurityMode": "SslTls",
-    "TimeoutSeconds": 30,
-    "EnableIdle": false,
-    "IdleRefreshMinutes": 25
+  "imap": {
+    "host": "imap.example.com",
+    "port": 993,
+    "username": "inbox@example.com",
+    "password": "your-password-or-app-password",
+    "securityMode": "SslTls",
+    "timeoutSeconds": 30,
+    "enableIdle": false,
+    "idleRefreshMinutes": 25
   },
-  "DefaultFromEmail": "noreply@example.com",
-  "DefaultFromName": "My App",
-  "TemplateDirectory": "templates"
+  "defaultFromEmail": "noreply@example.com",
+  "defaultFromName": "My App",
+  "templateDirectory": "templates"
 }
 ```
 

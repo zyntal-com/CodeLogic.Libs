@@ -27,6 +27,11 @@ All notable changes to **CodeLogic.SocialConnect** are documented here. Versions
 - `SteamAuthenticationService(SteamConfig, HttpMessageHandler, ILogger?, IEventBus?)` constructor for
   tests and outbound proxies, matching `SteamOpenIdService`.
 
+### Documentation
+
+- Configuration examples in the README and the docs use the camelCase keys the CodeLogic loader reads.
+  The PascalCase keys shown before are matched case-sensitively and were ignored, leaving defaults active.
+
 ## 2026-10-30
 
 ### Fixed

@@ -316,15 +316,15 @@ Add the `Imap` section to `config.mail.json` to enable reading. Omit it entirely
 
 ```json
 {
-  "Imap": {
-    "Host": "imap.example.com",
-    "Port": 993,
-    "Username": "inbox@example.com",
-    "Password": "your-password-or-app-password",
-    "SecurityMode": "SslTls",
-    "TimeoutSeconds": 30,
-    "EnableIdle": false,
-    "IdleRefreshMinutes": 25
+  "imap": {
+    "host": "imap.example.com",
+    "port": 993,
+    "username": "inbox@example.com",
+    "password": "your-password-or-app-password",
+    "securityMode": "SslTls",
+    "timeoutSeconds": 30,
+    "enableIdle": false,
+    "idleRefreshMinutes": 25
   }
 }
 ```

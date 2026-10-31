@@ -219,15 +219,15 @@ The library writes `config.systemstats.json` (section `systemstats`) with defaul
 
 ```json
 {
-  "EnableCaching": true,
-  "CacheDurationSeconds": 5,
-  "CpuSamplingIntervalMs": 100,
-  "CpuSamplesForAverage": 3,
-  "EnableTemperatureMonitoring": true,
-  "EnableProcessMonitoring": true,
-  "MaxTopProcesses": 10,
-  "HighCpuThresholdPercent": 90.0,
-  "HighMemoryThresholdPercent": 90.0
+  "enableCaching": true,
+  "cacheDurationSeconds": 5,
+  "cpuSamplingIntervalMs": 100,
+  "cpuSamplesForAverage": 3,
+  "enableTemperatureMonitoring": true,
+  "enableProcessMonitoring": true,
+  "maxTopProcesses": 10,
+  "highCpuThresholdPercent": 90.0,
+  "highMemoryThresholdPercent": 90.0
 }
 ```
 

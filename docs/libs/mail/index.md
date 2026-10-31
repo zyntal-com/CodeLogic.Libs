@@ -155,18 +155,18 @@ public sealed record MailMessage
 
 ```json
 {
-  "Enabled": true,
-  "Smtp": {
-    "Host": "smtp.example.com",
-    "Port": 587,
-    "Username": "noreply@example.com",
-    "Password": "your-password-or-app-password",
-    "SecurityMode": "StartTls",
-    "TimeoutSeconds": 30
+  "enabled": true,
+  "smtp": {
+    "host": "smtp.example.com",
+    "port": 587,
+    "username": "noreply@example.com",
+    "password": "your-password-or-app-password",
+    "securityMode": "StartTls",
+    "timeoutSeconds": 30
   },
-  "DefaultFromEmail": "noreply@example.com",
-  "DefaultFromName": "My App",
-  "TemplateDirectory": "templates"
+  "defaultFromEmail": "noreply@example.com",
+  "defaultFromName": "My App",
+  "templateDirectory": "templates"
 }
 ```
 
