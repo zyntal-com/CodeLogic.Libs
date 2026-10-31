@@ -9,8 +9,83 @@ All notable changes to **CodeLogic.Mail** are documented here. Versions follow
 
 - Targets **.NET 11** (`net11.0`) and requires **CodeLogic 5.0** (`[5.0.0, 6.0.0)`). On .NET 10, stay on
   4.9.x. CodeLogic 5 makes `Result<T>` / `Result` C# 15 unions and `Error` a closed record with
-  kind subtypes (`NotFoundError`, `ValidationError`, ...). This library's API is unchanged, and
-  its results can now be matched exhaustively with `switch`.
+  kind subtypes (`NotFoundError`, `ValidationError`, ...).
+- **`MailResult`, `MailResult<T>` and the `MailError` enum are removed.** Every operation now returns
+  CodeLogic's `Result` / `Result<T>` and fails with an `Error` whose `Code` is a `MailErrorCodes`
+  constant:
+
+  | Old | New |
+  |---|---|
+  | `Task<MailResult> SmtpService.SendAsync(...)` | `Task<Result<MailSendReceipt>>` |
+  | `Task<MailResult> MailLibrary.SendTemplatedAsync(...)` | `Task<Result<MailSendReceipt>>` |
+  | `MailResult` (IMAP connect/disconnect/folder/message ops, `SaveTemplateAsync`) | `Result` |
+  | `MailResult<T>` (fetch, search, list, load, `RenderAsync`) | `Result<T>` |
+  | `MailResult.MessageId` | `MailSendReceipt.MessageId` (via `result.Value`) |
+  | `MailResult.Timestamp` | `MailSendReceipt.SentAtUtc` on sends; dropped elsewhere |
+  | `result.Error` (`MailError` enum) | `result.Error?.Code` (`MailErrorCodes.*` string) or the `Error` kind |
+  | `result.ErrorMessage` | `result.Error?.Message` |
+  | `MailError.None` | `result.IsSuccess` / `result.Error is null` |
+
+  `IMailTemplateProvider` and `IMailTemplateEngine` implementations must change their return types
+  the same way.
+
+  Codes and kinds (each code always has the same kind):
+
+  | `MailErrorCodes` constant | Code | `Error` kind |
+  |---|---|---|
+  | `InvalidRecipient` | `mail.invalid_recipient` | `ValidationError` |
+  | `InvalidSender` | `mail.invalid_sender` | `ValidationError` |
+  | `InvalidSubject` | `mail.invalid_subject` | `ValidationError` |
+  | `InvalidBody` (new) | `mail.invalid_body` | `ValidationError` |
+  | `TemplateNotFound` | `mail.template_not_found` | `NotFoundError` |
+  | `TemplateRenderingFailed` | `mail.template_rendering_failed` | `InternalError` |
+  | `SmtpConfigInvalid` | `mail.smtp_config_invalid` | `ValidationError` |
+  | `SmtpAuthenticationFailed` | `mail.smtp_authentication_failed` | `UnauthorizedError` |
+  | `SmtpTimeout` | `mail.smtp_timeout` | `TimeoutError` |
+  | `SmtpConnectionFailed` (new) | `mail.smtp_connection_failed` | `UnavailableError` |
+  | `SmtpRejected` | `mail.smtp_rejected` | `ValidationError` (`Details` has the SMTP status) |
+  | `SmtpError` | `mail.smtp_error` | `InternalError` |
+  | `AttachmentNotFound` | `mail.attachment_not_found` | `NotFoundError` |
+  | `ImapConfigInvalid` | `mail.imap_config_invalid` | `ValidationError` |
+  | `ImapAuthenticationFailed` | `mail.imap_authentication_failed` | `UnauthorizedError` |
+  | `ImapTimeout` | `mail.imap_timeout` | `TimeoutError` |
+  | `ImapConnectionFailed` (new) | `mail.imap_connection_failed` | `UnavailableError` |
+  | `ImapError` | `mail.imap_error` | `InternalError` |
+  | `FolderNotFound` | `mail.folder_not_found` | `NotFoundError` |
+  | `MessageNotFound` | `mail.message_not_found` | `NotFoundError` |
+  | `Cancelled` (new) | `mail.cancelled` | `UnavailableError` |
+  | `Unknown` | `mail.unknown` | `InternalError` |
+
+  `SmtpRejected` is a `ValidationError` because the server refused something about this message
+  (sender, recipient, size, content), not because the service is broken; `Details` carries the
+  SMTP status code. Cancellation previously reported `MailError.Unknown` (or
+  `TemplateRenderingFailed` while rendering) and is now `mail.cancelled`.
+
+  Checking a send result:
+
+  ```csharp
+  // 4.x
+  MailResult r = await mail.Smtp.SendAsync(message);
+  if (!r.IsSuccess) log.Warn($"Mail failed ({r.Error}): {r.ErrorMessage}");
+  else              log.Info($"Mail sent {r.MessageId}");
+
+  // 5.0
+  Result<MailSendReceipt> r = await mail.Smtp.SendAsync(message);
+  if (r.IsFailure) log.Warn($"Mail failed ({r.Error!.Code}): {r.Error.Message}");
+  else             log.Info($"Mail sent {r.Value!.MessageId}");
+
+  // or by kind
+  if (r.Error is TimeoutError or UnavailableError) { /* retry later */ }
+  ```
+
+- **`SendAsync` validates more before connecting.** Malformed sender or recipient (To/Cc/Bcc)
+  addresses fail with `mail.invalid_sender` / `mail.invalid_recipient` instead of an unexpected
+  exception, an empty body is `mail.invalid_body` (was `MailError.InvalidRecipient`), and an
+  attachment path that does not exist fails with `mail.attachment_not_found` (was silently dropped).
+- An unreachable SMTP/IMAP server (`SocketException`) is now `mail.smtp_connection_failed` /
+  `mail.imap_connection_failed` (`UnavailableError`) instead of `Unknown` / `ImapError`.
+- A template file that deserializes to nothing is `mail.template_rendering_failed` (was
+  `TemplateNotFound`).
 
 ## 2026-10-27
 

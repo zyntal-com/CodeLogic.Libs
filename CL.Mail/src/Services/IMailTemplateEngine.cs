@@ -1,4 +1,5 @@
 using CL.Mail.Models;
+using CodeLogic.Core.Results;
 
 namespace CL.Mail.Services;
 
@@ -14,10 +15,14 @@ public interface IMailTemplateEngine
     /// <summary>
     /// Renders the template and returns a fully substituted <see cref="RenderedTemplate"/>.
     /// </summary>
+    /// <returns>
+    /// The rendered template, or an <see cref="Error"/> with code
+    /// <see cref="MailErrorCodes.TemplateRenderingFailed"/> (or <see cref="MailErrorCodes.Cancelled"/>).
+    /// </returns>
     /// <param name="template">The template to render.</param>
     /// <param name="variables">Key/value pairs injected into the template.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    Task<MailResult<RenderedTemplate>> RenderAsync(
+    Task<Result<RenderedTemplate>> RenderAsync(
         MailTemplate template,
         Dictionary<string, object?> variables,
         CancellationToken cancellationToken = default);

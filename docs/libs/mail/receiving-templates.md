@@ -2,7 +2,7 @@
 
 > IMAP mailbox access — folders, fetch, search, manipulate, flags, and RFC 2177 IDLE — plus the JSON template engine and templated send.
 
-This page covers the IMAP side of `CL.Mail` and its template system. For loading, sending, and the `MailResult` / `MailError` model, see the **[Overview & Sending](index.md)** page.
+This page covers the IMAP side of `CL.Mail` and its template system. For loading, sending, and the `Result` / `MailErrorCodes` model, see the **[Overview & Sending](index.md)** page.
 
 ## IMAP access
 
@@ -13,8 +13,8 @@ if (!mail.HasImap)
     return;   // IMAP not configured
 
 var connect = await mail.Imap.ConnectAsync();
-if (!connect.IsSuccess)
-    Console.WriteLine($"IMAP connect failed ({connect.Error}): {connect.ErrorMessage}");
+if (connect.IsFailure)
+    Console.WriteLine($"IMAP connect failed ({connect.Error!.Code}): {connect.Error.Message}");
 ```
 
 Connections open on demand for the read/search/manipulate operations, so an explicit `ConnectAsync` is optional except when you want to surface connection errors up front or before starting IDLE. `DisconnectAsync()` closes the connection.
@@ -22,7 +22,7 @@ Connections open on demand for the read/search/manipulate operations, so an expl
 ### Folders
 
 ```csharp
-MailResult<IReadOnlyList<MailFolder>> folders = await mail.Imap.ListFoldersAsync();
+Result<IReadOnlyList<MailFolder>> folders = await mail.Imap.ListFoldersAsync();
 foreach (var f in folders.Value!)
     Console.WriteLine($"{f.FullName}: {f.MessageCount} ({f.UnreadCount} unread)");
 
@@ -108,7 +108,7 @@ await mail.Imap.StartIdleAsync("INBOX");
 mail.Imap.StopIdle();
 ```
 
-Set `Imap.EnableIdle` to `true` in configuration to allow IDLE; `StartIdleAsync` returns a failed `MailResult` if the server does not advertise the capability.
+Set `Imap.EnableIdle` to `true` in configuration to allow IDLE; `StartIdleAsync` returns a failed `Result` (`MailErrorCodes.ImapError`) if the server does not advertise the capability.
 
 ## IMAP models
 
@@ -180,20 +180,20 @@ public sealed class ImapSearchCriteria
 
 | Method | Returns |
 |--------|---------|
-| `ConnectAsync(ct)` | `MailResult` |
-| `DisconnectAsync(ct)` | `MailResult` |
-| `ListFoldersAsync(ct)` | `MailResult<IReadOnlyList<MailFolder>>` |
-| `CreateFolderAsync(name, ct)` | `MailResult` |
-| `RenameFolderAsync(oldName, newName, ct)` | `MailResult` |
-| `DeleteFolderAsync(fullName, ct)` | `MailResult` |
-| `FetchMessagesAsync(folder, offset, count, includeBody = false, ct)` | `MailResult<IReadOnlyList<ReceivedMessage>>` |
-| `GetMessageAsync(folder, uid, ct)` | `MailResult<ReceivedMessage>` |
-| `SearchAsync(folder, criteria, includeBody = false, maxResults = 50, ct)` | `MailResult<IReadOnlyList<ReceivedMessage>>` |
-| `MoveMessageAsync(source, uid, destination, ct)` | `MailResult` |
-| `CopyMessageAsync(source, uid, destination, ct)` | `MailResult` |
-| `DeleteMessageAsync(folder, uid, ct)` | `MailResult` |
-| `SetMessageFlagsAsync(folder, uid, flags, add = true, ct)` | `MailResult` |
-| `StartIdleAsync(folder, ct)` | `MailResult` |
+| `ConnectAsync(ct)` | `Result` |
+| `DisconnectAsync(ct)` | `Result` |
+| `ListFoldersAsync(ct)` | `Result<IReadOnlyList<MailFolder>>` |
+| `CreateFolderAsync(name, ct)` | `Result` |
+| `RenameFolderAsync(oldName, newName, ct)` | `Result` |
+| `DeleteFolderAsync(fullName, ct)` | `Result` |
+| `FetchMessagesAsync(folder, offset, count, includeBody = false, ct)` | `Result<IReadOnlyList<ReceivedMessage>>` |
+| `GetMessageAsync(folder, uid, ct)` | `Result<ReceivedMessage>` |
+| `SearchAsync(folder, criteria, includeBody = false, maxResults = 50, ct)` | `Result<IReadOnlyList<ReceivedMessage>>` |
+| `MoveMessageAsync(source, uid, destination, ct)` | `Result` |
+| `CopyMessageAsync(source, uid, destination, ct)` | `Result` |
+| `DeleteMessageAsync(folder, uid, ct)` | `Result` |
+| `SetMessageFlagsAsync(folder, uid, flags, add = true, ct)` | `Result` |
+| `StartIdleAsync(folder, ct)` | `Result` |
 | `StopIdle()` | `void` |
 
 ## Templates
@@ -267,13 +267,13 @@ var template = MailTemplate.Create(
 await mail.TemplateProvider.SaveTemplateAsync(template);
 
 // List available ids:
-MailResult<IReadOnlyList<string>> ids = await mail.TemplateProvider.ListTemplatesAsync();
+Result<IReadOnlyList<string>> ids = await mail.TemplateProvider.ListTemplatesAsync();
 
 // Load + render without sending:
 var load = await mail.TemplateProvider.LoadTemplateAsync("welcome");
 if (load.IsSuccess)
 {
-    MailResult<RenderedTemplate> rendered = await mail.TemplateEngine.RenderAsync(
+    Result<RenderedTemplate> rendered = await mail.TemplateEngine.RenderAsync(
         load.Value!,
         new Dictionary<string, object?> { ["name"] = "Alice" });
     // rendered.Value!.Subject / .HtmlBody / .TextBody
@@ -342,7 +342,7 @@ Add the `Imap` section to `config.mail.json` to enable reading. Omit it entirely
 
 ## See also
 
-- [Overview & Sending](index.md) — loading, `MailBuilder`, SMTP, and the `MailResult` / `MailError` model.
+- [Overview & Sending](index.md) — loading, `MailBuilder`, SMTP, and the `Result` / `MailErrorCodes` model.
 - [Getting Started](../../getting-started.md) — load, configure, and use any `CL.*` library.
 - [API Reference](../../api/index.md) — generated type/member documentation.
 - [Package on NuGet](https://www.nuget.org/packages/CodeLogic.Mail)

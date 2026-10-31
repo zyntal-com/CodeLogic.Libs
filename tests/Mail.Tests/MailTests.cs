@@ -2,6 +2,7 @@ using CL.Mail;
 using CL.Mail.Models;
 using CL.Mail.Services;
 using CodeLogic;                     // Libraries, CodeLogicOptions
+using CodeLogic.Core.Results;
 using Xunit;
 
 namespace Mail.Tests;
@@ -24,8 +25,8 @@ public sealed class SimpleTemplateEngineTests
         Dictionary<string, object?>? variables = null)
     {
         var result = await Engine.RenderAsync(template, variables ?? [], CancellationToken.None);
-        Assert.True(result.IsSuccess, result.ErrorMessage);
-        Assert.Equal(MailError.None, result.Error);
+        Assert.True(result.IsSuccess, result.Error?.ToString());
+        Assert.Null(result.Error);
         Assert.NotNull(result.Value);
         return result.Value!;
     }
@@ -147,7 +148,7 @@ public sealed class SimpleTemplateEngineEncodingTests
     private static async Task<RenderedTemplate> Render(SimpleTemplateEngine engine, MailTemplate template, Dictionary<string, object?> variables)
     {
         var result = await engine.RenderAsync(template, variables, CancellationToken.None);
-        Assert.True(result.IsSuccess, result.ErrorMessage);
+        Assert.True(result.IsSuccess, result.Error?.ToString());
         return result.Value!;
     }
 
@@ -234,16 +235,16 @@ public sealed class SimpleTemplateEngineEncodingTests
 
     private sealed class MemoryTemplates(params MailTemplate[] templates) : IMailTemplateProvider
     {
-        public Task<MailResult<MailTemplate>> LoadTemplateAsync(string templateId, CancellationToken cancellationToken = default) =>
+        public Task<Result<MailTemplate>> LoadTemplateAsync(string templateId, CancellationToken cancellationToken = default) =>
             Task.FromResult(templates.FirstOrDefault(t => t.Id == templateId) is { } template
-                ? MailResult<MailTemplate>.Success(template)
-                : MailResult<MailTemplate>.Failure(MailError.TemplateNotFound));
+                ? Result<MailTemplate>.Success(template)
+                : Result<MailTemplate>.Failure(Error.NotFound(MailErrorCodes.TemplateNotFound, $"Template '{templateId}' not found")));
 
-        public Task<MailResult<IReadOnlyList<string>>> ListTemplatesAsync(CancellationToken cancellationToken = default) =>
-            Task.FromResult(MailResult<IReadOnlyList<string>>.Success(templates.Select(t => t.Id).ToList()));
+        public Task<Result<IReadOnlyList<string>>> ListTemplatesAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult(Result<IReadOnlyList<string>>.Success(templates.Select(t => t.Id).ToList()));
 
-        public Task<MailResult> SaveTemplateAsync(MailTemplate template, CancellationToken cancellationToken = default) =>
-            Task.FromResult(MailResult.Failure(MailError.TemplateNotFound, "read-only"));
+        public Task<Result> SaveTemplateAsync(MailTemplate template, CancellationToken cancellationToken = default) =>
+            Task.FromResult(Result.Failure(Error.Validation(MailErrorCodes.Unknown, "read-only")));
     }
 }
 
@@ -341,35 +342,147 @@ public sealed class MailBuilderTests
     }
 }
 
-// ── MailResult factory sanity ────────────────────────────────────────────────────
+// ── Error codes and kinds (offline: validation runs before any connection) ───────
 
-public sealed class MailResultTests
+public sealed class MailErrorTests
 {
-    [Fact]
-    public void Success_is_success_with_no_error()
+    private static SmtpService Smtp(string host = "127.0.0.1", int port = 1) =>
+        new(new SmtpConfig { Host = host, Port = port, SecurityMode = MailSecurityMode.None, TimeoutSeconds = 5 });
+
+    private static MailMessage Message(
+        string from = "sender@example.com",
+        string[]? to = null,
+        string subject = "Hi",
+        string? text = "Body",
+        string[]? attachments = null) => new()
     {
-        var r = MailResult.Success("msg-id-123");
-        Assert.True(r.IsSuccess);
-        Assert.Equal(MailError.None, r.Error);
-        Assert.Equal("msg-id-123", r.MessageId);
+        From = from,
+        To = to ?? ["to@example.com"],
+        Subject = subject,
+        TextBody = text,
+        Attachments = attachments ?? []
+    };
+
+    private static async Task<Error> SendFailure(MailMessage message, SmtpService? smtp = null)
+    {
+        var result = await (smtp ?? Smtp()).SendAsync(message, CancellationToken.None);
+        Assert.True(result.IsFailure);
+        return result.Error!;
     }
 
     [Fact]
-    public void Failure_carries_error_and_message()
+    public async Task Empty_recipient_list_is_a_validation_error()
     {
-        var r = MailResult.Failure(MailError.SmtpRejected, "nope");
-        Assert.False(r.IsSuccess);
-        Assert.Equal(MailError.SmtpRejected, r.Error);
-        Assert.Equal("nope", r.ErrorMessage);
+        var error = await SendFailure(Message(to: []));
+        Assert.IsType<ValidationError>(error);
+        Assert.Equal(MailErrorCodes.InvalidRecipient, error.Code);
     }
 
     [Fact]
-    public void Generic_success_carries_value()
+    public async Task Malformed_recipient_is_a_validation_error()
     {
-        var r = MailResult<string>.Success("payload");
-        Assert.True(r.IsSuccess);
-        Assert.Equal("payload", r.Value);
-        Assert.Equal(MailError.None, r.Error);
+        var error = await SendFailure(Message(to: ["not-an-address"]));
+        Assert.IsType<ValidationError>(error);
+        Assert.Equal(MailErrorCodes.InvalidRecipient, error.Code);
+    }
+
+    [Fact]
+    public async Task Missing_sender_is_a_validation_error()
+    {
+        var error = await SendFailure(Message(from: " "));
+        Assert.IsType<ValidationError>(error);
+        Assert.Equal(MailErrorCodes.InvalidSender, error.Code);
+    }
+
+    [Fact]
+    public async Task Missing_subject_is_a_validation_error()
+    {
+        var error = await SendFailure(Message(subject: ""));
+        Assert.IsType<ValidationError>(error);
+        Assert.Equal(MailErrorCodes.InvalidSubject, error.Code);
+    }
+
+    [Fact]
+    public async Task Missing_body_is_a_validation_error()
+    {
+        var error = await SendFailure(Message(text: null));
+        Assert.IsType<ValidationError>(error);
+        Assert.Equal(MailErrorCodes.InvalidBody, error.Code);
+    }
+
+    [Fact]
+    public async Task Missing_attachment_file_is_not_found()
+    {
+        var path = Path.Combine(Path.GetTempPath(), "cl_mail_missing_" + Guid.NewGuid().ToString("N") + ".pdf");
+        var error = await SendFailure(Message(attachments: [path]));
+        Assert.IsType<NotFoundError>(error);
+        Assert.Equal(MailErrorCodes.AttachmentNotFound, error.Code);
+    }
+
+    [Fact]
+    public async Task Missing_smtp_host_is_a_config_validation_error()
+    {
+        var error = await SendFailure(Message(), Smtp(host: ""));
+        Assert.IsType<ValidationError>(error);
+        Assert.Equal(MailErrorCodes.SmtpConfigInvalid, error.Code);
+    }
+
+    [Fact]
+    public async Task Unreachable_smtp_server_is_unavailable()
+    {
+        // Port 1 on loopback: nothing listens there, so the connect is refused.
+        var error = await SendFailure(Message(), Smtp("127.0.0.1", 1));
+        Assert.IsType<UnavailableError>(error);
+        Assert.Equal(MailErrorCodes.SmtpConnectionFailed, error.Code);
+    }
+
+    [Fact]
+    public async Task Cancelled_send_reports_cancelled()
+    {
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+        var result = await Smtp().SendAsync(Message(), cts.Token);
+        Assert.Equal(MailErrorCodes.Cancelled, result.Error?.Code);
+    }
+
+    [Fact]
+    public async Task Missing_template_is_not_found()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "cl_mail_tpl_" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var provider = new FileMailTemplateProvider(dir);
+            var result = await provider.LoadTemplateAsync("nope");
+            Assert.True(result.IsFailure);
+            Assert.IsType<NotFoundError>(result.Error);
+            Assert.Equal(MailErrorCodes.TemplateNotFound, result.Error!.Code);
+        }
+        finally
+        {
+            if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Saved_template_round_trips()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "cl_mail_tpl_" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var provider = new FileMailTemplateProvider(dir);
+            var save = await provider.SaveTemplateAsync(MailTemplate.Create("welcome", "Hi {{name}}", textBody: "Hello"));
+            Assert.True(save.IsSuccess, save.Error?.ToString());
+
+            var list = await provider.ListTemplatesAsync();
+            Assert.Equal(["welcome"], list.Value!);
+
+            var load = await provider.LoadTemplateAsync("welcome");
+            Assert.Equal("Hi {{name}}", load.ValueOrThrow().Subject);
+        }
+        finally
+        {
+            if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
+        }
     }
 }
 
@@ -408,6 +521,7 @@ public sealed class MailRuntimeFixture : IAsyncLifetime
         var port = Environment.GetEnvironmentVariable("CL_MAIL_TEST_SMTP_PORT") ?? "587";
         var user = Environment.GetEnvironmentVariable("CL_MAIL_TEST_SMTP_USER") ?? "";
         var pass = Environment.GetEnvironmentVariable("CL_MAIL_TEST_SMTP_PASS") ?? "";
+        var security = Environment.GetEnvironmentVariable("CL_MAIL_TEST_SMTP_SECURITY") ?? "StartTls";
 
         var cfgDir = Path.Combine(TempDir, "Libraries", "CL.Mail");
         Directory.CreateDirectory(cfgDir);
@@ -419,7 +533,7 @@ public sealed class MailRuntimeFixture : IAsyncLifetime
             "port": {{port}},
             "username": "{{user}}",
             "password": "{{pass}}",
-            "securityMode": "StartTls",
+            "securityMode": "{{security}}",
             "timeoutSeconds": 30
           }
         }
@@ -488,6 +602,7 @@ public sealed class LiveSmtpTests
 
         var result = await lib.Smtp.SendAsync(message, CancellationToken.None);
 
-        Assert.True(result.IsSuccess, $"{result.Error}: {result.ErrorMessage}");
+        Assert.True(result.IsSuccess, result.Error?.ToString());
+        Assert.False(string.IsNullOrEmpty(result.Value!.MessageId));
     }
 }

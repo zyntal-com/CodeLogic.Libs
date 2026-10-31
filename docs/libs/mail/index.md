@@ -2,7 +2,7 @@
 
 > SMTP sending and IMAP reading with a JSON template engine, attachments, and RFC 2177 IDLE push notifications — built on MailKit.
 
-`CL.Mail` adds e-mail to a CodeLogic application. Compose messages with a fluent `MailBuilder`, send them through `mail.Smtp`, render variable-substitution templates, and read mailboxes through `mail.Imap` — including live IDLE push. It builds on [MailKit](https://www.nuget.org/packages/MailKit) and [MimeKit](https://www.nuget.org/packages/MimeKit). Operations do **not** use the framework `Result`; they return a mail-specific `MailResult` / `MailResult<T>` carrying a categorised `MailError` instead of throwing on protocol, auth, or timeout failures.
+`CL.Mail` adds e-mail to a CodeLogic application. Compose messages with a fluent `MailBuilder`, send them through `mail.Smtp`, render variable-substitution templates, and read mailboxes through `mail.Imap` — including live IDLE push. It builds on [MailKit](https://www.nuget.org/packages/MailKit) and [MimeKit](https://www.nuget.org/packages/MimeKit). Since 5.0, operations return the framework `Result` / `Result<T>` (namespace `CodeLogic.Core.Results`); a failure is an `Error` whose kind says what went wrong and whose `Code` is one of `MailErrorCodes`. Expected protocol, auth, and timeout failures are returned, not thrown. (4.x had its own `MailResult` / `MailError`; see [Upgrading from 4.x](#upgrading-from-4x).)
 
 | | |
 |---|---|
@@ -41,7 +41,7 @@ Set your SMTP (and optional IMAP) endpoints in `config.mail.json` (auto-generate
 | `Smtp` | `SmtpService` | Sending. |
 | `Imap` | `ImapService` | Reading — **throws** if IMAP is not configured. |
 | `HasImap` | `bool` | `true` when an `Imap` config section is present. |
-| `SendTemplatedAsync(...)` | `MailResult` | Render a template by id and send it. |
+| `SendTemplatedAsync(...)` | `Result<MailSendReceipt>` | Render a template by id and send it. |
 | `TemplateProvider` | `IMailTemplateProvider` | Load / list / save templates. |
 | `TemplateEngine` | `IMailTemplateEngine` | Render a `MailTemplate` to text. |
 
@@ -64,9 +64,9 @@ var message = mail.CreateMessage()
     .Priority(MailPriority.High)
     .Build();
 
-MailResult result = await mail.Smtp.SendAsync(message);
+Result<MailSendReceipt> result = await mail.Smtp.SendAsync(message);
 if (result.IsSuccess)
-    Console.WriteLine($"Sent, message id: {result.MessageId}");
+    Console.WriteLine($"Sent, message id: {result.Value!.MessageId}");
 ```
 
 `Build()` throws `InvalidOperationException` when a required field (sender, recipients, subject, or a body) is missing — so call it inside the application flow, not from untrusted input without a try/catch.
@@ -88,7 +88,7 @@ if (result.IsSuccess)
 
 ### Attachments
 
-Attach files by absolute path. Paths that don't exist on disk are silently skipped when the MIME message is built — if a missing attachment must be an error, validate the path yourself first.
+Attach files by absolute path. Since 5.0 every attachment must exist when `SendAsync` runs: a missing file fails the send with a `NotFoundError` (`MailErrorCodes.AttachmentNotFound`) before anything is sent. (4.x silently dropped missing attachments.)
 
 ```csharp
 var message = mail.CreateMessage()
@@ -104,21 +104,24 @@ await mail.Smtp.SendAsync(message);
 
 ## SmtpService.SendAsync
 
-`mail.Smtp.SendAsync(MailMessage, ct)` opens a fresh connection per call (there is no pooling), authenticates, sends, and returns a `MailResult`. On success the result carries the generated `MessageId`.
+`mail.Smtp.SendAsync(MailMessage, ct)` validates the message (sender, recipients, subject, body, attachments), opens a fresh connection per call (there is no pooling), authenticates, sends, and returns a `Result<MailSendReceipt>`. On success the receipt carries the `MessageId` and `SentAtUtc`.
+
+Branch on the error **kind** for coarse handling, or on `Error.Code` for a specific failure:
 
 ```csharp
-MailResult result = await mail.Smtp.SendAsync(message, ct);
+Result<MailSendReceipt> result = await mail.Smtp.SendAsync(message, ct);
 
-if (!result.IsSuccess)
+switch (result.Error)
 {
-    switch (result.Error)
-    {
-        case MailError.SmtpAuthenticationFailed: /* bad credentials */ break;
-        case MailError.SmtpTimeout:              /* server slow / unreachable */ break;
-        case MailError.SmtpRejected:             /* recipient/content refused */ break;
-        case MailError.InvalidRecipient:         /* no valid To address */ break;
-        default:                                 /* result.ErrorMessage has detail */ break;
-    }
+    case null:
+        logger.Info($"Sent {result.Value!.MessageId}");
+        break;
+    case UnauthorizedError:                      /* bad SMTP credentials */ break;
+    case TimeoutError or UnavailableError:       /* server slow / down: retry later */ break;
+    case ValidationError e when e.Code == MailErrorCodes.SmtpRejected:
+        /* server refused a recipient/content; e.Details has the SMTP status */ break;
+    case ValidationError e:                      /* bad input: e.Code says which field */ break;
+    default:                                     /* InternalError etc.: result.Error.Message */ break;
 }
 ```
 
@@ -205,46 +208,64 @@ HealthStatus status = await mail.HealthCheckAsync();
 - *Unhealthy* — the library failed to initialise.
 - *Healthy ("disabled")* — `Enabled` is `false`.
 
-## MailResult & MailError reference
+## Results & error codes reference
 
-Sending and the void-returning IMAP operations return `MailResult`; data-returning operations return `MailResult<T>`. Neither throws for the expected failure paths — branch on `IsSuccess` and `Error`.
+| Operation | Returns |
+|-----------|---------|
+| `SmtpService.SendAsync`, `MailLibrary.SendTemplatedAsync` | `Result<MailSendReceipt>` |
+| IMAP operations without data, `SaveTemplateAsync` | `Result` |
+| Data-returning operations (fetch, search, list, load, render) | `Result<T>` |
 
 ```csharp
-public sealed class MailResult
-{
-    public bool IsSuccess { get; }
-    public MailError Error { get; }       // None on success
-    public string? ErrorMessage { get; }
-    public string? MessageId { get; }     // set by SmtpService on a successful send
-    public DateTimeOffset Timestamp { get; }
-
-    public static MailResult Success(string? messageId = null);
-    public static MailResult Failure(MailError error, string? message = null);
-}
-
-public sealed class MailResult<T>
-{
-    public bool IsSuccess { get; }
-    public T? Value { get; }
-    public MailError Error { get; }
-    public string? ErrorMessage { get; }
-    public DateTimeOffset Timestamp { get; }
-
-    public static MailResult<T> Success(T value);
-    public static MailResult<T> Failure(MailError error, string? message = null);
-}
+public sealed record MailSendReceipt(string? MessageId, DateTime SentAtUtc);
 ```
 
-`MailError` categorises every failure:
+`Result` / `Result<T>` are the CodeLogic 5 unions: `IsSuccess`, `IsFailure`, `Value`, `Error`, plus `Map`, `Bind`, `Match`, `OnSuccess`, `OnFailure`, `ValueOrDefault`, `ValueOrThrow`. None of the mail operations throw for the expected failure paths.
 
-| Group | Members |
-|-------|---------|
-| Success | `None` |
-| Validation | `InvalidRecipient`, `InvalidSender`, `InvalidSubject`, `AttachmentNotFound` |
-| Templates | `TemplateNotFound`, `TemplateRenderingFailed` |
-| SMTP | `SmtpConfigInvalid`, `SmtpAuthenticationFailed`, `SmtpTimeout`, `SmtpRejected`, `SmtpError` |
-| IMAP | `ImapConfigInvalid`, `ImapAuthenticationFailed`, `ImapTimeout`, `ImapError`, `FolderNotFound`, `MessageNotFound` |
-| Other | `Unknown` |
+Every failure is an `Error` whose `Code` is a `MailErrorCodes` constant, and each code always comes with the same kind:
+
+| `MailErrorCodes` constant | Code | `Error` kind |
+|---|---|---|
+| `InvalidRecipient` | `mail.invalid_recipient` | `ValidationError` |
+| `InvalidSender` | `mail.invalid_sender` | `ValidationError` |
+| `InvalidSubject` | `mail.invalid_subject` | `ValidationError` |
+| `InvalidBody` (new) | `mail.invalid_body` | `ValidationError` |
+| `TemplateNotFound` | `mail.template_not_found` | `NotFoundError` |
+| `TemplateRenderingFailed` | `mail.template_rendering_failed` | `InternalError` |
+| `SmtpConfigInvalid` | `mail.smtp_config_invalid` | `ValidationError` |
+| `SmtpAuthenticationFailed` | `mail.smtp_authentication_failed` | `UnauthorizedError` |
+| `SmtpTimeout` | `mail.smtp_timeout` | `TimeoutError` |
+| `SmtpConnectionFailed` (new) | `mail.smtp_connection_failed` | `UnavailableError` |
+| `SmtpRejected` | `mail.smtp_rejected` | `ValidationError` (`Details` has the SMTP status) |
+| `SmtpError` | `mail.smtp_error` | `InternalError` |
+| `AttachmentNotFound` | `mail.attachment_not_found` | `NotFoundError` |
+| `ImapConfigInvalid` | `mail.imap_config_invalid` | `ValidationError` |
+| `ImapAuthenticationFailed` | `mail.imap_authentication_failed` | `UnauthorizedError` |
+| `ImapTimeout` | `mail.imap_timeout` | `TimeoutError` |
+| `ImapConnectionFailed` (new) | `mail.imap_connection_failed` | `UnavailableError` |
+| `ImapError` | `mail.imap_error` | `InternalError` |
+| `FolderNotFound` | `mail.folder_not_found` | `NotFoundError` |
+| `MessageNotFound` | `mail.message_not_found` | `NotFoundError` |
+| `Cancelled` (new) | `mail.cancelled` | `UnavailableError` |
+| `Unknown` | `mail.unknown` | `InternalError` |
+
+## Upgrading from 4.x
+
+`MailResult`, `MailResult<T>` and the `MailError` enum are gone. Replace `result.Error == MailError.X` with `result.Error?.Code == MailErrorCodes.X` (or match on the kind), `result.ErrorMessage` with `result.Error?.Message`, and `result.MessageId` with `result.Value?.MessageId`:
+
+```csharp
+// 4.x
+MailResult r = await mail.Smtp.SendAsync(message);
+if (!r.IsSuccess) log.Warn($"{r.Error}: {r.ErrorMessage}");
+else              log.Info($"sent {r.MessageId}");
+
+// 5.0
+Result<MailSendReceipt> r = await mail.Smtp.SendAsync(message);
+if (r.IsFailure) log.Warn($"{r.Error!.Code}: {r.Error.Message}");
+else             log.Info($"sent {r.Value!.MessageId}");
+```
+
+The full old → new mapping, with every code, is in `CL.Mail/CHANGELOG.md`.
 
 ## See also
 

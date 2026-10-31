@@ -1,5 +1,6 @@
 using CL.Mail.Models;
 using CodeLogic.Core.Logging;
+using CodeLogic.Core.Results;
 using System.Text.Json;
 
 namespace CL.Mail.Services;
@@ -34,7 +35,7 @@ public sealed class FileMailTemplateProvider : IMailTemplateProvider
     }
 
     /// <inheritdoc/>
-    public async Task<MailResult<MailTemplate>> LoadTemplateAsync(
+    public async Task<Result<MailTemplate>> LoadTemplateAsync(
         string templateId,
         CancellationToken cancellationToken = default)
     {
@@ -43,7 +44,7 @@ public sealed class FileMailTemplateProvider : IMailTemplateProvider
         if (!File.Exists(path))
         {
             _logger?.Debug($"Template not found: {path}");
-            return MailResult<MailTemplate>.Failure(MailError.TemplateNotFound, $"Template '{templateId}' not found");
+            return MailErrors.NotFound(MailErrorCodes.TemplateNotFound, $"Template '{templateId}' not found");
         }
 
         try
@@ -52,19 +53,19 @@ public sealed class FileMailTemplateProvider : IMailTemplateProvider
             var template = JsonSerializer.Deserialize<MailTemplate>(json, _jsonOptions);
 
             if (template is null)
-                return MailResult<MailTemplate>.Failure(MailError.TemplateNotFound, $"Template '{templateId}' could not be deserialized");
+                return MailErrors.Internal(MailErrorCodes.TemplateRenderingFailed, $"Template '{templateId}' could not be deserialized");
 
-            return MailResult<MailTemplate>.Success(template);
+            return template;
         }
         catch (Exception ex)
         {
             _logger?.Error($"Error loading template '{templateId}'", ex);
-            return MailResult<MailTemplate>.Failure(MailError.TemplateRenderingFailed, ex.Message);
+            return MailErrors.Internal(MailErrorCodes.TemplateRenderingFailed, ex);
         }
     }
 
     /// <inheritdoc/>
-    public Task<MailResult<IReadOnlyList<string>>> ListTemplatesAsync(
+    public Task<Result<IReadOnlyList<string>>> ListTemplatesAsync(
         CancellationToken cancellationToken = default)
     {
         try
@@ -75,17 +76,17 @@ public sealed class FileMailTemplateProvider : IMailTemplateProvider
                 .OrderBy(id => id, StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
-            return Task.FromResult(MailResult<IReadOnlyList<string>>.Success(ids.AsReadOnly()));
+            return Task.FromResult(Result<IReadOnlyList<string>>.Success(ids.AsReadOnly()));
         }
         catch (Exception ex)
         {
             _logger?.Error("Error listing templates", ex);
-            return Task.FromResult(MailResult<IReadOnlyList<string>>.Failure(MailError.Unknown, ex.Message));
+            return Task.FromResult(Result<IReadOnlyList<string>>.Failure(MailErrors.Internal(MailErrorCodes.Unknown, ex)));
         }
     }
 
     /// <inheritdoc/>
-    public async Task<MailResult> SaveTemplateAsync(
+    public async Task<Result> SaveTemplateAsync(
         MailTemplate template,
         CancellationToken cancellationToken = default)
     {
@@ -98,12 +99,12 @@ public sealed class FileMailTemplateProvider : IMailTemplateProvider
             await File.WriteAllTextAsync(path, json, cancellationToken).ConfigureAwait(false);
 
             _logger?.Info($"Saved template: {template.Id}");
-            return MailResult.Success();
+            return Result.Success();
         }
         catch (Exception ex)
         {
             _logger?.Error($"Error saving template '{template.Id}'", ex);
-            return MailResult.Failure(MailError.Unknown, ex.Message);
+            return MailErrors.Internal(MailErrorCodes.Unknown, ex);
         }
     }
 

@@ -1,5 +1,6 @@
 using CL.Mail.Models;
 using CodeLogic.Core.Logging;
+using CodeLogic.Core.Results;
 using System.Collections;
 using System.Globalization;
 using System.Net;
@@ -54,7 +55,7 @@ public sealed class SimpleTemplateEngine : IMailTemplateEngine
     }
 
     /// <inheritdoc/>
-    public async Task<MailResult<RenderedTemplate>> RenderAsync(
+    public async Task<Result<RenderedTemplate>> RenderAsync(
         MailTemplate template,
         Dictionary<string, object?> variables,
         CancellationToken cancellationToken = default)
@@ -94,21 +95,21 @@ public sealed class SimpleTemplateEngine : IMailTemplateEngine
                 }
             }
 
-            return MailResult<RenderedTemplate>.Success(new RenderedTemplate
+            return new RenderedTemplate
             {
                 Subject = subject,
                 TextBody = textBody,
                 HtmlBody = htmlBody
-            });
+            };
         }
         catch (OperationCanceledException)
         {
-            return MailResult<RenderedTemplate>.Failure(MailError.TemplateRenderingFailed, "Rendering cancelled");
+            return MailErrors.Cancelled();
         }
         catch (Exception ex)
         {
             _logger?.Error($"Error rendering template '{template.Id}'", ex);
-            return MailResult<RenderedTemplate>.Failure(MailError.TemplateRenderingFailed, ex.Message);
+            return MailErrors.Internal(MailErrorCodes.TemplateRenderingFailed, ex);
         }
     }
 
