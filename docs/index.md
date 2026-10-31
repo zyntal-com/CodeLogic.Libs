@@ -36,11 +36,6 @@ var mail = Libraries.Get<CL.Mail.MailLibrary>();
 
 <div class="cl-group">Databases</div>
 <div class="lib-grid">
-  <a class="lib-card" href="libs/mssql/index.md">
-    <div class="lib-name">CL.MSSQL</div>
-    <div class="lib-pkg">CodeLogic.MSSQL</div>
-    <p class="lib-desc">SQL Server 2019+ and Azure SQL with typed LINQ, caching, schema synchronization, and migrations.</p>
-  </a>
 </div>
 
 <div class="cl-group">Communication</div>

@@ -78,3 +78,16 @@ PostgreSQL-specific items:
 | N+1 detector, EXPLAIN on slow queries (`SlowQueryExplain`) | telemetry middleware | **open, WP-A0** |
 | `pg_advisory_lock` schema-sync lock, `pg_catalog` introspection, DDL | schema management | **open, WP-71 to WP-73** |
 | Runtime options (`PostgreSqlRuntimeOptions`) | `PostgreSqlOptions` (auto-prepare, multiplexing) | done |
+
+## CL.MSSQL (removed 2026-10-31, after WP-52)
+
+CL.MSSQL had the same feature set as CL.MySQL2, so the CL.MySQL2 table above applies. SQL Server-specific items:
+
+| CL.MSSQL feature | CL.Data | Status |
+|---|---|---|
+| SQL login / integrated / Azure AD authentication | `SqlServer.Authentication` (Entra password dropped: deprecated upstream) | done |
+| `TOP`/`OFFSET FETCH`, table-hint locks, `OUTPUT INSERTED`, serializable two-statement upsert | dialect | done |
+| 2100-parameter chunking | `ParameterLimit` 2098 in batch planning | done |
+| Json as `nvarchar(max)` + `ISJSON` check, `RowVersion`, `Xml`, `Geography` | type mapping done; `ISJSON` check constraint in DDL | DDL **open, WP-72** |
+| `sp_getapplock` schema-sync lock, `sys.*` introspection | schema management | **open, WP-71 to WP-73** |
+| API-parity test against CL.MySQL2 (`docs/libs/mssql/parity.md`) | replaced by the shared conformance suite | done |

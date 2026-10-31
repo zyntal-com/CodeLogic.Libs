@@ -6,11 +6,6 @@ your application or from other libraries after `StartAsync()`.
 
 <div class="cl-group">Databases</div>
 <div class="lib-grid">
-  <a class="lib-card" href="mssql/index.md">
-    <div class="lib-name">CL.MSSQL</div>
-    <div class="lib-pkg">CodeLogic.MSSQL</div>
-    <p class="lib-desc">SQL Server 2019+ / Azure SQL — typed LINQ, result cache, schema sync, migrations.</p>
-  </a>
 </div>
 
 <div class="cl-group">Communication</div>
@@ -135,12 +130,11 @@ var status = await mysql.HealthCheckAsync();
 // status.Message, status.Data (structured metrics)
 ```
 
-### The database libraries
+### Databases
 
-`CL.MSSQL` offers `GetRepository<T>()` for CRUD and a fluent query builder (`Query<T>()`) that
-translates LINQ-style expressions to SQL, plus attribute-driven table sync. In CodeLogic 5 it is being
-replaced by **CL.Data** (`CodeLogic.Data` plus one provider
-package per database); SQLite, MySQL and PostgreSQL are already served by `CodeLogic.Data.Sqlite`, `CodeLogic.Data.MySql` and
-`CodeLogic.Data.PostgreSql`.
+Databases use **CL.Data**: `CodeLogic.Data` (typed LINQ queries, repositories, upserts, joins, grouping, cursor
+paging, transactions, batches) plus one provider package per database: `CodeLogic.Data.MySql`,
+`CodeLogic.Data.PostgreSql`, `CodeLogic.Data.SqlServer` and `CodeLogic.Data.Sqlite`. It replaces the 4.x libraries
+CL.MySQL2, CL.MSSQL, CL.PostgreSQL and CL.SQLite, which stay on the `support/4.x` line.
 
 See the [API Reference](../api/index.md) for the full generated type and member listing.
