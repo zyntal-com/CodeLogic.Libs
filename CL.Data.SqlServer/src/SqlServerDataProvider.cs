@@ -71,6 +71,9 @@ public sealed class SqlServerDataProvider : DataProvider
     public override CL.Data.Schema.SchemaIntrospector Introspector { get; } = new SqlServerSchemaIntrospector();
 
     /// <inheritdoc />
+    public override CL.Data.Routing.ReplicaProbe ReplicaProbe { get; } = new SqlServerReplicaProbe();
+
+    /// <inheritdoc />
     public override CL.Data.Admin.DatabaseAdmin DatabaseAdmin { get; } = new SqlServerDatabaseAdmin();
 
     /// <inheritdoc />
@@ -304,4 +307,24 @@ public sealed class SqlServerDataLibrary : ILibrary
 
     /// <inheritdoc />
     public void Dispose() { }
+}
+
+/// <summary>
+/// SQL Server replica lag from <c>sys.dm_hadr_database_replica_states</c> (<c>secondary_lag_seconds</c>, SQL Server 2016+)
+/// for the current database on the local replica. No row: not in an availability group.
+/// </summary>
+public sealed class SqlServerReplicaProbe : CL.Data.Routing.ReplicaProbe
+{
+    /// <inheritdoc />
+    public override string Sql =>
+        "SELECT secondary_lag_seconds, synchronization_state_desc FROM sys.dm_hadr_database_replica_states " +
+        "WHERE is_local = 1 AND database_id = DB_ID()";
+
+    /// <inheritdoc />
+    public override ValueTask<long?> ReadLagMsAsync(System.Data.Common.DbDataReader reader, CancellationToken ct)
+    {
+        var state = reader.GetOrdinal("synchronization_state_desc") is var i && !reader.IsDBNull(i) ? reader.GetString(i) : null;
+        if (state is "NOT SYNCHRONIZING") return ValueTask.FromResult<long?>(Broken);
+        return ValueTask.FromResult<long?>(Number(reader, "secondary_lag_seconds") is { } seconds ? (long)(seconds * 1000) : 0);
+    }
 }

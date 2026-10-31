@@ -45,7 +45,7 @@ public sealed class RoutingTests : IAsyncLifetime
         {
             await using var connection = await node.DataSource.OpenConnectionAsync();
             await using var command = connection.CreateCommand();
-            command.CommandText = $"CREATE TABLE who (node TEXT NOT NULL); INSERT INTO who VALUES ('{node.Name}');";
+            command.CommandText = $"CREATE TABLE who (node TEXT NOT NULL); INSERT INTO who VALUES ('{node.Name}'); CREATE TABLE lag (ms INTEGER NULL); INSERT INTO lag VALUES (0);";
             await command.ExecuteNonQueryAsync();
         }
     }
@@ -120,5 +120,35 @@ public sealed class RoutingTests : IAsyncLifetime
 
         db.Replicas[0].LagMs = 10;                                           // r1 caught up
         Assert.Equal("r1", await Who(db));
+    }
+
+    private static async Task SetLag(Database db, int replica, long? ms)
+    {
+        await using var connection = await db.Replicas[replica].DataSource.OpenConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = ms is null ? "UPDATE lag SET ms = NULL" : $"UPDATE lag SET ms = {ms}";
+        await command.ExecuteNonQueryAsync();
+    }
+
+    [Fact]
+    public async Task Probes_measure_lag_and_bring_replicas_back()
+    {
+        var (db, provider, clock) = Create(breaker: 1);
+        await SetLag(db, 0, 60_000);                                         // r1 far behind
+        await SetLag(db, 1, null);                                           // r2 replication stopped
+        Assert.Equal(2, await db.ProbeReplicasAsync());
+        Assert.Equal((60_000L, CL.Data.Routing.ReplicaProbe.Broken), (db.Replicas[0].LagMs!.Value, db.Replicas[1].LagMs!.Value));
+        Assert.Equal("primary", await Who(db));                              // both skipped
+
+        await SetLag(db, 0, 100);
+        provider.Nodes["r2"].OpenFaults = 1;                                 // r2 unreachable: its circuit opens
+        Assert.Equal(1, await db.ProbeReplicasAsync());
+        Assert.False(db.Replicas[1].IsHealthy);
+        Assert.Equal("r1", await Who(db));
+
+        await SetLag(db, 1, 0);
+        clock.Now = clock.Now.AddSeconds(31);                                // break over: the next probe is the trial call
+        Assert.Equal(2, await db.ProbeReplicasAsync());
+        Assert.True(db.Replicas[1].IsHealthy);
     }
 }

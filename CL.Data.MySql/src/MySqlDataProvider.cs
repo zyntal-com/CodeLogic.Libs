@@ -69,6 +69,9 @@ public sealed class MySqlDataProvider : DataProvider
     public override CL.Data.Schema.SchemaIntrospector Introspector { get; } = new MySqlSchemaIntrospector();
 
     /// <inheritdoc />
+    public override CL.Data.Routing.ReplicaProbe ReplicaProbe { get; } = new MySqlReplicaProbe();
+
+    /// <inheritdoc />
     public override CL.Data.Admin.DatabaseAdmin DatabaseAdmin { get; } = new MySqlDatabaseAdmin();
 
     // MySQL lock names are limited to 64 characters.
@@ -282,4 +285,18 @@ public sealed class MySqlDataLibrary : ILibrary
 
     /// <inheritdoc />
     public void Dispose() { }
+}
+
+/// <summary>
+/// MySQL replica lag from <c>SHOW REPLICA STATUS</c> (<c>Seconds_Behind_Source</c>, MySQL 8.0.22+). No row: not a replica.
+/// A NULL lag means the replication threads are stopped.
+/// </summary>
+public sealed class MySqlReplicaProbe : CL.Data.Routing.ReplicaProbe
+{
+    /// <inheritdoc />
+    public override string Sql => "SHOW REPLICA STATUS";
+
+    /// <inheritdoc />
+    public override ValueTask<long?> ReadLagMsAsync(System.Data.Common.DbDataReader reader, CancellationToken ct) =>
+        ValueTask.FromResult<long?>(Number(reader, "Seconds_Behind_Source") is { } seconds ? (long)(seconds * 1000) : Broken);
 }

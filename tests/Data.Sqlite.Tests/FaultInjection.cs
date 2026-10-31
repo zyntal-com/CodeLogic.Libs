@@ -69,6 +69,7 @@ internal sealed class FaultyProvider : DataProvider
     public override ITypeMapper Types => Inner.Types;
     public override IErrorClassifier Errors { get; } = new FaultyClassifier();
     public override object? ReadLastInsertId(DbCommand command) => Inner.ReadLastInsertId(command);
+    public override CL.Data.Routing.ReplicaProbe ReplicaProbe { get; } = new TableProbe();
 
     public override Result<string> BuildConnectionString(DataConnectionConfig config, NodeEndpoint node) =>
         new SqliteConnectionStringBuilder { DataSource = node.IsPrimary ? config.Database : $"{config.Database}.{node.Name}" }.ToString();
@@ -82,4 +83,13 @@ internal sealed class ManualClock : TimeProvider
 {
     public DateTimeOffset Now { get; set; } = new(2026, 10, 31, 12, 0, 0, TimeSpan.Zero);
     public override DateTimeOffset GetUtcNow() => Now;
+}
+
+/// <summary>Reads a node's "lag" from its own <c>lag</c> table, so tests set each replica's lag with an UPDATE.</summary>
+internal sealed class TableProbe : CL.Data.Routing.ReplicaProbe
+{
+    public override string Sql => "SELECT ms FROM lag";
+
+    public override ValueTask<long?> ReadLagMsAsync(DbDataReader reader, CancellationToken ct) =>
+        ValueTask.FromResult<long?>(reader.IsDBNull(0) ? Broken : reader.GetInt64(0));
 }

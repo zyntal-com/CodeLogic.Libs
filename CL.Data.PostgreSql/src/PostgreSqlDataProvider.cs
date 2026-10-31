@@ -71,6 +71,9 @@ public sealed class PostgreSqlDataProvider : DataProvider
     public override CL.Data.Schema.SchemaIntrospector Introspector { get; } = new PostgreSqlSchemaIntrospector();
 
     /// <inheritdoc />
+    public override CL.Data.Routing.ReplicaProbe ReplicaProbe { get; } = new PostgreSqlReplicaProbe();
+
+    /// <inheritdoc />
     public override CL.Data.Admin.DatabaseAdmin DatabaseAdmin { get; } = new PostgreSqlDatabaseAdmin();
 
     /// <inheritdoc />
@@ -300,4 +303,21 @@ public sealed class PostgreSqlDataLibrary : ILibrary
 
     /// <inheritdoc />
     public void Dispose() { }
+}
+
+/// <summary>
+/// PostgreSQL replica lag: 0 on a primary or when everything received is replayed, otherwise the age of the last replayed
+/// transaction (<c>pg_last_xact_replay_timestamp()</c>).
+/// </summary>
+public sealed class PostgreSqlReplicaProbe : CL.Data.Routing.ReplicaProbe
+{
+    /// <inheritdoc />
+    public override string Sql =>
+        "SELECT CASE WHEN NOT pg_is_in_recovery() THEN 0 " +
+        "WHEN pg_last_wal_receive_lsn() = pg_last_wal_replay_lsn() THEN 0 " +
+        "ELSE COALESCE(EXTRACT(EPOCH FROM (now() - pg_last_xact_replay_timestamp())) * 1000, 0) END AS lag_ms";
+
+    /// <inheritdoc />
+    public override ValueTask<long?> ReadLagMsAsync(System.Data.Common.DbDataReader reader, CancellationToken ct) =>
+        ValueTask.FromResult(Number(reader, "lag_ms") is { } ms ? (long?)(long)Math.Max(0, ms) : null);
 }

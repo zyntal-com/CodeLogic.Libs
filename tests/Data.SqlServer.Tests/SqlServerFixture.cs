@@ -71,3 +71,4 @@ public sealed class SqlServerCollection : ICollectionFixture<SqlServerFixture>;
 [Collection("sqlserver")] public sealed class SqlServerFilterTests(SqlServerFixture f) : FilterConformance(f);
 [Collection("sqlserver")] public sealed class SqlServerSeedTests(SqlServerFixture f) : SeedConformance(f);
 [Collection("sqlserver")] public sealed class SqlServerCacheTests(SqlServerFixture f) : CacheConformance(f);
+[Collection("sqlserver")] public sealed class SqlServerReplicaTests(SqlServerFixture f) : ReplicaConformance(f);

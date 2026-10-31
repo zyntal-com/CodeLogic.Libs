@@ -150,6 +150,9 @@ public abstract class DataProvider
     /// <summary>Default server port (0 when not applicable).</summary>
     public virtual int DefaultPort => 0;
 
+    /// <summary>Measures replica lag for read routing; null when the provider has no replicas (SQLite).</summary>
+    public virtual CL.Data.Routing.ReplicaProbe? ReplicaProbe => null;
+
     /// <summary>
     /// Builds the driver connection string for <paramref name="node"/> of <paramref name="config"/>: the
     /// configured connection string (if any) as the base, then discrete settings and provider options.

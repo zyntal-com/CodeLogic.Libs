@@ -286,3 +286,10 @@
   - **Read preference:** set per connection (`ReadPreference`), per view (`db.ReadFrom(preference)`) or per query (`QueryBuilder.ReadFrom`).
   - **Reads-your-writes:** for `StickyAfterWriteMs` after a write, reads stay on the primary.
   - **No usable replica:** `PreferReplica` falls back to the primary and `ReplicaOnly` fails with `data.no_healthy_node`. A read whose replica turns out to be down runs again on the primary.
+- **Replica lag probes (WP-92):** `DataProvider.ReplicaProbe` measures lag on each server provider. SQLite has none.
+  - **MySQL:** `SHOW REPLICA STATUS`.
+  - **PostgreSQL:** replay LSN and timestamp.
+  - **SQL Server:** `sys.dm_hadr_database_replica_states`.
+- **Running probes:** `db.ProbeReplicasAsync()`, or `db.StartReplicaProbes(scheduler)` to run them every `ReplicaProbeIntervalSeconds`.
+  - Each probe updates `DataNode.LagMs` and feeds the replica's circuit breaker, so a recovered replica gets back into rotation through the probe.
+  - When replication is stopped, the probe reports `ReplicaProbe.Broken`, which keeps that replica out of rotation.

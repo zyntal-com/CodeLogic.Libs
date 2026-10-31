@@ -102,3 +102,6 @@ public sealed class SqliteFilterTests(SqliteFixture fixture) : FilterConformance
 public sealed class SqliteSeedTests(SqliteFixture fixture) : SeedConformance(fixture);
 [Collection("sqlite")]
 public sealed class SqliteCacheTests(SqliteFixture fixture) : CacheConformance(fixture);
+
+[Collection("sqlite")]
+public sealed class SqliteReplicaTests(SqliteFixture fixture) : ReplicaConformance(fixture);
