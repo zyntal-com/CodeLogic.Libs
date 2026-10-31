@@ -133,8 +133,8 @@ public abstract class DataProvider
     /// </summary>
     public abstract Result<string> BuildConnectionString(DataConnectionConfig config, NodeEndpoint node);
 
-    /// <summary>Creates the pooled data source for one node.</summary>
-    public abstract DbDataSource CreateDataSource(string connectionString);
+    /// <summary>Creates the pooled data source for <paramref name="node"/>, from the connection string <see cref="BuildConnectionString"/> produced.</summary>
+    public abstract DbDataSource CreateDataSource(DataConnectionConfig config, NodeEndpoint node, string connectionString);
 
     /// <summary>Provider-specific configuration checks; add problems to <paramref name="errors"/> under <paramref name="path"/>.</summary>
     public virtual void Validate(DataConnectionConfig config, string path, List<ConfigFieldError> errors) { }

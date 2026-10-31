@@ -43,3 +43,10 @@
     `NodeEndpoint` (the primary or a replica) and a `DbDataSource` per node.
   - `DataProviderRegistry` checks the contract version of each provider.
   - `SqlDialect` base with ANSI quoting, parameter names and LIKE escaping.
+- **Database and raw SQL:**
+  - `Database` (one per named connection) owns a pooled `DbDataSource` for the primary and each replica.
+  - Raw SQL with `SqlQueryAsync<T>`, `ExecuteSqlAsync`, `SqlScalarAsync<T>` and `PingAsync`. Raw SQL is written as
+    interpolated strings (`SqlText`): every hole becomes a typed parameter, and `Sql.Identifier(...)` holes become
+    quoted identifiers. Values never reach the SQL text.
+  - Failures and cancellation come back as `Result` errors, never exceptions.
+- **Data sources:** `InitializingDataSource` is a base for data sources that need per-connection setup.

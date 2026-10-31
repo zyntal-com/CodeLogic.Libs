@@ -18,7 +18,7 @@ internal sealed class FakeProvider(string name = "fake", int spiVersion = CL.Dat
     public override ITypeMapper Types => throw new NotSupportedException();
     public override IErrorClassifier Errors => throw new NotSupportedException();
     public override Result<string> BuildConnectionString(DataConnectionConfig config, NodeEndpoint node) => $"Host={node.Host}";
-    public override DbDataSource CreateDataSource(string connectionString) => throw new NotSupportedException();
+    public override DbDataSource CreateDataSource(DataConnectionConfig config, NodeEndpoint node, string connectionString) => throw new NotSupportedException();
 }
 
 public sealed class ProviderRegistryTests
