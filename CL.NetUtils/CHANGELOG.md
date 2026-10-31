@@ -32,6 +32,7 @@ All notable changes to **CodeLogic.NetUtils** are documented here. Versions foll
 
 ### Fixed
 
+- **A corrupt GeoIP download can no longer replace a working database (re-audit R2).** The extracted file is opened with the MaxMind reader, must be a City database, and must answer a test lookup. Only then is it renamed into place. The open reader switches without a gap, and on any failure the old file and reader stay in use. Readers load the database into memory, so the file is never locked.
 - **`GeoIp.AutoUpdate` now works:** before, nothing read it. On startup it refreshes an existing database when credentials are set; a failed refresh is logged and the existing database stays in use. A missing database is downloaded regardless.
 - **`Dnsbl.ParallelQueries` is honoured.** Zones were always queried one at a time. Now the zones of a
   list are queried concurrently by default, and with `ParallelQueries = false` one at a time, stopping at

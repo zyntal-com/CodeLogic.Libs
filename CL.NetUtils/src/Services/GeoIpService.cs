@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using CL.NetUtils.Models;
 using CodeLogic.Core.Logging;
+using MaxMind.Db;
 using MaxMind.GeoIP2;
 using MaxMind.GeoIP2.Exceptions;
 using System.Formats.Tar;
@@ -52,6 +53,16 @@ public class GeoIpService : IDisposable
     /// <summary>The <c>.mmdb</c> file this service reads (from <see cref="GeoIpConfig.DatabasePath"/> or the library data directory).</summary>
     public string DatabasePath => _databasePath;
 
+    /// <summary>English description of the database the open reader serves, or null before initialization (tests).</summary>
+    internal string? OpenDatabaseDescription
+    {
+        get
+        {
+            lock (_lock)
+                return _databaseReader?.Metadata.Description.TryGetValue("en", out var text) == true ? text : null;
+        }
+    }
+
     /// <summary><see langword="true"/> when MaxMind credentials are set, so a missing database can be downloaded.</summary>
     public bool CanDownload => _config.AccountId != 0 && !string.IsNullOrWhiteSpace(_config.LicenseKey);
 
@@ -96,9 +107,12 @@ public class GeoIpService : IDisposable
     {
         await EnsureDatabaseAsync(cancellationToken).ConfigureAwait(false);
 
+        var reader = OpenReader(_databasePath);
         lock (_lock)
         {
-            _databaseReader = new DatabaseReader(_databasePath);
+            var previous = _databaseReader;
+            _databaseReader = reader;
+            previous?.Dispose();
         }
 
         _logger?.Info($"GeoIP service initialized with database: {_databasePath}");
@@ -286,28 +300,66 @@ public class GeoIpService : IDisposable
     // ── Private helpers ───────────────────────────────────────────────────────
 
     /// <summary>
-    /// Moves the staged database over <see cref="DatabasePath"/> in one rename and, when a reader is open,
-    /// reopens it on the new file. The old reader is closed first because a memory-mapped file cannot be
-    /// replaced on Windows; lookups wait on the lock meanwhile.
+    /// Opens a reader that loads the whole database into memory, so the file is never held open and can be replaced
+    /// while lookups continue (a memory-mapped reader locks the file on Windows).
+    /// </summary>
+    private static DatabaseReader OpenReader(string path) => new(path, FileAccessMode.Memory);
+
+    /// <summary>
+    /// Installs a validated staged database without a gap and without risking the working one: the replacement reader
+    /// is opened first, then the file is renamed over <see cref="DatabasePath"/>, then the readers are swapped. If any
+    /// step fails, the previous file and reader stay in use.
     /// </summary>
     private void InstallDatabase(string stagedPath)
     {
+        var replacement = OpenReader(stagedPath);
+        try
+        {
+            File.Move(stagedPath, _databasePath, overwrite: true);
+        }
+        catch
+        {
+            replacement.Dispose();
+            throw;
+        }
+
+        DatabaseReader? previous;
         lock (_lock)
         {
-            var wasOpen = _databaseReader is not null;
-            _databaseReader?.Dispose();
-            _databaseReader = null;
-
-            File.Move(stagedPath, _databasePath, overwrite: true);
-
-            if (wasOpen)
-                _databaseReader = new DatabaseReader(_databasePath);
+            previous = _databaseReader;
+            // Only an initialized service gets the new reader; otherwise InitializeAsync opens the installed file.
+            _databaseReader = previous is null ? null : replacement;
         }
+        previous?.Dispose();
+        if (previous is null) replacement.Dispose();
     }
 
-    /// <summary>The marker that starts the metadata section at the end of every MaxMind DB file.</summary>
-    private static ReadOnlySpan<byte> MetadataMarker =>
-        [0xAB, 0xCD, 0xEF, (byte)'M', (byte)'a', (byte)'x', (byte)'M', (byte)'i', (byte)'n', (byte)'d', (byte)'.', (byte)'c', (byte)'o', (byte)'m'];
+    /// <summary>
+    /// Proves that <paramref name="path"/> is a usable MaxMind City database before it may replace the working one: the
+    /// metadata must parse, the database type must support City lookups (what <see cref="LookupIpAsync"/> uses), and a
+    /// lookup must walk the search tree. A marker alone is not enough; a corrupt file can contain it.
+    /// </summary>
+    /// <exception cref="InvalidDataException">The file is not a usable City database.</exception>
+    internal static void ValidateDatabase(string path)
+    {
+        try
+        {
+            using var reader = OpenReader(path);
+            var type = reader.Metadata.DatabaseType ?? "";
+            if (!type.Contains("City", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException($"The GeoIP database type '{type}' does not support City lookups");
+            reader.TryCity(IPAddress.Parse("8.8.8.8"), out _);
+            if (reader.Metadata.IPVersion == 6) reader.TryCity(IPAddress.Parse("2001:4860:4860::8888"), out _);
+        }
+        catch (InvalidDataException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidDataException($"The extracted file is not a usable MaxMind database: {ex.Message}", ex);
+        }
+    }
 
     /// <summary>
     /// Extracts the <c>.mmdb</c> entry of a <c>tar.gz</c> or <c>zip</c> archive to <paramref name="outputPath"/>.
@@ -375,13 +427,6 @@ public class GeoIpService : IDisposable
         if (!found)
             throw new InvalidDataException("The GeoIP archive contains no .mmdb file");
 
-        // MaxMind DB metadata sits within the last 128 KiB, after a fixed marker.
-        using var check = File.OpenRead(outputPath);
-        var tail = (int)Math.Min(check.Length, 128 * 1024);
-        var buffer = new byte[tail];
-        check.Seek(-tail, SeekOrigin.End);
-        check.ReadExactly(buffer);
-        if (buffer.AsSpan().LastIndexOf(MetadataMarker) < 0)
-            throw new InvalidDataException("The extracted file is not a MaxMind database");
+        ValidateDatabase(outputPath);
     }
 }

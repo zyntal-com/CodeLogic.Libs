@@ -196,7 +196,46 @@ public sealed class GeoIpDownloadTests : IDisposable
     private static readonly byte[] MmdbMarker = [0xAB, 0xCD, 0xEF, .."MaxMind.com"u8];
 
     /// <summary>A fake database: payload followed by the MaxMind metadata marker.</summary>
-    private static byte[] FakeMmdb(string payload) => [.."fake-db:"u8, ..System.Text.Encoding.ASCII.GetBytes(payload), ..MmdbMarker, 0xE0];
+    /// <summary>
+    /// A real (minimal) MaxMind DB that the MaxMind reader opens: a one-node search tree whose records mean "not found",
+    /// the data-section separator, and the metadata map. <paramref name="tag"/> is the English description, so tests can
+    /// tell databases apart.
+    /// </summary>
+    private static byte[] FakeMmdb(string tag, string databaseType = "GeoLite2-City")
+    {
+        List<byte> b = [0, 0, 1, 0, 0, 1];                              // node_count 1, record_size 24: both records = "no data"
+        b.AddRange(new byte[16]);                                       // data section separator (empty data section)
+        b.AddRange(MmdbMarker);
+        void Str(string s)
+        {
+            var bytes = System.Text.Encoding.UTF8.GetBytes(s);
+            if (bytes.Length < 29) b.Add((byte)(0x40 | bytes.Length));
+            else { b.Add(0x40 | 29); b.Add((byte)(bytes.Length - 29)); }
+            b.AddRange(bytes);
+        }
+        void Unsigned(byte type, ulong value, bool extended = false)
+        {
+            var bytes = BitConverter.GetBytes(value).Reverse().SkipWhile(x => x == 0).ToArray();
+            if (extended) { b.Add((byte)bytes.Length); b.Add((byte)(type - 7)); }
+            else b.Add((byte)((type << 5) | bytes.Length));
+            b.AddRange(bytes);
+        }
+        void U16(ulong v) => Unsigned(5, v);
+        b.Add(0xE0 | 9);                                                // metadata: map of 9 entries
+        Str("binary_format_major_version"); U16(2);
+        Str("binary_format_minor_version"); U16(0);
+        Str("build_epoch"); Unsigned(9, 1_793_000_000, extended: true);  // uint64
+        Str("database_type"); Str(databaseType);
+        Str("description"); b.Add(0xE0 | 1); Str("en"); Str(tag);
+        Str("ip_version"); U16(6);
+        Str("languages"); b.Add(1); b.Add(11 - 7); Str("en");            // array of 1
+        Str("node_count"); Unsigned(6, 1);                               // uint32
+        Str("record_size"); U16(24);
+        return [.. b];
+    }
+
+    /// <summary>A corrupt file that still contains the metadata marker (the re-audit's reproduction).</summary>
+    private static byte[] MarkerOnlyCorrupt() => [.."fake-db:v2"u8, ..MmdbMarker, 0xFF];
 
     private static byte[] TarGz(params (string Name, byte[] Data)[] files)
     {
@@ -311,6 +350,55 @@ public sealed class GeoIpDownloadTests : IDisposable
 
         Assert.Single(handler.Requests);
         Assert.Equal(FakeMmdb("v1"), await File.ReadAllBytesAsync(service.DatabasePath));
+    }
+
+    [Fact]
+    public void The_test_database_builder_produces_files_the_maxmind_reader_opens()
+    {
+        Directory.CreateDirectory(_dir);
+        var path = Path.Combine(_dir, "probe.mmdb");
+        File.WriteAllBytes(path, FakeMmdb("probe"));
+        using var reader = new MaxMind.GeoIP2.DatabaseReader(path);
+        Assert.Equal("GeoLite2-City", reader.Metadata.DatabaseType);
+        Assert.False(reader.TryCity(IPAddress.Parse("8.8.8.8"), out _));
+    }
+
+    [Theory]
+    [InlineData("marker")]
+    [InlineData("country")]
+    public async Task Corrupt_or_wrong_type_downloads_never_replace_a_working_database(string kind)
+    {
+        var payload = kind == "marker" ? MarkerOnlyCorrupt() : FakeMmdb("country", "GeoLite2-Country");
+        var archive = TarGz(("GeoLite2-City_20261031/GeoLite2-City.mmdb", payload));
+        var handler = new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(archive) });
+        using var service = new GeoIpService(Config(), null, _dir, handler);
+        Directory.CreateDirectory(Path.GetDirectoryName(service.DatabasePath)!);
+        await File.WriteAllBytesAsync(service.DatabasePath, FakeMmdb("v1"));
+        await service.InitializeAsync();                                 // a working, open database
+        Assert.Equal("v1", service.OpenDatabaseDescription);
+
+        await service.DownloadDatabaseAsync();
+
+        Assert.Equal(FakeMmdb("v1"), await File.ReadAllBytesAsync(service.DatabasePath));
+        Assert.Equal("v1", service.OpenDatabaseDescription);             // the reader was never closed
+        Assert.Equal("Invalid IP address format", (await service.LookupIpAsync("nope")).ErrorMessage);
+        Assert.NotEqual("GeoIP service not initialized", (await service.LookupIpAsync("8.8.8.8")).ErrorMessage);   // still serving
+    }
+
+    [Fact]
+    public async Task A_valid_download_switches_an_open_reader_without_a_gap()
+    {
+        var archive = TarGz(("GeoLite2-City_20261031/GeoLite2-City.mmdb", FakeMmdb("v2")));
+        var handler = new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(archive) });
+        using var service = new GeoIpService(Config(), null, _dir, handler);
+        Directory.CreateDirectory(Path.GetDirectoryName(service.DatabasePath)!);
+        await File.WriteAllBytesAsync(service.DatabasePath, FakeMmdb("v1"));
+        await service.InitializeAsync();
+
+        await service.DownloadDatabaseAsync();                           // replaces the file the open reader came from
+
+        Assert.Equal(FakeMmdb("v2"), await File.ReadAllBytesAsync(service.DatabasePath));
+        Assert.Equal("v2", service.OpenDatabaseDescription);
     }
 
     [Fact]
