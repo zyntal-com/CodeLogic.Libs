@@ -55,6 +55,13 @@ internal sealed class LocalPathResolver
         if (normalized.IsFailure)
             return Result<ResolvedLocalPath>.Failure(normalized.Error!);
 
+        // On Windows a colon is never part of a file name: "file.txt:name" addresses an NTFS alternate data stream
+        // (which passes the containment check) and "C:name" is drive-relative, resolved against the process's
+        // current directory on that drive instead of the root.
+        if (OperatingSystem.IsWindows() && normalized.Value!.Contains(':'))
+            return Result<ResolvedLocalPath>.Failure(StorageErrors.InvalidPath(
+                "A local path cannot contain ':' on Windows (alternate data streams and drive-relative paths are not allowed)."));
+
         try
         {
             var fullPath = normalized.Value!.Length == 0
