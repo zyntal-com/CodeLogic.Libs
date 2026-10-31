@@ -67,16 +67,21 @@
   </ItemGroup>
 
   <!--
-    All CL.* libraries reference CodeLogic from the published NuGet package, never the
-    local sibling source tree — so the public repo is self-contained. Directory.Build.targets
-    injects a PackageReference (replacing the removed ProjectReference) from these values.
-    Override per build with -p:CodeLogicFromNuGet=false / -p:CodeLogicPackageVersion=... .
+    Where CodeLogic comes from. Directory.Build.targets injects the reference.
+    - Local development (5.x work in progress, owner decision 2026-10-31): when the sibling clone
+      ../CodeLogic exists, every library builds against its source (a ProjectReference), so CodeLogic
+      changes need no publish. Make sure the sibling is on the matching branch (main for 5.x).
+    - CI and release pass -p:CodeLogicFromNuGet=true and build against the published package below.
+      Before the 5.0 release, switch the local default back to NuGet and pin the published version.
+    Override per build with -p:CodeLogicFromNuGet=true|false / -p:CodeLogicPackageVersion=... .
   -->
   <PropertyGroup>
+    <CodeLogicFromNuGet Condition="'$(CodeLogicFromNuGet)' == '' And Exists('$(MSBuildThisFileDirectory)../CodeLogic/src/CodeLogic.csproj')">false</CodeLogicFromNuGet>
     <CodeLogicFromNuGet Condition="'$(CodeLogicFromNuGet)' == ''">true</CodeLogicFromNuGet>
-    <!-- Restore/build floor: CodeLogic 5.0 (net11, union Result/Error). "-*" admits 5.0 previews until
-         GA; switch to "5.0.*" once CodeLogic 5.0 is stable. The release
+    <!-- Pinned to the latest CodeLogic 5.0 preview on nuget.org (net11, union Result/Error). Bump it
+         as new previews ship; switch to a 5.0.x GA version once CodeLogic 5.0 is stable. The release
          pipeline rewrites each published nuspec's CodeLogic dependency to the supported range. -->
-    <CodeLogicPackageVersion Condition="'$(CodeLogicPackageVersion)' == ''">5.0.*-*</CodeLogicPackageVersion>
+    <CodeLogicPackageVersion Condition="'$(CodeLogicPackageVersion)' == ''">5.0.30-preview</CodeLogicPackageVersion>
   </PropertyGroup>
+  <Import Project="build/StrongName.props" />
 </Project>

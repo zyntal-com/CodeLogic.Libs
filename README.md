@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  Thirteen production-ready .NET 11 library integrations for
+  Fourteen production-ready .NET 11 library integrations for
   <a href="https://github.com/zyntal-com/CodeLogic">CodeLogic 5</a>.
   Each is a self-contained <code>ILibrary</code> with auto-generated configuration,
   lifecycle management, and health checks.
@@ -21,13 +21,11 @@
 
 | Package | Version | Description |
 |---------|---------|-------------|
-| [CodeLogic.Common](CL.Common/) | [![NuGet](https://img.shields.io/nuget/v/CodeLogic.Common?label=)](https://www.nuget.org/packages/CodeLogic.Common) | Utility toolkit — encryption, hashing, ID/password generation, JSON, cron, imaging, networking |
-| [CodeLogic.MySQL2](CL.MySQL2/) | [![NuGet](https://img.shields.io/nuget/v/CodeLogic.MySQL2?label=)](https://www.nuget.org/packages/CodeLogic.MySQL2) | MySQL / MariaDB / Percona — typed LINQ → SQL, result cache, schema-sync modes, migrations, row locking, database/table admin |
-| [CodeLogic.MSSQL](CL.MSSQL/) | [![NuGet](https://img.shields.io/nuget/v/CodeLogic.MSSQL?label=)](https://www.nuget.org/packages/CodeLogic.MSSQL) | SQL Server 2019+ / Azure SQL — typed LINQ → SQL, caching, schema sync, migrations, row locking, database/table admin |
-| [CodeLogic.PostgreSQL](CL.PostgreSQL/) | [![NuGet](https://img.shields.io/nuget/v/CodeLogic.PostgreSQL?label=)](https://www.nuget.org/packages/CodeLogic.PostgreSQL) | PostgreSQL — multi-database, repository + query builder, joins, cursor paging, caching, migrations, schema sync, row locking, database/table admin |
-| [CodeLogic.SQLite](CL.SQLite/) | [![NuGet](https://img.shields.io/nuget/v/CodeLogic.SQLite?label=)](https://www.nuget.org/packages/CodeLogic.SQLite) | SQLite — connection pool, WAL, repository + query builder, migration ledger, database/table admin |
+| [CodeLogic.Common](CL.Common/) | [![NuGet](https://img.shields.io/nuget/v/CodeLogic.Common?label=)](https://www.nuget.org/packages/CodeLogic.Common) | Utility toolkit — encryption, hashing, ID/password generation, JSON, cron, networking |
+| [CodeLogic.Data](CL.Data/) | [![NuGet](https://img.shields.io/nuget/v/CodeLogic.Data?label=)](https://www.nuget.org/packages/CodeLogic.Data) | Database framework (preview): typed LINQ, repositories, joins, schema sync and migrations, unified caching, read replicas, resilience, OpenTelemetry, bulk copy; providers `CodeLogic.Data.MySql`, `CodeLogic.Data.PostgreSql`, `CodeLogic.Data.SqlServer` and `CodeLogic.Data.Sqlite` |
 | [CodeLogic.Mail](CL.Mail/) | [![NuGet](https://img.shields.io/nuget/v/CodeLogic.Mail?label=)](https://www.nuget.org/packages/CodeLogic.Mail) | SMTP send, IMAP read + IDLE, and a lightweight template engine |
 | [CodeLogic.Storage](CL.Storage/) | [![NuGet](https://img.shields.io/nuget/v/CodeLogic.Storage?label=)](https://www.nuget.org/packages/CodeLogic.Storage) | Safe mounted local, S3, FTP/SFTP, WebDAV, Azure, GCS, and Swift storage, with verified and resumable transfers, a durable transfer queue, three-way sync, and change watching |
+| [CodeLogic.Imaging](CL.Imaging/) | [![NuGet](https://img.shields.io/nuget/v/CodeLogic.Imaging?label=)](https://www.nuget.org/packages/CodeLogic.Imaging) | Safe image loading, fluent editing pipeline (resize, crop, smart crop, colour, filters, watermarks, text), EXIF metadata, palettes, BlurHash, perceptual hashes, responsive variants |
 | [CodeLogic.SocialConnect](CL.SocialConnect/) | [![NuGet](https://img.shields.io/nuget/v/CodeLogic.SocialConnect?label=)](https://www.nuget.org/packages/CodeLogic.SocialConnect) | Discord webhooks + Steam Web API (profiles, bans, games, ticket auth) |
 | [CodeLogic.NetUtils](CL.NetUtils/) | [![NuGet](https://img.shields.io/nuget/v/CodeLogic.NetUtils?label=)](https://www.nuget.org/packages/CodeLogic.NetUtils) | DNSBL blacklist checking + MaxMind GeoIP2 location lookups |
 | [CodeLogic.GameNetQuery](CL.GameNetQuery/) | [![NuGet](https://img.shields.io/nuget/v/CodeLogic.GameNetQuery?label=)](https://www.nuget.org/packages/CodeLogic.GameNetQuery) | Game-server queries — Valve A2S/RCON (CS2/CSS) and Minecraft UDP/RCON |
@@ -37,7 +35,7 @@
 
 All packages target **.NET 11** and depend on **CodeLogic 5.0** (range `[5.0.0, 6.0.0)`). On .NET 10, use the 4.9.x packages (CodeLogic `[4.9.0, 5.0.0)`), maintained on the `support/4.x` branch.
 
-Every library and the CodeLogic framework itself share one version line: **`4.9.<patch>`**.
+Every library and the CodeLogic framework itself share one version line: **`5.0.<patch>`** (4.9 on the .NET 10 maintenance line).
 The `major.minor` is hand-controlled in the repo-root `version.txt`; the patch is the CI run
 number. See [Versioning](docs/versioning.md) for the full scheme.
 
@@ -47,8 +45,8 @@ number. See [Versioning](docs/versioning.md) for the full scheme.
 
 ```bash
 # The CodeLogic framework comes in transitively — install only the libraries you need.
-dotnet add package CodeLogic.MySQL2
 dotnet add package CodeLogic.Mail
+dotnet add package CodeLogic.Data.MySql   # brings CodeLogic.Data
 ```
 
 ### 2. Load & start
@@ -61,7 +59,6 @@ using CodeLogic;
 var init = await CodeLogic.InitializeAsync(o => { o.AppVersion = "1.0.0"; });
 if (!init.Success) return 1;
 
-await Libraries.LoadAsync<CL.MySQL2.MySQL2Library>();
 await Libraries.LoadAsync<CL.Mail.MailLibrary>();
 
 await CodeLogic.ConfigureAsync();   // generates/loads each library's config
@@ -75,20 +72,32 @@ Every library runs the same four-phase lifecycle automatically:
 ### 3. Configure
 
 On first run each library writes a JSON config file with defaults into its own directory under
-`Libraries/<LibraryId>/` — for example `config.mysql.json`, `config.mail.json`. Edit and restart.
+`Libraries/<LibraryId>/` — for example `config.mail.json`. Edit and restart.
 Validation runs on startup, so invalid config stops the boot with a clear error.
 
 ### 4. Use
 
 ```csharp
-var mysql = Libraries.Get<CL.MySQL2.MySQL2Library>();
+using CL.Data.Configuration;
+using CL.Data.Execution;
+using CL.Data.MySql;
+using CL.Data.Providers;
 
-var users = await mysql.Query<UserRecord>()
+DataProviderRegistry.Register(MySqlDataProvider.Instance);
+await using var db = Database.Create("main", new DataConnectionConfig
+{
+    Provider = "mysql", Host = "localhost", Database = "app", Username = "app", Password = "secret",
+}).ValueOrThrow();
+
+var users = await db.Query<UserRecord>()
     .Where(u => u.IsActive && u.Role == "admin")
     .OrderBy(u => u.Name)
-    .WithCache(TimeSpan.FromMinutes(5))
     .ToPagedListAsync(page: 1, pageSize: 20);
 ```
+
+CL.Data also works without the CodeLogic runtime, as above. With the runtime, load `CL.Data.Hosting.DataLibrary` and a
+provider library; connections then come from `config.data.json`, with live reload and health checks
+([docs](docs/libs/data/index.md)).
 
 ## How libraries work
 
@@ -104,8 +113,8 @@ rely on database connections, mail services, and the rest being available.
 
 ```csharp
 // Resolve a loaded library anywhere in your code:
-var mysql = Libraries.Get<CL.MySQL2.MySQL2Library>();
-var repo  = mysql.GetRepository<UserRecord>();
+var mail = Libraries.Get<CL.Mail.MailLibrary>();
+var sent = await mail.Smtp.SendAsync(message);
 ```
 
 Most operations return `Result` / `Result<T>` rather than throwing for expected failures

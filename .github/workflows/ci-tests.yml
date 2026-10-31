@@ -27,7 +27,7 @@ jobs:
       # CodeLogic source clone is needed here.
       #
       # Live-service tests (SMTP, S3, Steam, Postgres, DNSBL/GeoIP, git remote, and the
-      # MySQL2 DB facts) self-skip when their connection/env vars are absent, so this job
+      # CL.Data provider suites) self-skip when their connection/env vars are absent, so this job
       # runs the full offline suite with no external infrastructure or secrets.
       - name: Run tests
         shell: bash
@@ -45,10 +45,9 @@ jobs:
           done
           exit $fail
 
-  # MySQL2 and PostgreSQL have large live suites that self-skip without a reachable
-  # server. Before these jobs existed only their offline subset ran in CI, so the
-  # majority of each suite was never exercised on a push. Mirrors mssql-integration.
-  mysql2-integration:
+  # CL.Data live conformance suites. Each provider test project derives from tests/Data.Conformance and
+  # self-skips without its CL_DATA_*_CS connection string; SQLite runs in-process in the `test` job above.
+  data-mysql:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     services:
@@ -56,7 +55,7 @@ jobs:
         image: mysql:8.4
         env:
           MYSQL_ALLOW_EMPTY_PASSWORD: 'yes'
-          MYSQL_DATABASE: cl_test
+          MYSQL_DATABASE: cl_data
         ports:
           - 3306:3306
         options: >-
@@ -65,33 +64,99 @@ jobs:
           --health-timeout=5s
           --health-retries=20
     env:
-      CL_MYSQL2_TEST_HOST: 127.0.0.1
-      CL_MYSQL2_TEST_PORT: '3306'
-      CL_MYSQL2_TEST_DB: cl_test
-      CL_MYSQL2_TEST_USER: root
-      CL_MYSQL2_TEST_PASS: ''
+      CL_DATA_MYSQL_CS: Server=127.0.0.1;Port=3306;Database=cl_data;User ID=root;Password=;AllowUserVariables=true
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
-      # SDK version comes from global.json (11.0 line; prerelease allowed until GA).
       - name: Setup .NET 11
         uses: actions/setup-dotnet@v6
         with:
           global-json-file: global.json
 
-      - name: Run MySQL2 tests
-        run: dotnet test tests/MySQL2.Tests/MySQL2.Tests.csproj --configuration Release -p:CodeLogicFromNuGet=true --logger "console;verbosity=normal"
+      - name: Enable local_infile (native bulk copy)
+        run: docker exec $(docker ps -q --filter ancestor=mysql:8.4) mysql -uroot -e "SET GLOBAL local_infile = 1"
 
-  postgresql-integration:
+      - name: Run CL.Data MySQL tests
+        run: dotnet test tests/Data.MySql.Tests/Data.MySql.Tests.csproj --configuration Release -p:CodeLogicFromNuGet=true --logger "console;verbosity=normal"
+
+  data-replicas:
+    # Live primary/replica pairs (MySQL GTID, PostgreSQL streaming). Not required: replica startup is the most fragile part of CI.
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    continue-on-error: true
+    env:
+      CL_DATA_REPLICAS: '1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup .NET 11
+        uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+
+      - name: Start replica pairs
+        run: |
+          docker compose -f tests/replicas/docker-compose.yml up -d --wait mysql-primary pg-primary
+          docker compose -f tests/replicas/docker-compose.yml up -d mysql-replica pg-replica
+          for i in $(seq 1 90); do
+            docker compose -f tests/replicas/docker-compose.yml exec -T mysql-replica mysql -uroot -e "SHOW REPLICA STATUS\G" 2>/dev/null | grep -q "Replica_SQL_Running: Yes"               && docker compose -f tests/replicas/docker-compose.yml exec -T pg-replica psql -U postgres -d cl_data -tAc "SELECT pg_is_in_recovery()" 2>/dev/null | grep -q t               && exit 0
+            sleep 2
+          done
+          docker compose -f tests/replicas/docker-compose.yml logs
+          exit 1
+
+      - name: Run live replica tests
+        run: |
+          dotnet test tests/Data.MySql.Tests/Data.MySql.Tests.csproj --configuration Release -p:CodeLogicFromNuGet=true --filter "FullyQualifiedName~LiveReplica" --logger "console;verbosity=normal"
+          dotnet test tests/Data.PostgreSql.Tests/Data.PostgreSql.Tests.csproj --configuration Release -p:CodeLogicFromNuGet=true --filter "FullyQualifiedName~LiveReplica" --logger "console;verbosity=normal"
+
+  data-perf:
+    # Performance budgets (benchmarks/budgets.json): allocations per operation and time relative to Dapper/ADO.NET.
+    # Not required yet: shared CI runners are noisy; allocations are the reliable signal.
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    continue-on-error: true
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ALLOW_EMPTY_PASSWORD: 'yes'
+          MYSQL_DATABASE: cl_data
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    env:
+      CL_DATA_MYSQL_CS: Server=127.0.0.1;Port=3306;Database=cl_data;User ID=root;Password=;AllowLoadLocalInfile=true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup .NET 11
+        uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+
+      - name: Enable local_infile (bulk copy)
+        run: docker exec $(docker ps -q --filter ancestor=mysql:8.4) mysql -uroot -e "SET GLOBAL local_infile = 1"
+
+      - name: Check performance budgets
+        run: dotnet run -c Release --project benchmarks/Data.Benchmarks -p:CodeLogicFromNuGet=true -- --check-budgets benchmarks/budgets.json
+
+  data-postgresql:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     services:
       postgres:
         image: postgres:18
         env:
-          POSTGRES_PASSWORD: cl_test_pw
-          POSTGRES_DB: cl_test
+          POSTGRES_PASSWORD: cl_data_pw
+          POSTGRES_DB: cl_data
         ports:
           - 5432:5432
         options: >-
@@ -100,35 +165,29 @@ jobs:
           --health-timeout=5s
           --health-retries=20
     env:
-      CL_PG_TEST_HOST: 127.0.0.1
-      CL_PG_TEST_PORT: '5432'
-      CL_PG_TEST_DB: cl_test
-      CL_PG_TEST_USER: postgres
-      CL_PG_TEST_PASS: cl_test_pw
+      CL_DATA_PG_CS: Host=127.0.0.1;Port=5432;Database=cl_data;Username=postgres;Password=cl_data_pw
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
-      # SDK version comes from global.json (11.0 line; prerelease allowed until GA).
       - name: Setup .NET 11
         uses: actions/setup-dotnet@v6
         with:
           global-json-file: global.json
 
-      - name: Run PostgreSQL tests
-        run: dotnet test tests/PostgreSQL.Tests/PostgreSQL.Tests.csproj --configuration Release -p:CodeLogicFromNuGet=true --logger "console;verbosity=normal"
+      - name: Run CL.Data PostgreSQL tests
+        run: dotnet test tests/Data.PostgreSql.Tests/Data.PostgreSql.Tests.csproj --configuration Release -p:CodeLogicFromNuGet=true --logger "console;verbosity=normal"
 
-  mssql-integration:
+  data-sqlserver:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
       MSSQL_SA_PASSWORD: Your_strong_password123!
-      CL_MSSQL_TEST_CONNECTION_STRING: Server=127.0.0.1,1433;Database=cl_test;User ID=sa;Password=Your_strong_password123!;Encrypt=False;TrustServerCertificate=True
+      CL_DATA_MSSQL_CS: Server=127.0.0.1,1433;Database=cl_data;User ID=sa;Password=Your_strong_password123!;Encrypt=False;TrustServerCertificate=True
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
-      # SDK version comes from global.json (11.0 line; prerelease allowed until GA).
       - name: Setup .NET 11
         uses: actions/setup-dotnet@v6
         with:
@@ -137,21 +196,47 @@ jobs:
       - name: Start SQL Server 2019
         shell: bash
         run: |
-          docker run --name cl-mssql -e ACCEPT_EULA=Y -e MSSQL_SA_PASSWORD="$MSSQL_SA_PASSWORD" -p 1433:1433 -d mcr.microsoft.com/mssql/server:2019-latest
+          docker run --name cl-data-mssql -e ACCEPT_EULA=Y -e MSSQL_SA_PASSWORD="$MSSQL_SA_PASSWORD" -p 1433:1433 -d mcr.microsoft.com/mssql/server:2019-latest
           for i in {1..60}; do
-            if docker exec cl-mssql /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$MSSQL_SA_PASSWORD" -C -Q "SELECT 1" >/dev/null 2>&1; then break; fi
+            if docker exec cl-data-mssql /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$MSSQL_SA_PASSWORD" -C -Q "SELECT 1" >/dev/null 2>&1; then break; fi
             sleep 2
           done
-          docker exec cl-mssql /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$MSSQL_SA_PASSWORD" -C -Q "IF DB_ID(N'cl_test') IS NULL CREATE DATABASE [cl_test]"
+          docker exec cl-data-mssql /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$MSSQL_SA_PASSWORD" -C -Q "IF DB_ID(N'cl_data') IS NULL CREATE DATABASE [cl_data]"
 
-      - name: Run MSSQL tests
-        run: dotnet test tests/MSSQL.Tests/MSSQL.Tests.csproj --configuration Release -p:CodeLogicFromNuGet=true --logger "console;verbosity=normal"
+      - name: Run CL.Data SQL Server tests
+        run: dotnet test tests/Data.SqlServer.Tests/Data.SqlServer.Tests.csproj --configuration Release -p:CodeLogicFromNuGet=true --logger "console;verbosity=normal"
 
   # The Linux job below proves TLS against OpenSSL; Windows classifies TLS failures through SChannel and keeps
   # a client certificate's key in a temporary key container, and neither ran in CI while every live test
   # skipped on the windows job above. GitHub's Windows runners cannot start the Linux containers, so this job
   # runs the mutual-TLS tests against rclone's WebDAV server with the same requirements as the webdav-mtls
   # container: TLS 1.3 only and a client certificate issued by fixtures/mtls/client-ca.crt.
+  # Native AOT: publish the CL.Data smoke app (CRUD on SQLite through generated accessors) and run it.
+  # The publish must not warn about CL.Data, CL.Common or CodeLogic; the app must exit 0.
+  data-aot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Setup .NET 11
+        uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+      - name: Native toolchain
+        run: sudo apt-get update && sudo apt-get install -y clang zlib1g-dev
+      - name: Publish (Native AOT)
+        shell: bash
+        run: |
+          set -o pipefail
+          dotnet publish samples/Data.AotSmoke -c Release -p:CodeLogicFromNuGet=true -o aot-out 2>&1 | tee publish.log
+          # Strip the project path ("[.../CodeLogic.Libs/...]") before looking for our own code in warnings.
+          if grep -E "warning (IL|AOT)" publish.log | sed 's/ \[.*//' | grep -E "CL\.Data|CL\.Common|CodeLogic\."; then
+            echo "::error::Trim/AOT warnings from CL.Data, CL.Common or CodeLogic"; exit 1
+          fi
+      - name: Run
+        run: ./aot-out/Data.AotSmoke
+
   storage-windows-tls:
     runs-on: windows-latest
     timeout-minutes: 20

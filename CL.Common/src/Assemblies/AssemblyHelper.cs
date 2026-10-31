@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using CodeLogic.Core.Results;
 
@@ -68,6 +69,7 @@ public static class AssemblyHelper
     /// <summary>
     /// Loads an assembly from the given file path.
     /// </summary>
+    [RequiresUnreferencedCode("Loads an assembly from disk at run time; trimming cannot see what it depends on.")]
     public static Result<Assembly> LoadFrom(string filePath)
     {
         try
@@ -82,6 +84,7 @@ public static class AssemblyHelper
     /// <summary>
     /// Loads an assembly from the given file and returns metadata about it.
     /// </summary>
+    [RequiresUnreferencedCode("Loads an assembly from disk at run time; trimming cannot see what it depends on.")]
     public static Result<Dictionary<string, string>> GetFileMetadata(string filePath)
     {
         var loadResult = LoadFrom(filePath);
@@ -95,7 +98,7 @@ public static class AssemblyHelper
             ["FullName"]    = name.FullName,
             ["Version"]     = name.Version?.ToString() ?? string.Empty,
             ["Description"] = GetAttribute<AssemblyDescriptionAttribute>(asm)?.Description ?? string.Empty,
-            ["Location"]    = asm.Location,
+            ["Location"]    = Path.GetFullPath(filePath),
         };
     }
 
@@ -104,10 +107,12 @@ public static class AssemblyHelper
     /// <summary>
     /// Returns all types in an assembly that implement or inherit from <typeparamref name="T"/>.
     /// </summary>
+    [RequiresUnreferencedCode("Enumerates every type in the assembly; trimming may have removed some.")]
     public static IEnumerable<Type> GetImplementors<T>(Assembly assembly) =>
         assembly.GetTypes().Where(t => typeof(T).IsAssignableFrom(t) && !t.IsInterface && !t.IsAbstract);
 
     /// <summary>Returns all public classes in an assembly decorated with <typeparamref name="TAttr"/>.</summary>
+    [RequiresUnreferencedCode("Enumerates every type in the assembly; trimming may have removed some.")]
     public static IEnumerable<Type> GetTypesWithAttribute<TAttr>(Assembly assembly)
         where TAttr : Attribute =>
         assembly.GetTypes().Where(t => t.GetCustomAttribute<TAttr>() != null);

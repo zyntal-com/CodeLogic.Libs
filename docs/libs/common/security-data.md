@@ -4,7 +4,7 @@
 
 This page covers the security and data helpers in `CL.Common`. All types here are **static classes** — call them directly. The encryption and hashing helpers return plain values (`string`, `byte[]`, `bool`); JSON, conversion, and compression return a framework `Result` / `Result<T>`.
 
-See the [Overview](index.md) for loading and the full catalog, and [Utilities](utilities.md) for the strings, time, web, networking, imaging, caching, file, and reflection helpers.
+See the [Overview](index.md) for loading and the full catalog, and [Utilities](utilities.md) for the strings, time, web, networking, cron, resilience, scheduling, caching, fast hashing, threading, file, and reflection helpers.
 
 ## Security — Encryption
 
@@ -167,6 +167,20 @@ Result<string> merged = JsonHelper.Merge(baseJson, overlayJson);
 Result<string> name = JsonHelper.GetProperty(json.Value!, "name");
 ```
 
+**Trimming and Native AOT.** Pass source-generated metadata and nothing is reflected over:
+
+```csharp
+[JsonSerializable(typeof(Person))]
+internal sealed partial class AppJson : JsonSerializerContext;
+
+Result<string> json = JsonHelper.Serialize(person, AppJson.Default.Person);       // JsonTypeInfo<T>
+Result<Person> back = JsonHelper.Deserialize<Person>(json.Value!, AppJson.Default); // or the whole context
+await JsonHelper.SerializeToFile(person, "person.json", AppJson.Default.Person, ct);
+```
+
+The reflection-based overloads are marked `[RequiresUnreferencedCode]` / `[RequiresDynamicCode]`, so the trimming and
+AOT analyzers point at every call that still needs them.
+
 | Member | Returns | Purpose |
 |--------|---------|---------|
 | `Serialize<T>(value, indented = false)` | `Result<string>` | Object → JSON. |
@@ -176,6 +190,9 @@ Result<string> name = JsonHelper.GetProperty(json.Value!, "name");
 | `IsValidJson(json)` | `bool` | Whether the input parses as JSON. |
 | `Merge(baseJson, overlayJson)` | `Result<string>` | Overlay one document onto another. |
 | `GetProperty(json, propertyName)` | `Result<string>` | Extract a property as a JSON string. |
+| `Serialize<T>(value, JsonTypeInfo<T> \| JsonSerializerContext)` | `Result<string>` | AOT-safe serialize. A context without metadata for `T` gives `not_supported`. |
+| `Deserialize<T>(json, JsonTypeInfo<T> \| JsonSerializerContext)` | `Result<T>` | AOT-safe deserialize. |
+| `SerializeToFile<T>(value, filePath, typeInfo, ct)` / `DeserializeFromFile<T>(filePath, typeInfo, ct)` | `Task<Result>` / `Task<Result<T>>` | AOT-safe file round-trip (streams, cancellable). |
 
 ## Conversion — TypeConverter
 
@@ -237,7 +254,7 @@ Result<string> text = CompressionHelper.DecompressString(blob.Value!);
 ## See also
 
 - [Overview](index.md) — loading, organization, and the full catalog.
-- [Utilities](utilities.md) — strings, time, web, networking, cron, imaging, caching, file, and reflection helpers.
+- [Utilities](utilities.md) — strings, time, web, networking, cron, resilience, scheduling, caching, fast hashing, threading, file, and reflection helpers.
 - [Getting Started](../../getting-started.md) — load, configure, and use any `CL.*` library.
 - [API Reference](../../api/index.md) — generated type/member documentation.
 - [Package on NuGet](https://www.nuget.org/packages/CodeLogic.Common)

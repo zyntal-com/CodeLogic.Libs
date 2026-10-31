@@ -5,6 +5,10 @@ All notable changes to **CodeLogic.Common** are documented here. Versions follow
 
 ## 5.0 (unreleased)
 
+### Fixed
+
+- `FastHash.XxHash128` is about 10x faster (~70 ns instead of ~700 ns per call on .NET 11): `XxHash128.HashToUInt128` has a large fixed cost, so the hash is now computed into bytes and read back. The values are unchanged.
+
 ### Breaking
 
 - Targets **.NET 11** (`net11.0`) and requires **CodeLogic 5.0** (`[5.0.0, 6.0.0)`). On .NET 10, stay on
@@ -18,8 +22,52 @@ All notable changes to **CodeLogic.Common** are documented here. Versions follow
   failure: `TimeoutError` `networking.ping_timeout`, `UnavailableError` `networking.ping_unreachable`
   (unreachable host/network or unresolvable name; `Details` carries the `IPStatus`), otherwise
   `InternalError` `networking.ping_failed`.
+- **Imaging moved to the new `CodeLogic.Imaging` package.** `CL.Common.Imaging.CLU_Imaging`,
+  `ImageProcessOptions`, `ProcessedImage` and `ImageFormat` are gone from CL.Common, and so is the SkiaSharp
+  dependency. See `MIGRATION.md` in CodeLogic.Imaging for the old → new mapping.
+- **Newtonsoft.Json dependency removed** (nothing used it; `JsonHelper` is System.Text.Json).
+- **`ICache` / `MemoryCache` replaced.** The Task-based `ICache` (`SetAsync`/`GetAsync`/`ExistsAsync`/
+  `RemoveAsync`/`RemoveByPrefixAsync`/`ClearAsync`/`GetCountAsync`) and `MemoryCache(TimeSpan? cleanupInterval)`
+  are gone. Use `ICache<TKey>` / `MemoryCache<TKey>` or the string-keyed `ICache` / `MemoryCache`:
+  `SetAsync(k, v, ttl)` → `Set(k, v, new CacheEntryOptions { AbsoluteExpiration = ttl })`;
+  `GetAsync<T>(k)` → `TryGet<T>(k, out var v)`; `ExistsAsync(k)` → `TryGet<object>(k, out _)`;
+  `RemoveAsync` → `Remove`; `RemoveByPrefixAsync` → `RemoveByPrefix`; `ClearAsync` → `Clear`;
+  `GetCountAsync()` → `GetStatistics().Count`. The cleanup interval is `MemoryCacheOptions.ExpirationScanInterval`.
+- **Trimming annotations.** The reflection-based `JsonHelper` and `HttpClientHelper` overloads are marked
+  `[RequiresUnreferencedCode]` / `[RequiresDynamicCode]`; `ReflectionHelper` name-based member access,
+  `AssemblyHelper.LoadFrom` / `GetFileMetadata` / `GetImplementors` / `GetTypesWithAttribute` are
+  `[RequiresUnreferencedCode]`. Trimmed and Native AOT apps now get analyzer warnings where they call them.
+  `ReflectionHelper.CreateInstance<T>` / `CreateInstance(Type, …)` / `ToDictionary<T>` /
+  `HasDefaultConstructor(Type)` gained `[DynamicallyAccessedMembers]` on their type parameter.
+- `AssemblyHelper.GetFileMetadata` reports `Location` as the full path of the file passed in (single-file safe).
 
 ### Added
+
+- **Trim- and Native-AOT-compatible** (`IsAotCompatible`): the package builds with no trimming, AOT or single-file
+  analyzer warnings.
+- `JsonHelper.Serialize` / `Deserialize` / `SerializeToFile` / `DeserializeFromFile` overloads taking a
+  source-generated `JsonTypeInfo<T>` (and `Serialize` / `Deserialize` taking a `JsonSerializerContext`); the file
+  overloads stream and accept a `CancellationToken`. `HttpClientHelper.GetJsonAsync` / `PostJsonAsync` /
+  `PutJsonAsync` gain `JsonTypeInfo<T>` overloads.
+- **`CL.Common.Resilience`**: `RetryPolicy` (`RetryOptions`, `BackoffKind` Constant/Linear/Exponential/
+  DecorrelatedJitter, jitter from an injectable `Random`, `Retrying` event, `GetDelay`) and `CircuitBreaker`
+  (`CircuitBreakerOptions` with consecutive-failure or failure-ratio trigger, half-open trial limit, `StateChanged`,
+  allocation-free `TryAcquire` / `CircuitLease`, `Isolate` / `Reset`). Errors: `resilience.circuit_open`,
+  `resilience.retries_exhausted` (last error as `InnerError`), `resilience.cancelled`,
+  `resilience.unhandled_exception`. Both take an optional `TimeProvider`.
+- **`CL.Common.Scheduling.JobScheduler`**: `JobSchedule.Interval` / `Cron` (with time zone) / `Once` (a C# 15
+  closed hierarchy), `JobOptions` (overlap, timeout, jitter), max concurrency, pause/resume, `TriggerAsync`,
+  `JobCompleted`, `Jobs` snapshot, drain-then-cancel `StopAsync`. A throwing job becomes the run's error
+  (`scheduling.job_failed`). Timers come from the `TimeProvider`.
+- **`CL.Common.Caching` v2**: `ICache<TKey>`, `MemoryCache<TKey>` and string-keyed `ICache` / `MemoryCache` with
+  absolute/sliding expiration, tags (reverse index), `SizeLimit` / `MaxEntries` with priority-aware approximate-LRU
+  compaction, stampede-protected `GetOrCreateAsync`, `RemoveByPrefix`, span-key `TryGet`, `CacheStatistics`.
+- **`CL.Common.Hashing.FastHash` / `FastHasher`**: XXH3 (64-bit) and XXH128 hashing of bytes and text (no
+  allocation), `ToHex`, incremental hasher. Adds the `System.IO.Hashing` dependency.
+- **`CL.Common.Threading.AsyncKeyedLock<TKey>`**: async per-key lock with pooled, ref-counted entries.
+- `CronParser.GetNextOccurrence(expression, DateTimeOffset from, TimeZoneInfo? timeZone)`: next occurrence with the
+  fields evaluated in a time zone.
+- `CommonErrors`: the stable error codes of the resilience and scheduling modules.
 
 - `CompressionHelper.CompressZstandard` / `DecompressZstandard` → `Result<byte[]>`: Zstandard via the
   .NET 11 built-in `System.IO.Compression.ZstandardStream` (no extra package). Same shape and error

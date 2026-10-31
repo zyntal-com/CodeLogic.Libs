@@ -19,10 +19,20 @@
     <CodeLogicFromNuGet Condition="'$(CodeLogicFromNuGet)' == '' And !Exists('$(_CodeLogicLocalPath)')">true</CodeLogicFromNuGet>
   </PropertyGroup>
 
-  <ItemGroup Condition="'$(CodeLogicFromNuGet)' == 'true'">
+  <!--
+    Roslyn components (the CL.Data source generator) target netstandard2.0 and are loaded by the
+    compiler, so they must not reference CodeLogic or compile in the shared version helper.
+    Such projects set CLIsRoslynComponent=true.
+  -->
+  <ItemGroup Condition="'$(CodeLogicFromNuGet)' == 'true' And '$(CLIsRoslynComponent)' != 'true'">
     <ProjectReference Remove="@(ProjectReference)"
                       Condition="$([System.String]::new('%(ProjectReference.Identity)').Contains('CodeLogic.csproj'))" />
     <PackageReference Include="CodeLogic" Version="$(CodeLogicPackageVersion)" />
+  </ItemGroup>
+
+  <!-- Local development: build against the sibling CodeLogic source (see Directory.Build.props). -->
+  <ItemGroup Condition="'$(CodeLogicFromNuGet)' != 'true' And '$(CLIsRoslynComponent)' != 'true'">
+    <ProjectReference Include="$(_CodeLogicLocalPath)" />
   </ItemGroup>
 
   <!--
@@ -42,7 +52,7 @@
     csproj <Version>). Keeps LibraryManifest.Version automatically in sync
     with the package version — no hand-edited string in *Library.cs to drift.
   -->
-  <ItemGroup>
+  <ItemGroup Condition="'$(CLIsRoslynComponent)' != 'true'">
     <Compile Include="$(MSBuildThisFileDirectory)Shared/InternalLibraryVersion.cs"
              Link="Shared/InternalLibraryVersion.cs" />
   </ItemGroup>
@@ -74,4 +84,5 @@
 Release notes truncated to fit NuGet's 35 000 character limit. The complete changelog ships inside this package as CHANGELOG.md.</PackageReleaseNotes>
     </PropertyGroup>
   </Target>
+  <Import Project="build/StrongName.targets" />
 </Project>

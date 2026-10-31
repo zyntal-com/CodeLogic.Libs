@@ -1,0 +1,11 @@
+<Project>
+  <!--
+    Samples are not packed and, like tests, do not inherit the repo-root build props/targets.
+    Keep TargetFramework/LangVersion in step with the repo root.
+  -->
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <TargetFramework>net11.0</TargetFramework>
+    <LangVersion>15</LangVersion>
+  </PropertyGroup>
+</Project>

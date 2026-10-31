@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Provider-neutral conformance suite. A class library, not a test project: CI only runs
+    tests/*/*.Tests.csproj, and each provider test project (Data.Sqlite.Tests, Data.MySql.Tests, ...)
+    derives from the abstract suites here with its own fixture, so every provider runs the same tests.
+  -->
+  <PropertyGroup>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>false</IsTestProject>
+    <Version>1.0.0</Version>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="Xunit.SkippableFact" Version="1.5.85" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\CL.Data\CL.Data.csproj" />
+    <!-- The conformance models use generated mapping (set CL_DATA_FORCE_REFLECTION=1 to run them on reflection). -->
+    <ProjectReference Include="..\..\CL.Data\generator\CL.Data.Generator\CL.Data.Generator.csproj"
+                      OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+  <PropertyGroup>
+    <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
+  </PropertyGroup>
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+</Project>

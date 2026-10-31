@@ -1,30 +1,15 @@
 # Libraries
 
-The CodeLogic Libraries suite is thirteen independent NuGet packages. Each is a CodeLogic
+The CodeLogic Libraries suite is a set of independent NuGet packages. Each is a CodeLogic
 `ILibrary` — load the ones you need, configure them through their JSON files, and use them from
 your application or from other libraries after `StartAsync()`.
 
 <div class="cl-group">Databases</div>
 <div class="lib-grid">
-  <a class="lib-card" href="mysql2/index.md">
-    <div class="lib-name">CL.MySQL2</div>
-    <div class="lib-pkg">CodeLogic.MySQL2</div>
-    <p class="lib-desc">MySQL / MariaDB / Percona — typed LINQ → SQL, result cache, schema-sync modes, migrations.</p>
-  </a>
-  <a class="lib-card" href="mssql/index.md">
-    <div class="lib-name">CL.MSSQL</div>
-    <div class="lib-pkg">CodeLogic.MSSQL</div>
-    <p class="lib-desc">SQL Server 2019+ / Azure SQL — typed LINQ, result cache, schema sync, migrations.</p>
-  </a>
-  <a class="lib-card" href="postgresql/index.md">
-    <div class="lib-name">CL.PostgreSQL</div>
-    <div class="lib-pkg">CodeLogic.PostgreSQL</div>
-    <p class="lib-desc">PostgreSQL — multi-database, repository + query builder, table sync, backups.</p>
-  </a>
-  <a class="lib-card" href="sqlite/index.md">
-    <div class="lib-name">CL.SQLite</div>
-    <div class="lib-pkg">CodeLogic.SQLite</div>
-    <p class="lib-desc">SQLite — custom pool, WAL, repository + query builder, migration runner.</p>
+  <a class="lib-card" href="data/index.md">
+    <div class="lib-name">CL.Data</div>
+    <div class="lib-pkg">CodeLogic.Data · .MySql · .PostgreSql · .SqlServer · .Sqlite</div>
+    <p class="lib-desc">One database framework for MySQL, PostgreSQL, SQL Server and SQLite: typed LINQ, repositories, joins, schema sync and migrations, unified caching, read replicas, resilience, OpenTelemetry and bulk copy.</p>
   </a>
 </div>
 
@@ -88,12 +73,21 @@ your application or from other libraries after `StartAsync()`.
   </a>
 </div>
 
+<div class="cl-group">Media</div>
+<div class="lib-grid">
+  <a class="lib-card" href="imaging/index.md">
+    <div class="lib-name">CL.Imaging</div>
+    <div class="lib-pkg">CodeLogic.Imaging</div>
+    <p class="lib-desc">Safe image loading, a fluent editing pipeline, EXIF metadata, palettes, BlurHash, perceptual hashes, and responsive variants.</p>
+  </a>
+</div>
+
 <div class="cl-group">Utilities</div>
 <div class="lib-grid">
   <a class="lib-card" href="common/index.md">
     <div class="lib-name">CL.Common</div>
     <div class="lib-pkg">CodeLogic.Common</div>
-    <p class="lib-desc">Encryption, hashing, ID/password generation, JSON, cron, networking, imaging.</p>
+    <p class="lib-desc">Encryption, hashing, ID/password generation, JSON, cron, networking.</p>
   </a>
 </div>
 
@@ -106,11 +100,11 @@ The libraries follow a handful of consistent patterns, so once you've used one t
 ### Loading & access
 
 ```csharp
-await Libraries.LoadAsync<CL.MySQL2.MySQL2Library>();   // register before ConfigureAsync()
+await Libraries.LoadAsync<CL.Mail.MailLibrary>();   // register before ConfigureAsync()
 await CodeLogic.ConfigureAsync();
 await CodeLogic.StartAsync();
 
-var mysql = Libraries.Get<CL.MySQL2.MySQL2Library>();   // resolve after StartAsync()
+var mail = Libraries.Get<CL.Mail.MailLibrary>();   // resolve after StartAsync()
 ```
 
 ### Result-based APIs
@@ -128,7 +122,7 @@ else
 ### Configuration files
 
 Each library auto-generates its JSON config on first run under its own config directory
-(e.g. `…/Libraries/CL.MySQL2/config.mysql.json`). Defaults are written if the file is missing,
+(e.g. `…/Libraries/CL.Mail/config.mail.json`). Defaults are written if the file is missing,
 so first boot always succeeds and you tune from there.
 
 ### Health checks
@@ -141,11 +135,11 @@ var status = await mysql.HealthCheckAsync();
 // status.Message, status.Data (structured metrics)
 ```
 
-### The database libraries
+### Databases
 
-`CL.MySQL2`, `CL.MSSQL`, `CL.PostgreSQL`, and `CL.SQLite` share the same shape —
-`GetRepository<T>()` for CRUD and a fluent query builder (`Query<T>()` on MySQL2, MSSQL and
-PostgreSQL, `GetQueryBuilder<T>()` on SQLite) that translates LINQ-style expressions to SQL,
-plus attribute-driven table sync.
+Databases use **[CL.Data](data/index.md)**: `CodeLogic.Data` (typed LINQ, repositories, joins, schema sync and
+migrations, unified caching, read replicas, resilience, OpenTelemetry, bulk copy) plus one provider package per database: `CodeLogic.Data.MySql`,
+`CodeLogic.Data.PostgreSql`, `CodeLogic.Data.SqlServer` and `CodeLogic.Data.Sqlite`. It replaces the 4.x libraries
+CL.MySQL2, CL.MSSQL, CL.PostgreSQL and CL.SQLite, which stay on the `support/4.x` line.
 
 See the [API Reference](../api/index.md) for the full generated type and member listing.

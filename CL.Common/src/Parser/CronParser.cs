@@ -72,6 +72,42 @@ public static class CronParser
         return Error.Internal(ErrorCode.Internal, "No next occurrence found within one year for the given expression");
     }
 
+    /// <summary>
+    /// Returns the next occurrence strictly after <paramref name="from"/>, evaluating the fields in
+    /// <paramref name="timeZone"/>'s wall-clock time. Wall-clock times skipped by a daylight-saving change never
+    /// match; times repeated by one match once per real minute they occur. Searches up to 1 year ahead, to the minute.
+    /// </summary>
+    /// <param name="expression">A valid 5-field cron expression.</param>
+    /// <param name="from">Start searching after this instant.</param>
+    /// <param name="timeZone">The zone the fields are written in; null means UTC.</param>
+    /// <returns>The next occurrence (as a UTC instant), or a failure.</returns>
+    public static Result<DateTimeOffset> GetNextOccurrence(string expression, DateTimeOffset from, TimeZoneInfo? timeZone)
+    {
+        var parseResult = Parse(expression);
+        if (!parseResult.IsSuccess) return parseResult.Error!;
+
+        var expr = parseResult.Value!;
+        var utc = from.UtcDateTime;
+        var start = new DateTime(utc.Year, utc.Month, utc.Day, utc.Hour, utc.Minute, 0, DateTimeKind.Utc).AddMinutes(1);
+        var zone = timeZone ?? TimeZoneInfo.Utc;
+
+        for (int i = 0; i < 527_040; i++) // a leap year of minutes
+        {
+            var local = zone == TimeZoneInfo.Utc ? start : TimeZoneInfo.ConvertTimeFromUtc(start, zone);
+            if (Matches(expr.Minutes,     local.Minute,          0, 59) &&
+                Matches(expr.Hours,       local.Hour,            0, 23) &&
+                Matches(expr.DayOfMonth,  local.Day,             1, 31) &&
+                Matches(expr.Month,       local.Month,           1, 12) &&
+                Matches(expr.DayOfWeek,   (int)local.DayOfWeek,  0,  6))
+            {
+                return new DateTimeOffset(start, TimeSpan.Zero);
+            }
+            start = start.AddMinutes(1);
+        }
+
+        return Error.Internal(ErrorCode.Internal, "No next occurrence found within one year for the given expression");
+    }
+
     // ── Field matching ────────────────────────────────────────────────────────
 
     private static bool Matches(string field, int value, int min, int max)

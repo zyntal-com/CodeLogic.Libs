@@ -1,0 +1,117 @@
+# Schema & migrations
+
+CL.Data keeps tables in line with entity classes (table sync), runs versioned migrations and seeds, and handles database
+and table administration, backups and retention. All of it works on all four providers.
+
+## Table sync
+
+```csharp
+var report = (await db.Schema.SyncAsync<Product>()).ValueOrThrow();
+if (report.HasDrift) logger.Warning("Products table differs from its model");
+
+await db.Schema.SyncAsync(maps);                                    // several entities at once
+var plan = (await db.Schema.PlanAsync<Product>()).ValueOrThrow();   // what would change, without applying it
+```
+
+**How sync works:**
+- **Comparison:** sync reads the live table (introspection), compares it with the model, and applies what the sync level allows. Everything else is reported as drift through `SchemaDriftDetectedEvent`.
+- **Unchanged models:** a CRC of the normalized model is stored in `cl_data_schema`, so an unchanged model costs one lookup.
+- **One node at a time:** sync takes an advisory lock, so only one node syncs a table at a time.
+
+**Sync levels** (`syncMode` sets one; `schemaSyncLevel` overrides it):
+
+| `syncMode` | Level | Applies |
+|---|---|---|
+| `Developer` | `Full` | everything, including dropping columns and narrowing types |
+| `Production` (default) | `Safe` | create tables, add columns, widen types, add indexes and foreign keys |
+| (override) | `Additive` | `Safe`, plus dropping indexes and foreign keys that are no longer declared |
+| `Migration` | `None` | nothing; only migrations change the schema |
+
+**Renames:** `[Column(PreviousName = "old_name")]` renames a column instead of dropping and adding it.
+
+**Provider details:**
+- **SQLite** rebuilds a table for changes it can't `ALTER`, then checks foreign keys afterwards.
+- **MySQL** applies `[MySqlTable]`/`[MySqlColumn]` engine, charset and collation.
+- **SQL Server** adds `ISJSON` checks to JSON columns.
+
+**Backup before altering:** set `backupDirectory`, and sync writes a backup of a table before altering it.
+
+## Migrations
+
+```csharp
+public sealed class AddSkuIndex() : Migration("2.1.0", 1, "Index products by SKU")
+{
+    public override bool CanRollback => true;
+
+    public override async ValueTask<Result> UpAsync(IMigrationContext context, CancellationToken ct) =>
+        (await context.ExecuteAsync($"CREATE INDEX ix_products_sku ON products (Sku)", ct)).ToResult();
+
+    public override async ValueTask<Result> DownAsync(IMigrationContext context, CancellationToken ct) =>
+        (await context.ExecuteAsync($"DROP INDEX ix_products_sku ON products", ct)).ToResult();
+}
+
+var runner = db.Migrations(MigrationRunner.FromAssembly(typeof(AddSkuIndex).Assembly));
+var pending = (await runner.PendingAsync()).ValueOrThrow();
+var applied = (await runner.MigrateAsync()).ValueOrThrow();          // in version order, under a lock
+await runner.RollbackAsync(new MigrationVersion("2.0.0", 0));         // down to a version
+```
+
+**How migrations run:**
+- **Versions:** an application version plus an order number.
+- **Tracking:** applied migrations are recorded in `cl_data_migrations` with a checksum. `AppliedAsync()` reports migrations whose code changed after they ran.
+- **The context:** `IMigrationContext` runs SQL, applies schema changes, reads live tables, and can sync an entity's table (`SyncTableAsync<T>()`).
+
+## Seeding
+
+```csharp
+var seeds = db.Seeds(
+[
+    DataSeed.Rows("countries", [new Country { Code = "DK", Name = "Denmark" }, new Country { Code = "SE", Name = "Sweden" }]),
+    new DefaultAdminSeed(),            // a DataSeed subclass with custom logic
+]);
+var result = (await seeds.RunAsync()).ValueOrThrow();   // Applied / UpToDate
+```
+
+**How seeds run:**
+- **Idempotent:** row seeds upsert, so a seed can run on every start.
+- **Tracking:** seeds are recorded in `cl_data_seeds` by id and version. Bump the version to run a seed again.
+- **Order:** seeds run by `order`.
+
+## Administration
+
+```csharp
+await db.Admin.EnsureDatabaseAsync();                   // or "createDatabaseIfMissing": true in config
+var exists = await db.Admin.TableExistsAsync<Product>();
+var tables = await db.Admin.ListTablesAsync();
+await db.Admin.TruncateAsync<Product>();
+await db.Admin.DropTableAsync<Product>();
+var version = await db.Admin.ServerVersionAsync();      // "8.4.3", "18.0", "16.0.4135.4", "3.46.1"
+```
+
+## Backup and restore
+
+```csharp
+var manifest = (await db.Backup.BackupAsync("backups/2026-10-31")).ValueOrThrow();   // DDL plus data, all tables or a list
+await db.Backup.RestoreAsync("backups/2026-10-31");
+await db.Backup.SnapshotAsync("backups/app.db");                                     // SQLite: VACUUM INTO, a consistent file copy
+```
+
+## Retention
+
+Rows of `[RetainDays(30)]` entities older than their retention are deleted in batches:
+
+```csharp
+var purged = (await db.Retention.PurgeAsync<AuditLog>()).ValueOrThrow();
+var job = db.Retention.Schedule(scheduler, [map], TimeSpan.FromHours(1));   // on a DataScheduler
+```
+
+Each purge publishes `RetentionPurgedEvent`.
+
+## Bookkeeping tables
+
+| Table | Holds |
+|---|---|
+| `cl_data_schema` | model CRC per synced table |
+| `cl_data_migrations` | applied migrations, with checksums |
+| `cl_data_seeds` | applied seeds, with versions |
+| `cl_data_cache_bus` | cross-node cache invalidations (only with the `Database` bus) |

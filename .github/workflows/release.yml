@@ -56,9 +56,16 @@ jobs:
         shell: pwsh
         run: |
           $allProjects = @(
-            'CL.Common', 'CL.GameNetQuery', 'CL.GitHelper', 'CL.Mail',
-            'CL.MySQL2', 'CL.MSSQL', 'CL.NetUtils', 'CL.PostgreSQL', 'CL.SQLite',
-            'CL.SocialConnect', 'CL.Storage', 'CL.SystemStats', 'CL.TwoFactorAuth'
+            'CL.Common', 'CL.GameNetQuery', 'CL.GitHelper', 'CL.Imaging', 'CL.Mail',
+            'CL.NetUtils',
+            'CL.SocialConnect', 'CL.Storage', 'CL.SystemStats', 'CL.TwoFactorAuth',
+            'CL.Data', 'CL.Data.MySql', 'CL.Data.PostgreSql', 'CL.Data.SqlServer', 'CL.Data.Sqlite'
+          )
+
+          # Packages released together: a change to any member packs every member, so a provider
+          # never points at a CodeLogic.Data version that was not published.
+          $packageGroups = @(
+            ,@('CL.Data', 'CL.Data.MySql', 'CL.Data.PostgreSql', 'CL.Data.SqlServer', 'CL.Data.Sqlite')
           )
 
           $buildAll = '${{ github.event.inputs.build_all }}' -eq 'true'
@@ -101,6 +108,41 @@ jobs:
             }
           }
 
+          # Expand package groups, then add every CL.* library a packed library references
+          # (ProjectReference to ../CL.X/CL.X.csproj). Its nuspec dependency becomes this run's
+          # version, so that version has to be published too.
+          foreach ($group in $packageGroups) {
+            if ($changedProjects | Where-Object { $group -contains $_ }) {
+              foreach ($member in $group) { if ($changedProjects -notcontains $member) { $changedProjects += $member } }
+            }
+          }
+          function Get-ClReferences([string]$project) {
+            $csproj = Join-Path $project "$project.csproj"
+            if (-not (Test-Path $csproj)) { return @() }
+            [xml]$xml = Get-Content $csproj
+            @($xml.SelectNodes('//ProjectReference') | ForEach-Object { $_.Include } |
+              ForEach-Object { [IO.Path]::GetFileNameWithoutExtension($_) } |
+              Where-Object { $allProjects -contains $_ })
+          }
+          do {
+            $added = $false
+            foreach ($project in @($changedProjects)) {
+              foreach ($ref in Get-ClReferences $project) {
+                if ($changedProjects -notcontains $ref) { $changedProjects += $ref; $added = $true }
+              }
+            }
+          } while ($added)
+
+          # Pack (and later push) referenced libraries before the libraries that depend on them.
+          $ordered = New-Object System.Collections.Generic.List[string]
+          function Add-InOrder([string]$project) {
+            if ($ordered.Contains($project)) { return }
+            foreach ($ref in Get-ClReferences $project) { if ($changedProjects -contains $ref) { Add-InOrder $ref } }
+            $ordered.Add($project)
+          }
+          foreach ($project in $changedProjects) { Add-InOrder $project }
+          $changedProjects = @($ordered)
+
           Write-Host "Changed projects: $($changedProjects -join ', ')"
 
           # ── Composed version: {major.minor from version.txt}.{run_number}[+sha] ──
@@ -124,27 +166,52 @@ jobs:
           "version=$version" >> $env:GITHUB_OUTPUT
           "has_changes=$($changedProjects.Count -gt 0)" >> $env:GITHUB_OUTPUT
 
+      # Strong-name signing (build/StrongName.props): releases are fully signed with the private key from the
+      # repository secret CL_STRONG_NAME_KEY (base64 of the .snk). No secret, no release: nothing unsigned or
+      # public-signed may reach nuget.org. The key only exists in the runner's temp directory.
+      - name: Strong-name key
+        if: steps.changes.outputs.has_changes == 'True'
+        shell: pwsh
+        env:
+          CL_STRONG_NAME_KEY: ${{ secrets.CL_STRONG_NAME_KEY }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:CL_STRONG_NAME_KEY)) {
+            Write-Host "::error::secret CL_STRONG_NAME_KEY is not set - refusing to release unsigned packages"
+            exit 1
+          }
+          $path = Join-Path $env:RUNNER_TEMP 'codelogic.snk'
+          [System.IO.File]::WriteAllBytes($path, [Convert]::FromBase64String($env:CL_STRONG_NAME_KEY.Trim()))
+          "CL_STRONG_NAME_KEY_FILE=$path" >> $env:GITHUB_ENV
+
       - name: Restore and pack changed libraries
         if: steps.changes.outputs.has_changes == 'True'
         shell: pwsh
         run: |
           $projects = "${{ steps.changes.outputs.projects }}".Split(',')
           $version  = "${{ steps.changes.outputs.version }}"
+          $line     = "${{ steps.changes.outputs.line }}"
           New-Item -ItemType Directory -Force -Path artifacts | Out-Null
           $versionLines = New-Object System.Collections.Generic.List[string]
+          $packageIds = @()
 
           foreach ($project in $projects) {
             $csproj = Join-Path $project "$project.csproj"
 
             $versionLines.Add("$project=$version")
+            [xml]$projXml = Get-Content $csproj
+            $packageId = ($projXml.SelectNodes('//PackageId') | Select-Object -First 1).InnerText
+            if (-not $packageId) { $packageId = $project }
+            $packageIds += $packageId
 
             dotnet restore $csproj /p:CodeLogicFromNuGet=true
             dotnet pack $csproj --configuration Release --no-restore --output artifacts `
               /p:PackageVersion=$version /p:Version=$version /p:InformationalVersion=$version `
-              /p:CodeLogicFromNuGet=true
+              /p:CodeLogicFromNuGet=true /p:CLStrongNameKeyFile=$env:CL_STRONG_NAME_KEY_FILE
           }
 
           $versionLines | Set-Content 'artifacts/package-versions.txt'
+          # Push order: referenced packages first (see "Detect changes").
+          $packageIds | ForEach-Object { "$_.$($version.Split('+')[0]).nupkg" } | Set-Content 'artifacts/push-order.txt'
 
           # NuGet normalizes PackageReference ranges to use the restored version as
           # the lower bound. For libs to keep accepting older CodeLogic versions,
@@ -160,14 +227,20 @@ jobs:
             [xml]$doc = Get-Content $nuspec.FullName
             $ns = New-Object System.Xml.XmlNamespaceManager($doc.NameTable)
             $ns.AddNamespace('n', $doc.DocumentElement.NamespaceURI)
-            $deps = $doc.SelectNodes('//n:dependency[@id="CodeLogic"]', $ns)
-            if ($deps.Count -gt 0) {
-              foreach ($d in $deps) { $d.version = $targetRange }
+            $changed = $false
+            foreach ($d in $doc.SelectNodes('//n:dependency[@id="CodeLogic"]', $ns)) { $d.version = $targetRange; $changed = $true }
+            # Dependencies on packages built in this run (CodeLogic.Data from a provider, CodeLogic.Common
+            # from CodeLogic.Data): at least this run's version, below the next major.
+            $siblingRange = "[$($version.Split('+')[0]), $([int]$line.Split('.')[0] + 1).0.0)"
+            foreach ($d in $doc.SelectNodes('//n:dependency', $ns)) {
+              if ($packageIds -contains $d.id) { $d.version = $siblingRange; $changed = $true }
+            }
+            if ($changed) {
               $doc.Save($nuspec.FullName)
               # Repack — zip contents (nuspec must be at root)
               Remove-Item $nupkg.FullName
               Compress-Archive -Path "$tmp/*" -DestinationPath $nupkg.FullName
-              Write-Host "Rewrote CodeLogic dependency → $targetRange in $($nupkg.Name)"
+              Write-Host "Rewrote CodeLogic → $targetRange and sibling → $siblingRange dependencies in $($nupkg.Name)"
             }
             Remove-Item $tmp -Recurse -Force
           }
@@ -187,6 +260,16 @@ jobs:
       # CL.MySQL2 had grown release notes past nuget.org's 35 000 character cap and was
       # rejected with a 400 mid-loop. The five already up could not be withdrawn.
       # Validate every package BEFORE pushing any of them.
+      - name: Verify strong-name signatures
+        if: steps.changes.outputs.has_changes == 'True'
+        shell: pwsh
+        run: ./build/verify-strong-name.ps1 -Packages (Get-ChildItem artifacts -Filter '*.nupkg').FullName
+
+      - name: Remove strong-name key
+        if: always()
+        shell: pwsh
+        run: if ($env:CL_STRONG_NAME_KEY_FILE) { Remove-Item $env:CL_STRONG_NAME_KEY_FILE -Force -ErrorAction SilentlyContinue }
+
       - name: Pre-flight packages
         if: steps.changes.outputs.has_changes == 'True'
         shell: bash
@@ -223,7 +306,17 @@ jobs:
 
       - name: Push to NuGet.org
         if: steps.changes.outputs.has_changes == 'True'
-        run: dotnet nuget push 'artifacts/*.nupkg' --api-key ${{ steps.nuget-login.outputs.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate
+        shell: bash
+        env:
+          NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
+        run: |
+          set -euo pipefail
+          # Referenced packages go up before the packages that depend on them (push-order.txt).
+          # push-order.txt is written by PowerShell (CRLF on Windows runners), so strip CRs.
+          tr -d '\r' < artifacts/push-order.txt | while IFS= read -r pkg; do
+            [ -z "$pkg" ] && continue
+            dotnet nuget push "artifacts/$pkg" --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
+          done
 
       - name: Create GitHub release
         if: steps.changes.outputs.has_changes == 'True'

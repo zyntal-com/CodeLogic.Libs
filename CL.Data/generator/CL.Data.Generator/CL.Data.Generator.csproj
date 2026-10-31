@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Roslyn incremental source generator for CL.Data. It is loaded by the compiler, so it targets
+    netstandard2.0 and does not reference CodeLogic (CLIsRoslynComponent opts out of the shared
+    targets). It is not published on its own: CodeLogic.Data packs it under analyzers/dotnet/cs,
+    so the generator always matches the attributes it reads.
+  -->
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <IsRoslynComponent>true</IsRoslynComponent>
+    <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
+    <CLIsRoslynComponent>true</CLIsRoslynComponent>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>CL.Data.Generator</RootNamespace>
+    <AssemblyName>CL.Data.Generator</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.14.0" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.CodeAnalysis.Analyzers" Version="3.11.0" PrivateAssets="all" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Data.Generator.Tests" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>CL.Data.MySql</RootNamespace>
+    <AssemblyName>CL.Data.MySql</AssemblyName>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <IsAotCompatible>true</IsAotCompatible>
+    <PackageId>CodeLogic.Data.MySql</PackageId>
+    <PackageTags>database;orm;mysql;mariadb;codelogic</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <Description>MySQL / MariaDB provider for CodeLogic.Data (MySqlConnector).</Description>
+    <WarningsAsErrors>$(WarningsAsErrors);CS1591</WarningsAsErrors>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Remove="tests/**" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="MySqlConnector" Version="2.*" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- PrivateAssets="none" so the source generator (an analyzer asset of CodeLogic.Data) flows to
+         consumers that install only this provider package. -->
+    <ProjectReference Include="../CL.Data/CL.Data.csproj" PrivateAssets="none" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Data.MySql.Tests" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
+</Project>

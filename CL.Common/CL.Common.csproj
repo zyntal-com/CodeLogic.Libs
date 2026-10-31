@@ -3,18 +3,18 @@
     <RootNamespace>CL.Common</RootNamespace>
     <AssemblyName>CL.Common</AssemblyName>
     <Nullable>enable</Nullable>
+    <IsAotCompatible>true</IsAotCompatible>
     <ImplicitUsings>enable</ImplicitUsings>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <PackageId>CodeLogic.Common</PackageId>
-    <PackageTags>utilities;imaging;caching;hashing;compression</PackageTags>
+    <PackageTags>utilities;caching;resilience;retry;circuit-breaker;scheduler;cron;hashing;xxhash;compression;aot</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <Authors>Zyntal.com</Authors>
     <Description>General-purpose utility toolkit for CodeLogic 5 applications</Description>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="K4os.Compression.LZ4.Streams" Version="1.3.8" />
-    <PackageReference Include="SkiaSharp" Version="4.*" />
-    <PackageReference Include="Newtonsoft.Json" Version="13.*" />
+    <PackageReference Include="System.IO.Hashing" Version="10.0.9" />
   </ItemGroup>  <ItemGroup>
     <None Include="README.md" Pack="true" PackagePath="/" />
   </ItemGroup>

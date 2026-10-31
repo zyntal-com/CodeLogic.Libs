@@ -1,4 +1,3 @@
-using CL.Common.Caching;
 using CL.Common.Compression;
 using CL.Common.Conversion;
 using CL.Common.Data;
@@ -389,36 +388,6 @@ public class UrlHelperTests
     {
         Assert.True(UrlHelper.IsHttps("https://x"));
         Assert.False(UrlHelper.IsHttps("http://x"));
-    }
-}
-
-public class MemoryCacheTests
-{
-    [Fact]
-    public async Task Set_get_round_trips()
-    {
-        using var cache = new MemoryCache();
-        await cache.SetAsync("k", "v");
-        Assert.Equal("v", await cache.GetAsync<string>("k"));
-        Assert.True(await cache.ExistsAsync("k"));
-    }
-
-    [Fact]
-    public async Task Remove_deletes()
-    {
-        using var cache = new MemoryCache();
-        await cache.SetAsync("k", 1);
-        await cache.RemoveAsync("k");
-        Assert.False(await cache.ExistsAsync("k"));
-    }
-
-    [Fact]
-    public async Task Expired_entry_is_gone()
-    {
-        using var cache = new MemoryCache();
-        await cache.SetAsync("k", "v", TimeSpan.FromMilliseconds(20));
-        await Task.Delay(60);
-        Assert.False(await cache.ExistsAsync("k"));
     }
 }
 

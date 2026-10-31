@@ -2,44 +2,24 @@
   href: index.md
 
 - name: Databases
-- name: CL.MySQL2
+- name: CL.Data
   items:
     - name: Overview
-      href: mysql2/index.md
-    - name: Query Builder
-      href: mysql2/queries.md
+      href: data/index.md
+    - name: Providers
+      href: data/providers.md
+    - name: Queries & Writes
+      href: data/queries.md
+    - name: Caching
+      href: data/caching.md
+    - name: Replicas & Resilience
+      href: data/replicas.md
     - name: Schema & Migrations
-      href: mysql2/schema-migrations.md
-    - name: Performance & Caching
-      href: mysql2/performance.md
-- name: CL.MSSQL
-  items:
-    - name: Overview
-      href: mssql/index.md
-    - name: Query Builder
-      href: mssql/queries.md
-    - name: Schema & Migrations
-      href: mssql/schema-migrations.md
-    - name: Performance & Caching
-      href: mssql/performance.md
-    - name: Capability Parity
-      href: mssql/parity.md
-- name: CL.PostgreSQL
-  items:
-    - name: Overview
-      href: postgresql/index.md
-    - name: Query Builder
-      href: postgresql/queries.md
-    - name: Schema & Migrations
-      href: postgresql/schema-migrations.md
-    - name: Performance & Caching
-      href: postgresql/performance.md
-- name: CL.SQLite
-  items:
-    - name: Overview
-      href: sqlite/index.md
-    - name: Query Builder
-      href: sqlite/queries.md
+      href: data/schema-migrations.md
+    - name: Telemetry
+      href: data/telemetry.md
+    - name: Performance
+      href: data/performance.md
 
 - name: Communication
 - name: CL.Mail
@@ -80,6 +60,18 @@
   href: systemstats.md
 - name: CL.GitHelper
   href: githelper.md
+
+- name: Media
+- name: CL.Imaging
+  items:
+    - name: Overview
+      href: imaging/index.md
+    - name: Editing
+      href: imaging/editing.md
+    - name: Metadata
+      href: imaging/metadata.md
+    - name: Analysis
+      href: imaging/analysis.md
 
 - name: Utilities
 - name: CL.Common

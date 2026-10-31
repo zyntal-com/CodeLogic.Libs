@@ -13,8 +13,8 @@ Every library follows the same shape, so the steps are identical regardless of w
 Each library ships as its own NuGet package, named `CodeLogic.<Name>`:
 
 ```bash
-dotnet add package CodeLogic.MySQL2
 dotnet add package CodeLogic.Mail
+dotnet add package CodeLogic.Storage
 ```
 
 The `CodeLogic` framework package comes in transitively — you don't reference it separately.
@@ -30,8 +30,8 @@ using static CodeLogic.CodeLogic;
 var init = await InitializeAsync(o => { o.AppVersion = "1.0.0"; });
 if (!init.Success) return 1;
 
-await Libraries.LoadAsync<CL.MySQL2.MySQL2Library>();
 await Libraries.LoadAsync<CL.Mail.MailLibrary>();
+await Libraries.LoadAsync<CL.Storage.StorageLibrary>();
 
 await ConfigureAsync();   // generates/loads each library's config
 await StartAsync();       // runs the Initialize → Start lifecycle
@@ -48,9 +48,8 @@ On first run each library writes a JSON config file with defaults into its own d
 
 ```
 Libraries/
-  CL.MySQL2/
-    config.mysql.json        ← edit, then restart
-    config.mysql.cache.json
+  CL.Mail/
+    config.mail.json         ← edit, then restart
     logs/
     data/
 ```
@@ -60,21 +59,43 @@ on its page under [Libraries](libs/index.md).
 
 ## 4. Use it
 
-Resolve the library after `StartAsync()` and call into it. Most operations return
-`Result` / `Result<T>`:
+Resolve the library after `StartAsync()` and call into it. Operations return `Result` / `Result<T>`:
 
 ```csharp
-var mysql = Libraries.Get<CL.MySQL2.MySQL2Library>();
+var mail = Libraries.Get<CL.Mail.MailLibrary>();
 
-var repo = mysql.GetRepository<User>();
-var insert = await repo.InsertAsync(new User { Name = "Alice", Email = "alice@example.com" });
+var message = mail.CreateMessage()
+    .From("noreply@example.com", "My App")
+    .To("alice@example.com")
+    .Subject("Welcome!")
+    .TextBody("Hello, welcome aboard.")
+    .Build();
 
-var found = await mysql.Query<User>()
-    .Where(u => u.Email == "alice@example.com")
-    .FirstOrDefaultAsync();
+var sent = await mail.Smtp.SendAsync(message);
+if (sent.IsFailure)
+    Console.WriteLine($"{sent.Error!.Code}: {sent.Error.Message}");
+```
 
-if (found.IsSuccess && found.Value is not null)
-    Console.WriteLine(found.Value.Name);
+### Databases
+
+Databases use **CL.Data** (`CodeLogic.Data` plus a provider package such as `CodeLogic.Data.MySql`):
+
+```csharp
+using CL.Data.Configuration;
+using CL.Data.Execution;
+using CL.Data.MySql;
+using CL.Data.Providers;
+
+DataProviderRegistry.Register(MySqlDataProvider.Instance);
+await using var db = Database.Create("main", new DataConnectionConfig
+{
+    Provider = "mysql", Host = "localhost", Database = "app", Username = "app", Password = "secret",
+}).ValueOrThrow();
+
+var users = await db.Query<UserRecord>()
+    .Where(u => u.IsActive && u.Role == "admin")
+    .OrderBy(u => u.Name)
+    .ToPagedListAsync(page: 1, pageSize: 20);
 ```
 
 ## Using a library from another library
@@ -88,13 +109,12 @@ public LibraryManifest Manifest { get; } = new()
     Id = "MyApp.Reports",
     Name = "Reports Library",
     Version = "1.0.0",
-    Dependencies = [ new LibraryDependency("CL.MySQL2", "4.0.0") ],
+    Dependencies = [ LibraryDependency.Required("CL.Mail", "5.0") ],
 };
 
 public Task OnStartAsync(LibraryContext context)
 {
-    var mysql = Libraries.Get<CL.MySQL2.MySQL2Library>();
-    _reports = mysql.GetRepository<Report>();
+    _mail = Libraries.Get<CL.Mail.MailLibrary>();
     return Task.CompletedTask;
 }
 ```
@@ -104,7 +124,7 @@ public Task OnStartAsync(LibraryContext context)
 Every library implements `HealthCheckAsync()`:
 
 ```csharp
-var status = await mysql.HealthCheckAsync();
+var status = await Libraries.Get<CL.Mail.MailLibrary>()!.HealthCheckAsync();
 // status.Status  : Healthy | Degraded | Unhealthy
 // status.Message : human-readable summary
 // status.Data    : structured metrics (connection counts, etc.)

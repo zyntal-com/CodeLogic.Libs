@@ -11,11 +11,14 @@ For task-oriented guides and examples, start with the [Libraries](../libs/index.
 |---------|---------------|-------|
 | CL.Common | `CL.Common` | `CodeLogic.Common` |
 | CL.GitHelper | `CL.GitHelper` | `CodeLogic.GitHelper` |
+| CL.Data | `CL.Data` | `CodeLogic.Data` |
+| CL.Data.MySql | `CL.Data.MySql` | `CodeLogic.Data.MySql` |
+| CL.Data.PostgreSql | `CL.Data.PostgreSql` | `CodeLogic.Data.PostgreSql` |
+| CL.Data.SqlServer | `CL.Data.SqlServer` | `CodeLogic.Data.SqlServer` |
+| CL.Data.Sqlite | `CL.Data.Sqlite` | `CodeLogic.Data.Sqlite` |
+| CL.Imaging | `CL.Imaging` | `CodeLogic.Imaging` |
 | CL.Mail | `CL.Mail` | `CodeLogic.Mail` |
-| CL.MySQL2 | `CL.MySQL2` | `CodeLogic.MySQL2` |
 | CL.NetUtils | `CL.NetUtils` | `CodeLogic.NetUtils` |
-| CL.PostgreSQL | `CL.PostgreSQL` | `CodeLogic.PostgreSQL` |
-| CL.SQLite | `CL.SQLite` | `CodeLogic.SQLite` |
 | CL.SocialConnect | `CL.SocialConnect` | `CodeLogic.SocialConnect` |
 | CL.Storage | `CL.Storage` | `CodeLogic.Storage` |
 | CL.SystemStats | `CL.SystemStats` | `CodeLogic.SystemStats` |

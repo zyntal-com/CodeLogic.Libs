@@ -6,7 +6,7 @@ _layout: landing
   <img src="images/logo.svg" alt="CodeLogic Libraries logo" />
   <h1>CodeLogic Libraries</h1>
   <p class="lead">
-    Thirteen production-ready .NET 11 libraries for the
+    Fourteen production-ready .NET 11 libraries for the
     <a href="https://github.com/zyntal-com/CodeLogic">CodeLogic 5</a> framework.
     Databases, email, storage, security, monitoring, and more — each a self-contained
     <code>ILibrary</code> that manages its own configuration, lifecycle, and health checks.
@@ -23,39 +23,23 @@ Every `CL.*` package plugs directly into the CodeLogic boot sequence. You load i
 handles initialization order, dependency wiring, and graceful shutdown.
 
 ```csharp
-await Libraries.LoadAsync<CL.MySQL2.MySQL2Library>();
 await Libraries.LoadAsync<CL.Mail.MailLibrary>();
 await Libraries.LoadAsync<CL.TwoFactorAuth.TwoFactorAuthLibrary>();
 
 await CodeLogic.ConfigureAsync();
 await CodeLogic.StartAsync();
 
-var mysql = Libraries.Get<CL.MySQL2.MySQL2Library>();
+var mail = Libraries.Get<CL.Mail.MailLibrary>();
 ```
 
 [Get started →](getting-started.md) &nbsp;·&nbsp; [Browse all libraries →](libs/index.md)
 
 <div class="cl-group">Databases</div>
 <div class="lib-grid">
-  <a class="lib-card" href="libs/mysql2/index.md">
-    <div class="lib-name">CL.MySQL2</div>
-    <div class="lib-pkg">CodeLogic.MySQL2</div>
-    <p class="lib-desc">MySQL / MariaDB / Percona with typed LINQ → SQL, a working result cache, schema sync modes, and migrations.</p>
-  </a>
-  <a class="lib-card" href="libs/mssql/index.md">
-    <div class="lib-name">CL.MSSQL</div>
-    <div class="lib-pkg">CodeLogic.MSSQL</div>
-    <p class="lib-desc">SQL Server 2019+ and Azure SQL with typed LINQ, caching, schema synchronization, and migrations.</p>
-  </a>
-  <a class="lib-card" href="libs/postgresql/index.md">
-    <div class="lib-name">CL.PostgreSQL</div>
-    <div class="lib-pkg">CodeLogic.PostgreSQL</div>
-    <p class="lib-desc">PostgreSQL with multi-database support, the <code>Repository&lt;T&gt;</code> + query-builder pattern, table sync, and backups.</p>
-  </a>
-  <a class="lib-card" href="libs/sqlite/index.md">
-    <div class="lib-name">CL.SQLite</div>
-    <div class="lib-pkg">CodeLogic.SQLite</div>
-    <p class="lib-desc">SQLite with a custom connection pool, WAL, repository + query builder, and a migration runner.</p>
+  <a class="lib-card" href="libs/data/index.md">
+    <div class="lib-name">CL.Data</div>
+    <div class="lib-pkg">CodeLogic.Data · .MySql · .PostgreSql · .SqlServer · .Sqlite</div>
+    <p class="lib-desc">One database framework for MySQL, PostgreSQL, SQL Server and SQLite: typed LINQ, repositories, joins, schema sync and migrations, unified caching, read replicas, resilience, OpenTelemetry and bulk copy.</p>
   </a>
 </div>
 
@@ -124,7 +108,12 @@ var mysql = Libraries.Get<CL.MySQL2.MySQL2Library>();
   <a class="lib-card" href="libs/common/index.md">
     <div class="lib-name">CL.Common</div>
     <div class="lib-pkg">CodeLogic.Common</div>
-    <p class="lib-desc">A utility toolkit: encryption, hashing, ID/password generation, JSON, cron, networking, imaging, and more.</p>
+    <p class="lib-desc">A utility toolkit: encryption, hashing, ID/password generation, JSON, cron, networking, caching, resilience, scheduling, and more.</p>
+  </a>
+  <a class="lib-card" href="libs/imaging/index.md">
+    <div class="lib-name">CL.Imaging</div>
+    <div class="lib-pkg">CodeLogic.Imaging</div>
+    <p class="lib-desc">Image editing on SkiaSharp: fluent pipeline, safe uploads, EXIF metadata, responsive variants, BlurHash and perceptual hashes.</p>
   </a>
 </div>
 
