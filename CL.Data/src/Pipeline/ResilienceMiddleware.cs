@@ -49,6 +49,8 @@ internal sealed class ResilienceMiddleware(RetryPolicy? retry, TimeProvider time
 
             if (attempt >= maxAttempts || !IsRetryable(context, error) || context.CancellationToken.IsCancellationRequested)
                 return result;
+            CL.Data.Telemetry.DataTelemetry.Retries.Add(1, new KeyValuePair<string, object?>("db.namespace", context.Database.Name),
+                new("error.type", error.Code));
             try
             {
                 await Task.Delay(retry!.GetDelay(attempt), time, context.CancellationToken).ConfigureAwait(false);

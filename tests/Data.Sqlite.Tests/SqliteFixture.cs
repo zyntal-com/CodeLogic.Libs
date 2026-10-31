@@ -105,3 +105,6 @@ public sealed class SqliteCacheTests(SqliteFixture fixture) : CacheConformance(f
 
 [Collection("sqlite")]
 public sealed class SqliteReplicaTests(SqliteFixture fixture) : ReplicaConformance(fixture);
+
+[Collection("sqlite")]
+public sealed class SqliteTelemetryTests(SqliteFixture fixture) : TelemetryConformance(fixture);

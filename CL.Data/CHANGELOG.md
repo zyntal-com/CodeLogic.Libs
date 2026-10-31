@@ -298,3 +298,12 @@
 - **Live replica tests (WP-93):** `tests/replicas/docker-compose.yml` starts a MySQL 8.4 GTID pair and a PostgreSQL 18 streaming pair.
   - `LiveReplicaSuite` covers replica reads seeing primary writes, live lag, skipping a paused replica until it catches up, and falling back to the primary when the replica is down.
   - It runs with `CL_DATA_REPLICAS=1`, in the non-required CI job `data-replicas`.
+- **Telemetry (WP-A0):** `DataTelemetry` exposes `ActivitySource` and `Meter` "CL.Data", following the OpenTelemetry database conventions.
+  - **Spans:** one client span per logical command (retries included), tagged `db.system.name`, `db.namespace`, `db.operation.name`, `db.collection.name`, parameterized `db.query.text`, `server.address`, returned rows, `error.type` and attempts.
+  - **Metrics:** `db.client.operation.duration`, `cl.data.rows`, `cl.data.retries`, `cl.data.cache.hits` and `cl.data.cache.misses`, `cl.data.circuit.opened`, and the gauge `cl.data.replica.lag`.
+  - **Cost:** nothing is built without a listener.
+- **Diagnostics:**
+  - `SlowQueryEvent` fires above `SlowQueryThresholdMs`. With `CaptureExplainOnSlowQuery`, the plan is captured in the background by each provider's `QueryExplainer`: MySQL `EXPLAIN FORMAT=TREE`, PostgreSQL `EXPLAIN`, SQLite `EXPLAIN QUERY PLAN`, SQL Server `SHOWPLAN_TEXT`.
+  - `NPlusOneDetectedEvent` fires once per one-second window.
+  - `QueryExecutedEvent` is opt-in (`PublishQueryEvents`).
+  - `CircuitStateChangedEvent` is published on every breaker transition.

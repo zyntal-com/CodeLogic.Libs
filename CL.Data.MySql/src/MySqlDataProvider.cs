@@ -72,6 +72,9 @@ public sealed class MySqlDataProvider : DataProvider
     public override CL.Data.Routing.ReplicaProbe ReplicaProbe { get; } = new MySqlReplicaProbe();
 
     /// <inheritdoc />
+    public override CL.Data.Telemetry.QueryExplainer Explainer { get; } = new CL.Data.Telemetry.PrefixExplainer("EXPLAIN FORMAT=TREE ");
+
+    /// <inheritdoc />
     public override CL.Data.Admin.DatabaseAdmin DatabaseAdmin { get; } = new MySqlDatabaseAdmin();
 
     // MySQL lock names are limited to 64 characters.

@@ -74,7 +74,22 @@ public sealed partial class Database : IAsyncDisposable
                     FailureThreshold = config.CircuitBreakerThreshold,
                     BreakDuration = TimeSpan.FromSeconds(config.CircuitBreakSeconds),
                 }, options.Time);
+        foreach (var node in replicas.Prepend(primary))
+            if (node.Breaker is { } breaker)
+            {
+                var nodeName = node.Name;
+                breaker.StateChanged += change =>
+                {
+                    if (change.To == CL.Common.Resilience.CircuitState.Open) CL.Data.Telemetry.DataTelemetry.CircuitOpened.Add(1,
+                        new KeyValuePair<string, object?>("db.namespace", name), new("cl.data.node", nodeName));
+                    Publish(new CL.Data.Events.CircuitStateChangedEvent(name, provider.Name, nodeName, change.At, change.To.ToString()));
+                };
+            }
+        _diagnostics = new CL.Data.Telemetry.QueryDiagnostics(this);
+        CL.Data.Telemetry.DataTelemetry.Track(this);
     }
+
+    private readonly CL.Data.Telemetry.QueryDiagnostics _diagnostics;
 
     /// <summary>The retry/breaker step for <paramref name="config"/>, or null when both are off.</summary>
     private static ResilienceMiddleware? Resilience(DataConnectionConfig config, TimeProvider time)
@@ -103,6 +118,7 @@ public sealed partial class Database : IAsyncDisposable
         _pipeline = parent._pipeline;
         _routing = parent._routing;
         _readFrom = parent._readFrom;
+        _diagnostics = parent._diagnostics;
         _transaction = transaction;
     }
 
@@ -124,6 +140,7 @@ public sealed partial class Database : IAsyncDisposable
         _pipeline = parent._pipeline;
         _routing = parent._routing;
         _readFrom = parent._readFrom;
+        _diagnostics = parent._diagnostics;
         _transaction = parent._transaction;
         _isView = true;
     }
@@ -195,6 +212,29 @@ public sealed partial class Database : IAsyncDisposable
         System.Data.IsolationLevel? transaction = null)
     {
         if (_transaction is not null) context.InTransaction = true;
+        return CL.Data.Telemetry.DataTelemetry.Active
+            ? ObservedAsync(context, state, body, rows, transaction)
+            : RunPipelineAsync(context, state, body, rows, transaction);
+    }
+
+    /// <summary>
+    /// The pipeline inside a span and the duration metrics. An async method of its own, so the span set as
+    /// <c>Activity.Current</c> flows into the pipeline and the driver but never back into the caller.
+    /// </summary>
+    private async ValueTask<Result<TResult>> ObservedAsync<TState, TResult>(CommandContext context, TState state,
+        Func<DbCommand, TState, CancellationToken, ValueTask<TResult>> body, Func<TResult, long>? rows,
+        System.Data.IsolationLevel? transaction)
+    {
+        var started = Stopwatch.GetTimestamp();
+        CL.Data.Telemetry.DataTelemetry.StartSpan(context);
+        return await CL.Data.Telemetry.DataTelemetry.ObserveAsync(context, RunPipelineAsync(context, state, body, rows, transaction), started)
+            .ConfigureAwait(false);
+    }
+
+    private ValueTask<Result<TResult>> RunPipelineAsync<TState, TResult>(CommandContext context, TState state,
+        Func<DbCommand, TState, CancellationToken, ValueTask<TResult>> body, Func<TResult, long>? rows,
+        System.Data.IsolationLevel? transaction)
+    {
         return _pipeline.ExecuteAsync(context, async ctx =>
         {
             var started = Stopwatch.GetTimestamp();
@@ -206,6 +246,7 @@ public sealed partial class Database : IAsyncDisposable
                     : await _executor.ExecuteAsync(node, ctx.Spec, state, body, null, null, ctx.CancellationToken, ctx).ConfigureAwait(false);
             ctx.Elapsed = Stopwatch.GetElapsedTime(started);
             if (rows is not null && result.IsSuccess) ctx.Rows = rows(result.Value!);
+            _diagnostics.After(ctx, node, result);
             return result;
         });
     }
@@ -403,6 +444,7 @@ public sealed partial class Database : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         if (_transaction is not null || _isView) return;   // views own no data sources
+        CL.Data.Telemetry.DataTelemetry.Untrack(this);
         await Primary.DisposeAsync().ConfigureAwait(false);
         foreach (var replica in Replicas) await replica.DisposeAsync().ConfigureAwait(false);
     }

@@ -74,6 +74,9 @@ public sealed class SqlServerDataProvider : DataProvider
     public override CL.Data.Routing.ReplicaProbe ReplicaProbe { get; } = new SqlServerReplicaProbe();
 
     /// <inheritdoc />
+    public override CL.Data.Telemetry.QueryExplainer Explainer { get; } = new SqlServerExplainer();
+
+    /// <inheritdoc />
     public override CL.Data.Admin.DatabaseAdmin DatabaseAdmin { get; } = new SqlServerDatabaseAdmin();
 
     /// <inheritdoc />
@@ -327,4 +330,46 @@ public sealed class SqlServerReplicaProbe : CL.Data.Routing.ReplicaProbe
         if (state is "NOT SYNCHRONIZING") return ValueTask.FromResult<long?>(Broken);
         return ValueTask.FromResult<long?>(Number(reader, "secondary_lag_seconds") is { } seconds ? (long)(seconds * 1000) : 0);
     }
+}
+
+/// <summary>
+/// SQL Server plans through <c>SET SHOWPLAN_TEXT</c>: the statement is compiled, not executed. Showplan returns nothing for a
+/// parameterized RPC call, so the parameters are declared as variables of the same types in a plain batch.
+/// </summary>
+public sealed class SqlServerExplainer : CL.Data.Telemetry.QueryExplainer
+{
+    /// <inheritdoc />
+    public override async Task<string?> ExplainAsync(CL.Data.Telemetry.ExplainSession session, CancellationToken ct)
+    {
+        var batch = new System.Text.StringBuilder();
+        foreach (var parameter in session.Parameters().OfType<SqlParameter>())
+        {
+            var name = parameter.ParameterName.StartsWith('@') ? parameter.ParameterName : "@" + parameter.ParameterName;
+            batch.Append("DECLARE ").Append(name).Append(' ').Append(TypeOf(parameter)).Append(";\n");
+        }
+        batch.Append(session.Sql);
+
+        await session.ExecuteAsync("SET SHOWPLAN_TEXT ON", ct).ConfigureAwait(false);
+        try
+        {
+            var lines = await session.ReadAsync(batch.ToString(), withParameters: false, ct).ConfigureAwait(false);
+            return string.Join('\n', lines.Where(l => !l.StartsWith("DECLARE", StringComparison.OrdinalIgnoreCase)));
+        }
+        finally
+        {
+            await session.ExecuteAsync("SET SHOWPLAN_TEXT OFF", CancellationToken.None).ConfigureAwait(false);
+        }
+    }
+
+    private static string TypeOf(SqlParameter p) => p.SqlDbType switch
+    {
+        System.Data.SqlDbType.NVarChar or System.Data.SqlDbType.VarChar or System.Data.SqlDbType.NChar or System.Data.SqlDbType.Char
+            or System.Data.SqlDbType.VarBinary or System.Data.SqlDbType.Binary =>
+            $"{p.SqlDbType.ToString().ToLowerInvariant()}({(p.Size is > 0 and <= 8000 ? p.Size.ToString(CultureInfo.InvariantCulture) : "max")})",
+        System.Data.SqlDbType.Decimal => $"decimal({(p.Precision > 0 ? p.Precision : (byte)38)},{p.Scale})",
+        System.Data.SqlDbType.DateTime2 or System.Data.SqlDbType.DateTimeOffset or System.Data.SqlDbType.Time =>
+            $"{p.SqlDbType.ToString().ToLowerInvariant()}({(p.Scale > 0 ? p.Scale : (byte)7)})",
+        System.Data.SqlDbType.Structured or System.Data.SqlDbType.Udt or System.Data.SqlDbType.Variant => "sql_variant",
+        _ => p.SqlDbType.ToString().ToLowerInvariant(),
+    };
 }

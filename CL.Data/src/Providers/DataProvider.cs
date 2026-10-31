@@ -150,6 +150,9 @@ public abstract class DataProvider
     /// <summary>Default server port (0 when not applicable).</summary>
     public virtual int DefaultPort => 0;
 
+    /// <summary>Captures execution plans of slow reads (<c>CaptureExplainOnSlowQuery</c>); null when unsupported.</summary>
+    public virtual CL.Data.Telemetry.QueryExplainer? Explainer => null;
+
     /// <summary>Measures replica lag for read routing; null when the provider has no replicas (SQLite).</summary>
     public virtual CL.Data.Routing.ReplicaProbe? ReplicaProbe => null;
 

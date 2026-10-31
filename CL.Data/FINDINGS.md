@@ -17,6 +17,7 @@ and the allocation column shows library overhead better than the time column doe
 | **Regression to fix** | Inserting a batch of 100 rows is **7% slower and allocates 16% more** than 4.9. Bulk copy (WP-A1) must beat it. |
 | Result cache | A get by key costs **1.66 µs** from the entity cache against 1.47 ms from the database (~880×). A 100-row filter costs **18.4 µs** against 1.61 ms (~87×). Each hit builds fresh objects. |
 | Retries and routing | Retries are on by default and cost no measurable time: GetById is still 1.02× raw ADO.NET. They add about 0.3 KB per command (the async step). |
+| Telemetry | With no listener, telemetry adds nothing (GetById allocations unchanged: 14.42 → 14.43 KB, time equal to raw ADO.NET). Spans and metrics are only built when a listener is attached. Slow-query and N+1 checks are integer comparisons when they are off. |
 | Plan cache | Hashing query shapes with `XxHash128` at first took about 700 ns per lookup. Hashing into a byte buffer in CL.Common `FastHash` brought it to about 70 ns. |
 
 ## Bugs found and fixed
@@ -28,6 +29,7 @@ and the allocation column shows library overhead better than the time column doe
 | Plan cache | The binder passed the item instead of the shaped root value. Lookups compared `PropertyInfo` slowly. Guards boxed values. | Plan cache tests | `Slot` takes the root value, lookups use reference and handle comparison, and guards store `long` facts. |
 | Schema sync | Drift state wasn't forgotten after a drift. A SQLite table rebuild cascaded deletes through foreign keys. Indexes were duplicated after a rebuild. | Schema conformance | The state row is deleted on drift. Foreign keys are switched off during the rebuild, followed by `foreign_key_check`. `CREATE INDEX IF NOT EXISTS` is used. |
 | Backup | A sequential-access reader read the same column twice. SQLite columns with mixed types didn't round-trip. | Backup conformance | Each column is read once, and values are written inline with a type tag. |
+| CL.Data.SqlServer (explain) | `SET SHOWPLAN_TEXT ON` returns no plan for a parameterized RPC call (`sp_executesql`), so slow-query plans were empty. | Telemetry conformance | The explainer declares the parameters as variables of the same SQL types in a plain batch. |
 | **4.x (separate)** | The MySQL2, MSSQL and PostgreSQL translators reject the C# 14 three-argument `MemoryExtensions.Contains(span, value, null)` that the compiler emits for nullable and enum arrays. | Porting the translator | The fix is on branch `fix/4x-span-contains` in worktree `../CodeLogic.Libs-4x`, with tests and changelogs. **Not pushed:** it needs a PR into `support/4.x` once the owner approves. |
 
 ## Behaviour worth knowing
@@ -52,6 +54,11 @@ and the allocation column shows library overhead better than the time column doe
   - `DatabaseCacheBus` polls, so other nodes see an invalidation up to one poll interval late (500 ms by default).
 - **Reads inside a transaction never use the cache.** Invalidations from a transaction wait for commit, and a rollback drops nothing.
 - **SQL Server connection strings:** the `SqlServer` options (`Encrypt = true` by default, `TrustServerCertificate`) override `Encrypt` and `TrustServerCertificate` written in an explicit connection string. **Open decision:** should values in the connection string win?
+- **Telemetry granularity:** each span and duration measurement covers a whole logical command, retries included (`cl.data.attempts` on the span).
+  - Slow-query, N+1 and `QueryExecutedEvent` checks run per attempt, so a retried command can report each slow attempt.
+  - EXPLAIN runs in the background on its own connection, for reads outside transactions only, and never executes the statement. The event arrives after the query has returned.
+  - Pool metrics are left to the drivers' own meters.
+- **N+1 detection** keys on the exact parameterized SQL text, in a one-second window, and reports once per window. Its memory is bounded: the window table is cleared above 10,000 shapes.
 - **Native AOT:** CL.Data and the SQLite, MySQL and PostgreSQL providers publish with 0 trim or AOT warnings. Microsoft.Data.SqlClient brings 57 warnings of its own (upstream).
 
 ## Deferred, with reasons

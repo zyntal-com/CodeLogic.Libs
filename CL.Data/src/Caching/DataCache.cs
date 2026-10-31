@@ -146,6 +146,7 @@ public sealed class DataCache : IDisposable
         if (_store.TryGet<object>(key, out var cached) && cached is not null)
         {
             Interlocked.Increment(ref _hits);
+            CL.Data.Telemetry.DataTelemetry.CacheHits.Add(1);
             return Result<object>.Success(cached);
         }
 
@@ -164,6 +165,7 @@ public sealed class DataCache : IDisposable
         Func<ValueTask<Result<(object Value, long Size)>>> load)
     {
         Interlocked.Increment(ref _misses);
+        CL.Data.Telemetry.DataTelemetry.CacheMisses.Add(1);
         var generation = Interlocked.Read(ref _generation);
         var loaded = await load().ConfigureAwait(false);
         if (loaded.IsFailure) return loaded.Error!;

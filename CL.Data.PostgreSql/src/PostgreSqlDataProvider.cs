@@ -74,6 +74,9 @@ public sealed class PostgreSqlDataProvider : DataProvider
     public override CL.Data.Routing.ReplicaProbe ReplicaProbe { get; } = new PostgreSqlReplicaProbe();
 
     /// <inheritdoc />
+    public override CL.Data.Telemetry.QueryExplainer Explainer { get; } = new CL.Data.Telemetry.PrefixExplainer("EXPLAIN ");
+
+    /// <inheritdoc />
     public override CL.Data.Admin.DatabaseAdmin DatabaseAdmin { get; } = new PostgreSqlDatabaseAdmin();
 
     /// <inheritdoc />

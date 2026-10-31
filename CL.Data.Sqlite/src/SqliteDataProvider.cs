@@ -63,6 +63,9 @@ public sealed class SqliteDataProvider : DataProvider
     public override CL.Data.Schema.SchemaIntrospector Introspector { get; } = new SqliteSchemaIntrospector();
 
     /// <inheritdoc />
+    public override CL.Data.Telemetry.QueryExplainer Explainer { get; } = new CL.Data.Telemetry.PrefixExplainer("EXPLAIN QUERY PLAN ");
+
+    /// <inheritdoc />
     public override CL.Data.Admin.DatabaseAdmin DatabaseAdmin { get; } = new SqliteDatabaseAdmin();
 
     /// <inheritdoc />
