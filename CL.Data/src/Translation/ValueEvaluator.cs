@@ -77,4 +77,25 @@ internal sealed class ParameterDependency : ExpressionVisitor
         if (_parameters.Contains(node)) _found = true;
         return node;
     }
+
+    /// <summary>
+    /// <see cref="SqlFn"/> functions exist only in SQL: a call is always translated (its captured arguments still become
+    /// parameters), never evaluated on the client, even when no argument reads a row.
+    /// </summary>
+    protected override Expression VisitMethodCall(MethodCallExpression node)
+    {
+        if (IsSqlFunction(node.Method.DeclaringType))
+        {
+            _found = true;
+            return node;
+        }
+        return base.VisitMethodCall(node);
+    }
+
+    private static bool IsSqlFunction(Type? type)
+    {
+        for (; type is not null; type = type.DeclaringType)
+            if (type == typeof(SqlFn)) return true;
+        return false;
+    }
 }

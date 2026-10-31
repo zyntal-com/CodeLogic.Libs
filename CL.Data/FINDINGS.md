@@ -89,6 +89,21 @@ the current numbers) and for time relative to Dapper or raw ADO.NET in the same 
 | SQL Server live replica test | An availability group can't run in a local container. | Probe parsing is covered by canned results; a real AG test only if CI infrastructure allows. |
 | `benchmarks/MySql2.Baseline` | It's the 4.9 comparison, needed until bulk copy beats the 100-row insert. | Decide after WP-A1. |
 
+## Comprehensive audit, CL.Data items (2026-10-31)
+
+| # | Claim | Verdict | Fix |
+|---|---|---|---|
+| 3.1 | Unscoped insert, upsert or bulk copy can write another tenant's row through a preset tenant column | True | `Stamp` requires a tenant for every write. This is breaking: writing for a specific tenant goes through `db.ForTenant(id)`. |
+| 3.2 | `Retention.PurgeAsync` ignores the tenant | True for tenant views | A tenant view purges only its tenant. The unscoped purge stays system-wide by design. |
+| 4.1 | SQL Server `BucketUtc`: `DATEADD` with a `bigint` (claimed Msg 8116) | Partly | The renderer passed `bigint`, which SQL Server converts to `int`. It works today, then fails with **8115 overflow after 2038-01-19**. The suggested `CAST AS int` does not fix that. The fix adds days, then seconds. |
+| 4.6 | Mixed-identity `UpsertMany` drops the identity column for every row | True | Explicit-identity rows and generated-identity rows are planned as separate statements. |
+| 5.5 | `SqlTables.Of` allocates on every cached call | True | Tags are computed only on a miss, inside the loader. |
+| 6.2 | `AsAsyncEnumerable` bypasses the pipeline and replicas | True | The stream opens through the pipeline: interceptors, telemetry, routing, and a retry of the open. |
+
+**Reported separately: MySQL unchanged saves.** `UseAffectedRows = true` (needed by insert-ignore, which is rendered as a no-op `ON DUPLICATE KEY UPDATE`) combined with the update's exactly-one-row check made saving an unchanged entity fail with `data.not_found`. The snapshot path hid it, because it skips no-op saves. Fixed with a match check when 0 rows are reported. Still different on MySQL, documented in PARITY: set-based `UpdateAsync` returns rows *changed*, not rows matched, and `AdjustAsync(..., 0)` returns false.
+
+**Found while testing:** a `SqlFn` call with only captured arguments, such as `SqlFn.BucketUtc(at, 60)` in a `Select`, was evaluated on the client and threw "SqlFn functions can only be used inside CL.Data query expressions". `SqlFn` calls are now always translated. There was no conformance test running `BucketUtc` against a real server, which is why 4.1 was missed; one exists now, for dates before and after 2038.
+
 ## Strong-name signing (2026-10-31)
 
 All CodeLogic and CodeLogic.Libs assemblies are strong-named with one key pair, token `53a89305eedc5d98` (see AGENTS.md).

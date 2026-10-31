@@ -51,6 +51,15 @@ All notable changes to **CodeLogic.GitHelper** are documented here. Versions fol
 - Configuration examples in the README and the docs use the camelCase keys the CodeLogic loader reads.
   The PascalCase keys shown before are matched case-sensitively and were ignored, leaving defaults active.
 
+### Fixed
+
+- **Cache eviction no longer disposes a repository under a running operation.** The idle-expiry timer,
+  `GetRepositoryAsync` replacing a stale entry, `EvictFromCacheAsync` and `ClearCacheAsync` disposed the
+  evicted `GitRepository` at once. Idle time only counts `GetRepositoryAsync` calls, so a clone or fetch that ran
+  longer than `CacheTimeoutMinutes` had its LibGit2 handle and lock disposed underneath it (the operation's
+  lock release then threw `ObjectDisposedException`). Evicted instances are now disposed once their current
+  operation finishes, as config changes and disabling the library already did.
+
 ## 2026-10-24
 
 ### Added

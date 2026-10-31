@@ -107,6 +107,8 @@ var job = db.Retention.Schedule(scheduler, [map], TimeSpan.FromHours(1));   // o
 
 Each purge publishes `RetentionPurgedEvent`.
 
+For a `[TenantKey]` entity, a purge from a tenant view (`db.ForTenant(id).Retention`) deletes only that tenant's expired rows. Without a tenant, the purge is the system-wide job and applies the retention policy to every tenant's rows.
+
 ## Bookkeeping tables
 
 | Table | Holds |

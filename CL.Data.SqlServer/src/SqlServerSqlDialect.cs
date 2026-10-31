@@ -103,9 +103,17 @@ public sealed class SqlServerSqlDialect : SqlDialect
                 break;
             case SqlFunction.Date: w.Append("CAST(").Expr(a[0]).Append(" AS date)"); break;
             case SqlFunction.BucketUtc:
-                w.Append("DATEADD(second, (DATEDIFF_BIG(second, '1970-01-01', ").Expr(a[0]).Append(") / ").Expr(a[1])
-                 .Append(") * ").Expr(a[1]).Append(", CAST('1970-01-01' AS datetime2))");
+            {
+                // DATEADD takes an int, and seconds since 1970 pass int.MaxValue in January 2038 (error 8115). Add whole days,
+                // then the remaining seconds of the day, both well inside int for any datetime2.
+                void Bucketed() => w.Append("((DATEDIFF_BIG(second, '1970-01-01', ").Expr(a[0]).Append(") / ").Expr(a[1]).Append(") * ").Expr(a[1]).Append(')');
+                w.Append("DATEADD(second, CAST(");
+                Bucketed();
+                w.Append(" % 86400 AS int), DATEADD(day, CAST(");
+                Bucketed();
+                w.Append(" / 86400 AS int), CAST('1970-01-01' AS datetime2)))");
                 break;
+            }
             case SqlFunction.UtcNow: w.Append("SYSUTCDATETIME()"); break;
             case SqlFunction.Least: MinMax(w, a, "<="); break;       // LEAST/GREATEST need SQL Server 2022
             case SqlFunction.Greatest: MinMax(w, a, ">="); break;

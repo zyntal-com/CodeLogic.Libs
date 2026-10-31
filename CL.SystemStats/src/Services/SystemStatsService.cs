@@ -21,6 +21,8 @@ public sealed class SystemStatsService : IAsyncDisposable
     private readonly ILogger? _logger;
 
     private readonly ConcurrentDictionary<string, (object Value, DateTime CachedAt)> _cache = new();
+    // In-flight refreshes per cache key (a Lazy<Task<Result<T>>>), so concurrent misses share one provider call.
+    private readonly ConcurrentDictionary<string, object> _refreshes = new();
 
     /// <summary>
     /// Returns <see langword="true"/> after <see cref="InitializeAsync"/> has completed successfully.
@@ -166,19 +168,49 @@ public sealed class SystemStatsService : IAsyncDisposable
 
     private async Task<Result<T>> GetCachedAsync<T>(string key, Func<Task<Result<T>>> factory)
     {
-        if (_config.EnableCaching &&
-            _cache.TryGetValue(key, out var entry) &&
-            (DateTime.UtcNow - entry.CachedAt).TotalSeconds < _config.CacheDurationSeconds)
+        if (!_config.EnableCaching)
+            return await factory();
+
+        if (TryGetFresh<T>(key, out var cached))
+            return cached;
+
+        // One refresh per key at a time: concurrent callers that find the entry stale share the sampling
+        // instead of each running it (CPU sampling waits CpuSamplingIntervalMs and process listings are costly).
+        var mine = new Lazy<Task<Result<T>>>(() => RefreshAsync(key, factory));
+        var refresh = (Lazy<Task<Result<T>>>)_refreshes.GetOrAdd(key, mine);
+        try
         {
-            return (Result<T>)entry.Value;
+            return await refresh.Value;
         }
+        finally
+        {
+            if (ReferenceEquals(refresh, mine))
+                _refreshes.TryRemove(new KeyValuePair<string, object>(key, mine));
+        }
+    }
+
+    private async Task<Result<T>> RefreshAsync<T>(string key, Func<Task<Result<T>>> factory)
+    {
+        // A refresh that finished just before this one started already has a fresh value.
+        if (TryGetFresh<T>(key, out var cached))
+            return cached;
 
         var result = await factory();
-
         if (result.IsSuccess)
             _cache[key] = (result, DateTime.UtcNow);
-
         return result;
+    }
+
+    private bool TryGetFresh<T>(string key, out Result<T> value)
+    {
+        if (_cache.TryGetValue(key, out var entry) &&
+            (DateTime.UtcNow - entry.CachedAt).TotalSeconds < _config.CacheDurationSeconds)
+        {
+            value = (Result<T>)entry.Value;
+            return true;
+        }
+        value = default!;
+        return false;
     }
 
     private async Task CheckCpuThresholdAsync(double usagePct)

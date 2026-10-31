@@ -767,6 +767,8 @@ public sealed class GitRepository : IDisposable
 
     // ── IDisposable ───────────────────────────────────────────────────────────
 
+    internal bool IsDisposed => _disposed;
+
     /// <summary>
     /// Disposes this instance once the git operation currently running on it (if any) has
     /// finished. Used when a config change replaces the repository.

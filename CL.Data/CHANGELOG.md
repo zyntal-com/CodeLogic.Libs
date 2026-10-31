@@ -7,6 +7,13 @@
 - **Tenant isolation on writes (security):**
   - **No tenant:** updating, deleting (soft or hard, by entity or by key) or adjusting a counter on a `[TenantKey]` entity without a tenant now fails with `data.tenant_missing`, exactly like reads. Before, such writes ran unscoped and could change another tenant's row by key.
   - **Upserts:** an upsert can no longer update another tenant's row that has the same conflict key. Every dialect guards the conflict update by the tenant column (PostgreSQL/SQLite `DO UPDATE ... WHERE`, MySQL `IF(...)` per assignment, SQL Server join condition), and a pre-check reports `data.conflict` before anything is written.
+  - **Inserts, upserts and bulk copy (breaking):** these also need a tenant now. Before, an entity whose tenant column was already set could be inserted for any tenant through an unscoped database. Write for a specific tenant through `db.ForTenant(id)`.
+  - **Retention:** a purge from a tenant view deletes only that tenant's expired rows. Without a tenant, the purge stays the system-wide job for every tenant's rows.
+- **MySQL: saving an unchanged entity:** `UpdateAsync` of an entity whose values were already stored failed with `data.not_found` on MySQL. CL.Data turns on `UseAffectedRows`, which insert-ignore needs, and with it MySQL counts only rows that changed. An update reporting no rows is now confirmed with a `SELECT 1` using the same key, tenant and token conditions. This only happens on providers flagged `ProviderCapabilities.AffectedRowsCountChangesOnly`, and only in that case.
+- **Mixed identity upserts:** an `UpsertManyAsync` call mixing explicit and server-generated identities is split into two statements. Before, the identity column was dropped for every row and explicit identities were replaced.
+- **Streaming:** `AsAsyncEnumerable` runs through the command pipeline: interceptors, telemetry, read routing (replicas, `ReadFrom`) and retries of the open. Before, streams always opened a primary connection directly.
+- **Captured `SqlFn` calls:** a `SqlFn` call whose arguments are all captured values (for example `SqlFn.BucketUtc(at, 60)` in a projection) is translated to SQL. Before, it was evaluated on the client and failed.
+- **Cache hits** no longer walk the statement to find the tables it reads; the tags are worked out only when a result is stored.
 - **Mixed identity inserts:** when explicit and server-generated identities are interleaved in one `InsertManyAsync` call, generated identities are written back to the right entities. Before, a generated identity could overwrite an explicit entity's identity.
 
 - Float-to-decimal materialization preserves the float's shortest round-trip representation instead

@@ -41,6 +41,13 @@ public sealed record WriteCommand(SqlStatement Statement, WriteKind Kind, string
     /// <summary>Affected-row check.</summary>
     public RowCheck Check { get; init; } = RowCheck.None;
 
+    /// <summary>
+    /// A <c>SELECT 1 ... LIMIT 1</c> with the statement's WHERE. When the provider counts only changed rows
+    /// (<see cref="CL.Data.Providers.ProviderCapabilities.AffectedRowsCountChangesOnly"/>), an <see cref="RowCheck.ExactlyOne"/>
+    /// update that reports no rows passes if this finds the row: it matched, but nothing changed.
+    /// </summary>
+    public SqlStatement? MatchCheck { get; init; }
+
     /// <summary>True when the statement returns generated values (RETURNING/OUTPUT) for <see cref="ReturnedColumns"/>.</summary>
     public bool Returns => ReturnedColumns.Count > 0;
 

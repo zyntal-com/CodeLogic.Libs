@@ -18,6 +18,11 @@ public sealed record ProviderCapabilities
     public bool Returning { get; init; }
     /// <summary>Multi-row <c>RETURNING</c> yields rows in insert order (SQL Server's <c>OUTPUT</c> does not promise this).</summary>
     public bool ReturningPreservesOrder { get; init; } = true;
+    /// <summary>
+    /// The affected-row count of an UPDATE counts only rows whose values changed, not rows matched (MySQL with
+    /// <c>UseAffectedRows</c>). An entity update reporting no rows is then confirmed with an existence check.
+    /// </summary>
+    public bool AffectedRowsCountChangesOnly { get; init; }
     /// <summary>Native single-statement upsert.</summary>
     public bool NativeUpsert { get; init; }
     /// <summary>Schemas (namespaces) inside a database.</summary>

@@ -29,7 +29,10 @@ public sealed class DataRetention
         return accessor.IsFailure ? accessor.Error! : await PurgeAsync(accessor.Value!.Map, ct).ConfigureAwait(false);
     }
 
-    /// <summary>Purges the expired rows of <paramref name="map"/>'s table; returns how many were deleted.</summary>
+    /// <summary>
+    /// Purges the expired rows of <paramref name="map"/>'s table; returns how many were deleted. For a <c>[TenantKey]</c>
+    /// entity, a tenant view purges only that tenant's rows; without a tenant, every tenant's expired rows are purged.
+    /// </summary>
     public async ValueTask<Result<long>> PurgeAsync(EntityMap map, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(map);
@@ -41,12 +44,18 @@ public sealed class DataRetention
         var schema = _db.Provider.Capabilities.Schemas ? map.Schema ?? _db.Provider.GetDefaultSchema(_db.Config) : null;
         var table = dialect.QuoteTable(names.Table, schema);
         var predicate = $"{dialect.QuoteIdentifier(names.Of(column))} < {dialect.ParameterName(0)}";
+        // From a tenant view (db.ForTenant(id)) only that tenant's expired rows go. Without a tenant this is the system-wide
+        // retention job: the retention policy applies to every tenant's rows.
+        var tenant = map.TenantKey is { } tenantKey ? _db.CurrentTenant : null;
+        if (tenant is not null) predicate += $" AND {dialect.QuoteIdentifier(names.Of(map.TenantKey!))} = {dialect.ParameterName(1)}";
         var batch = Math.Max(1, column.RetentionBatchSize);
         var sql = dialect.RenderBatchedDelete(table, predicate, batch, map.Key.Columns.Select(c => dialect.QuoteIdentifier(names.Of(c))).ToArray());
 
         var cutoff = Cutoff(column);
         if (cutoff.IsFailure) return cutoff.Error!;
-        IReadOnlyList<SqlParameterValue> parameters = [SqlParameterValue.ForColumn(cutoff.Value, column)];
+        IReadOnlyList<SqlParameterValue> parameters = tenant is null
+            ? [SqlParameterValue.ForColumn(cutoff.Value, column)]
+            : [SqlParameterValue.ForColumn(cutoff.Value, column), SqlParameterValue.ForColumn(tenant, map.TenantKey!)];
 
         long total = 0;
         for (var i = 0; i < MaxBatchesPerRun; i++)

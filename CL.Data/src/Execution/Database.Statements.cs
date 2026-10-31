@@ -1,5 +1,6 @@
 using System.Data;
 using System.Data.Common;
+using System.Diagnostics;
 using CL.Data.Caching;
 using CL.Data.Errors;
 using CL.Data.Mapping;
@@ -172,12 +173,12 @@ public sealed partial class Database
         var rendered = Render(statement);
         if (rendered.IsFailure) return rendered.Error!;
         return await QuerySpecAsync(new CommandSpec(rendered.Value!.Text, rendered.Value.Parameters), statement is not SelectStatement,
-            accessor, table, tags, ct, cache, cache is null ? null : SqlTables.Of(statement)).ConfigureAwait(false);
+            accessor, table, tags, ct, cache, statement).ConfigureAwait(false);
     }
 
     /// <summary>Runs a pre-rendered query and materializes every row (compiled queries).</summary>
     internal async ValueTask<Result<List<T>>> QuerySpecAsync<T>(CommandSpec spec, bool isWrite, IEntityAccessor<T>? accessor, string? table,
-        IReadOnlyList<string> tags, CancellationToken ct, CachePolicy? cache = null, IReadOnlyList<string>? cacheTables = null)
+        IReadOnlyList<string> tags, CancellationToken ct, CachePolicy? cache = null, SqlStatement? tablesFrom = null)
     {
         var context = new CommandContext(this, spec, CommandKind.Query, ct)
         {
@@ -187,7 +188,7 @@ public sealed partial class Database
             IsWrite = isWrite,
         };
         var policy = NamingPolicy;
-        var result = await ReadAsync(context, isWrite ? null : cache, cacheTables ?? (table is null ? [] : [table]),
+        var result = await ReadAsync(context, isWrite ? null : cache, tablesFrom, table,
             (reader, token) => RowReader.ReadAllAsync(reader, accessor, policy, token), static list => list.Count).ConfigureAwait(false);
         if (isWrite) InvalidateCache(tags);
         return result;
@@ -205,7 +206,7 @@ public sealed partial class Database
             Table = table,
             Tags = tags,
         };
-        return await ReadAsync(context, cache, cache is null ? [] : SqlTables.Of(statement),
+        return await ReadAsync(context, cache, statement, table,
             async (reader, token) =>
             {
                 List<TResult> rows = [];
@@ -222,12 +223,12 @@ public sealed partial class Database
         var rendered = Render(statement);
         if (rendered.IsFailure) return rendered.Error!;
         return await ScalarSpecAsync<T>(new CommandSpec(rendered.Value!.Text, rendered.Value.Parameters), table, tags, ct,
-            cache, cache is null ? null : SqlTables.Of(statement)).ConfigureAwait(false);
+            cache, statement).ConfigureAwait(false);
     }
 
     /// <summary>Runs a pre-rendered statement that returns one value (compiled queries).</summary>
     internal async ValueTask<Result<T?>> ScalarSpecAsync<T>(CommandSpec spec, string? table, IReadOnlyList<string> tags, CancellationToken ct,
-        CachePolicy? cache = null, IReadOnlyList<string>? cacheTables = null)
+        CachePolicy? cache = null, SqlStatement? tablesFrom = null)
     {
         var context = new CommandContext(this, spec, CommandKind.Scalar, ct)
         {
@@ -235,7 +236,7 @@ public sealed partial class Database
             Table = table,
             Tags = tags,
         };
-        return await ReadAsync(context, cache, cacheTables ?? (table is null ? [] : [table]),
+        return await ReadAsync(context, cache, tablesFrom, table,
             static async (reader, token) => await reader.ReadAsync(token).ConfigureAwait(false) && !reader.IsDBNull(0) ? ValueReader<T>.Read(reader, 0) : default,
             null).ConfigureAwait(false);
     }
@@ -247,7 +248,11 @@ public sealed partial class Database
     /// when <see cref="DatabaseOptions.Cache"/> is set) the result set is buffered once and replayed through
     /// <paramref name="read"/> on every hit, so callers always get fresh objects.
     /// </summary>
-    private async ValueTask<Result<TResult>> ReadAsync<TResult>(CommandContext context, CachePolicy? cache, IReadOnlyList<string> tables,
+    /// <remarks>
+    /// The cache tags (the tables a statement reads, from <paramref name="tablesFrom"/>, else <paramref name="table"/>) are only
+    /// worked out when a result is loaded and stored; a hit never walks the statement.
+    /// </remarks>
+    private async ValueTask<Result<TResult>> ReadAsync<TResult>(CommandContext context, CachePolicy? cache, SqlStatement? tablesFrom, string? table,
         Func<DbDataReader, CancellationToken, ValueTask<TResult>> read, Func<TResult, long>? rows)
     {
         if (cache is null || Options.Cache is not { } store || _transaction is not null)
@@ -260,7 +265,7 @@ public sealed partial class Database
                 }, rows).ConfigureAwait(false);
         }
 
-        var loaded = await store.GetOrLoadAsync(CacheKey(context), cache, CacheTags(tables), async token =>
+        var loaded = await store.GetOrLoadAsync(CacheKey(context), cache, async token =>
         {
             // Background refreshes run later with their own token; the caller's request may be long gone.
             var run = token == context.CancellationToken ? context : context.Renew(token);
@@ -270,7 +275,9 @@ public sealed partial class Database
                     await using var reader = await cmd.ExecuteReaderAsync(token).ConfigureAwait(false);
                     return await BufferedResultSet.CaptureAsync(reader, token).ConfigureAwait(false);
                 }, static set => set.Rows.Length).ConfigureAwait(false);
-            return buffered.IsFailure ? buffered.Error! : Result<(object, long)>.Success((buffered.Value!, buffered.Value!.Size));
+            if (buffered.IsFailure) return buffered.Error!;
+            var tables = tablesFrom is not null ? SqlTables.Of(tablesFrom) : table is null ? [] : [table];
+            return Result<(object, long, IReadOnlyList<string>)>.Success((buffered.Value!, buffered.Value!.Size, CacheTags(tables)));
         }, context.CancellationToken, store.Config.PublishEvents ? hit => Publish(hit
             ? new CL.Data.Events.CacheHitEvent(Name, Provider.Name, Options.Time.GetUtcNow(), context.Table)
             : new CL.Data.Events.CacheMissEvent(Name, Provider.Name, Options.Time.GetUtcNow(), context.Table)) : null).ConfigureAwait(false);
@@ -342,6 +349,24 @@ public sealed partial class Database
         }
     }
 
+    /// <summary>Runs a <c>SELECT 1 ... LIMIT 1</c> on the primary (inside the current transaction, if any).</summary>
+    private async ValueTask<Result<bool>> RowExistsAsync(SqlStatement check, string table, CancellationToken ct)
+    {
+        var rendered = Render(check);
+        if (rendered.IsFailure) return rendered.Error!;
+        var context = new CommandContext(this, new CommandSpec(rendered.Value!.Text, rendered.Value.Parameters), CommandKind.Query, ct)
+        {
+            Operation = "select",
+            Table = table,
+            IsWrite = true,   // read your own write: always the primary
+        };
+        return await RunAsync(context, 0, static async (cmd, _, token) =>
+        {
+            await using var reader = await cmd.ExecuteReaderAsync(token).ConfigureAwait(false);
+            return await reader.ReadAsync(token).ConfigureAwait(false);
+        }).ConfigureAwait(false);
+    }
+
     private async ValueTask<Result<int>> ExecuteWritesCoreAsync<T>(IReadOnlyList<WriteCommand> commands, IReadOnlyList<T> entities,
         IEntityAccessor<T> accessor, CancellationToken ct)
     {
@@ -400,6 +425,14 @@ public sealed partial class Database
                 if (result.Value != 0) return DataErrors.Conflict($"A row in '{command.Table}' with the same key belongs to another tenant.");
                 continue;
             }
+            if (command.Check == RowCheck.ExactlyOne && result.Value == 0 && command.MatchCheck is { } match
+                && Provider.Capabilities.AffectedRowsCountChangesOnly)
+            {
+                // The provider counts changed rows only: the row may have matched with nothing to change.
+                var matched = await RowExistsAsync(match, command.Table, ct).ConfigureAwait(false);
+                if (matched.IsFailure) return matched.Error!;
+                if (matched.Value) result = 1;
+            }
             if (command.Check == RowCheck.ExactlyOne && result.Value != 1)
                 return accessor.Map.ConcurrencyToken is not null
                     ? DataErrors.Concurrency(command.Table)
@@ -411,63 +444,108 @@ public sealed partial class Database
         return total;
     }
 
-    /// <summary>Streams the rows of a SELECT, holding one connection while the caller enumerates.</summary>
-    internal async IAsyncEnumerable<T> StreamAsync<T>(SelectStatement statement, IEntityAccessor<T> accessor,
+    /// <summary>
+    /// Streams the rows of a SELECT, holding one connection while the caller enumerates. Opening the stream runs through the
+    /// pipeline like every other read: interceptors, telemetry, routing (read preference, replicas, stickiness) and
+    /// resilience (retry, breaker, timeout) all apply. Only the open and the first execute can be retried; a failure while
+    /// rows are being read is thrown, since rows may already have been handed out.
+    /// </summary>
+    internal async IAsyncEnumerable<T> StreamAsync<T>(SelectStatement statement, IEntityAccessor<T> accessor, string? table,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
     {
         var rendered = Render(statement);
         if (rendered.IsFailure) throw new DataQueryException(rendered.Error!);
-
-        DbConnection? connection = null;
-        DbCommand? command = null;
-        DbDataReader? reader = null;
-        try
+        var context = new CommandContext(this, new CommandSpec(rendered.Value!.Text, rendered.Value.Parameters), CommandKind.Query, ct)
         {
-            int[] ordinals;
+            Operation = "select",
+            Table = table,
+            Tags = table is null ? [] : [DataTags.Table(table)],
+        };
+
+        var opened = await OpenStreamAsync(context, accessor.Map).ConfigureAwait(false);
+        if (opened.IsFailure) throw new DataQueryException(opened.Error!);
+        await using var stream = opened.Value!;
+        while (true)
+        {
+            T row;
             try
             {
-                if (_transaction is { } tx)
-                {
-                    command = tx.Handles.Connection.CreateCommand();
-                    command.Transaction = tx.Handles.Transaction;
-                }
-                else
-                {
-                    connection = await Primary.DataSource.OpenConnectionAsync(ct).ConfigureAwait(false);
-                    command = connection.CreateCommand();
-                }
-                command.CommandText = rendered.Value!.Text;
-                command.CommandTimeout = Config.CommandTimeoutSeconds;
-                for (var i = 0; i < rendered.Value.Parameters.Count; i++)
-                    command.Parameters.Add(rendered.Value.Parameters[i].Create(Provider.Types, Provider.Dialect.ParameterName(i)));
-                reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
-                ordinals = RowReader.Ordinals(reader, accessor.Map, NamingPolicy);
+                if (!await stream.Reader.ReadAsync(ct).ConfigureAwait(false)) yield break;
+                row = accessor.Materialize(stream.Reader, stream.Ordinals);
             }
             catch (Exception ex)
             {
                 throw new DataQueryException(Executor.Map(ex, ct));
             }
-
-            while (true)
-            {
-                T row;
-                try
-                {
-                    if (!await reader.ReadAsync(ct).ConfigureAwait(false)) yield break;
-                    row = accessor.Materialize(reader, ordinals);
-                }
-                catch (Exception ex)
-                {
-                    throw new DataQueryException(Executor.Map(ex, ct));
-                }
-                yield return row;
-            }
+            yield return row;
         }
-        finally
+    }
+
+    /// <summary>An open reader and what it needs; disposing it closes the reader, the command and an owned connection.</summary>
+    private sealed class OpenStream(DbConnection? connection, DbCommand command, DbDataReader reader, int[] ordinals) : IAsyncDisposable
+    {
+        public DbDataReader Reader { get; } = reader;
+        public int[] Ordinals { get; } = ordinals;
+
+        public async ValueTask DisposeAsync()
+        {
+            await Reader.DisposeAsync().ConfigureAwait(false);
+            await command.DisposeAsync().ConfigureAwait(false);
+            if (connection is not null) await connection.DisposeAsync().ConfigureAwait(false);
+        }
+    }
+
+    private ValueTask<Result<OpenStream>> OpenStreamAsync(CommandContext context, EntityMap map)
+    {
+        if (_transaction is not null) context.InTransaction = true;
+        if (!CL.Data.Telemetry.DataTelemetry.Active) return OpenStreamPipelineAsync(context, map);
+        var started = Stopwatch.GetTimestamp();
+        CL.Data.Telemetry.DataTelemetry.StartSpan(context);
+        return CL.Data.Telemetry.DataTelemetry.ObserveAsync(context, OpenStreamPipelineAsync(context, map), started);
+    }
+
+    private ValueTask<Result<OpenStream>> OpenStreamPipelineAsync(CommandContext context, EntityMap map) =>
+        _pipeline.ExecuteAsync(context, async ctx =>
+        {
+            var started = Stopwatch.GetTimestamp();
+            var node = ctx.Node ?? Primary;
+            var result = await OpenOnNodeAsync(node, ctx, map).ConfigureAwait(false);
+            ctx.Elapsed = Stopwatch.GetElapsedTime(started);
+            _diagnostics.After(ctx, node, result);
+            return result;
+        });
+
+    private async ValueTask<Result<OpenStream>> OpenOnNodeAsync(DataNode node, CommandContext ctx, EntityMap map)
+    {
+        var ct = ctx.CancellationToken;
+        DbConnection? owned = null;
+        DbCommand? command = null;
+        DbDataReader? reader = null;
+        var opening = false;
+        try
+        {
+            if (_transaction is { } tx)
+            {
+                command = tx.Handles.Connection.CreateCommand();
+                command.Transaction = tx.Handles.Transaction;
+            }
+            else
+            {
+                opening = true;
+                owned = await node.DataSource.OpenConnectionAsync(ct).ConfigureAwait(false);
+                opening = false;
+                command = owned.CreateCommand();
+            }
+            _executor.Prepare(command, ctx.Spec);
+            reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
+            return new OpenStream(owned, command, reader, RowReader.Ordinals(reader, map, NamingPolicy));
+        }
+        catch (Exception ex)
         {
             if (reader is not null) await reader.DisposeAsync().ConfigureAwait(false);
             if (command is not null) await command.DisposeAsync().ConfigureAwait(false);
-            if (connection is not null) await connection.DisposeAsync().ConfigureAwait(false);
+            if (owned is not null) await owned.DisposeAsync().ConfigureAwait(false);
+            return _executor.Fail(ctx, ex, opening, ct);
         }
     }
 

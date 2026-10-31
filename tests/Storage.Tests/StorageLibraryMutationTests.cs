@@ -249,12 +249,25 @@ public sealed class StorageLibraryMutationTests
         var configPath = Path.Combine(context.ConfigDirectory, "config.storage.local.json");
         var stableProxy = library.DefaultStorage;
 
-        // CodeLogic writes config via "<file>.tmp" + rename. A directory in the temp file's place
-        // makes the save fail on every OS (a FileShare.None lock does not stop a rename on Linux).
-        Directory.CreateDirectory(configPath + ".tmp");
-        var result = await library.AddOrUpdateConnectionAsync(
-            "Default",
-            new LocalConnectionConfig { RootPath = replacementRoot });
+        // CodeLogic writes config to a temp file and renames it over the target. Its temp name is unique per write
+        // since CodeLogic 5.0.32 (it was "<file>.tmp" before), so the test cannot block the temp file. Instead a
+        // directory takes the target's place: renaming a file over a directory fails on every OS, whatever the
+        // temp name (a FileShare.None lock does not stop a rename on Linux, and permissions do not stop root).
+        var persisted = await File.ReadAllBytesAsync(configPath);
+        File.Delete(configPath);
+        Directory.CreateDirectory(configPath);
+        Result result;
+        try
+        {
+            result = await library.AddOrUpdateConnectionAsync(
+                "Default",
+                new LocalConnectionConfig { RootPath = replacementRoot });
+        }
+        finally
+        {
+            Directory.Delete(configPath, recursive: true);
+            await File.WriteAllBytesAsync(configPath, persisted);
+        }
 
         Assert.True(result.IsFailure);
         Assert.Equal(oldRoot, stableProxy.Root);

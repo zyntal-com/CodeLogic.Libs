@@ -97,6 +97,8 @@ var next = await q.OrderBy(p => p.Id).ToCursorPageAsync(100, after: cursor.NextC
 await foreach (var p in db.Query<Product>().AsAsyncEnumerable()) { /* one row at a time, one connection */ }
 ```
 
+Streams bypass the result cache but otherwise run like any read: interceptors, telemetry, read routing (`ReadFrom`, replicas) and retries of the open all apply. A failure while rows are being read throws `DataQueryException`.
+
 ## Set-based writes
 
 ```csharp
@@ -173,7 +175,7 @@ var hits = await Above.ToListAsync(db, 25m);
 - **Concurrency tokens:** a `[ConcurrencyToken]` integer is incremented on every update (SQL Server can use `rowversion`). A lost update returns `data.concurrency`.
 - **Tenancy:** `[TenantKey]` entities are filtered and stamped automatically.
   - The tenant comes from `DatabaseOptions.TenantAccessor`, or from a view: `db.ForTenant(tenantId)`.
-  - A missing tenant returns `data.tenant_missing`.
+  - A missing tenant returns `data.tenant_missing`, for reads and for every write: insert, upsert, bulk copy, update, delete and counters. A tenant value set on the entity is not enough; write for a specific tenant through `db.ForTenant(id)`.
 - **Global filters:** `DatabaseOptions.Filters` holds standing conditions, for example `DataFilter.For<Product>(p => p.Active)`. Opt out per query with `IgnoreFilters()`. Soft delete is one of these filters.
 - **Interceptors:** `IDataInterceptor` runs around every command (`OnExecutingAsync`, `OnExecutedAsync`) and around every entity save (`OnSavingAsync`, `OnSavedAsync`).
 

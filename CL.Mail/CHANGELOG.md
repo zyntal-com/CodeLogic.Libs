@@ -37,6 +37,7 @@ All notable changes to **CodeLogic.Mail** are documented here. Versions follow
   | `InvalidSender` | `mail.invalid_sender` | `ValidationError` |
   | `InvalidSubject` | `mail.invalid_subject` | `ValidationError` |
   | `InvalidBody` (new) | `mail.invalid_body` | `ValidationError` |
+  | `InvalidHeader` (new) | `mail.invalid_header` | `ValidationError` |
   | `TemplateNotFound` | `mail.template_not_found` | `NotFoundError` |
   | `InvalidTemplateId` (new) | `mail.invalid_template_id` | `ValidationError` |
   | `TemplateRenderingFailed` | `mail.template_rendering_failed` | `InternalError` |
@@ -83,6 +84,12 @@ All notable changes to **CodeLogic.Mail** are documented here. Versions follow
   addresses fail with `mail.invalid_sender` / `mail.invalid_recipient` instead of an unexpected
   exception, an empty body is `mail.invalid_body` (was `MailError.InvalidRecipient`), and an
   attachment path that does not exist fails with `mail.attachment_not_found` (was silently dropped).
+- **Custom headers, the subject and the sender name are validated.** A header name that is empty, not
+  printable US-ASCII, or contains a space or `:` used to make MimeKit throw, which surfaced as
+  `mail.unknown` (`InternalError`); it is now `mail.invalid_header` (`ValidationError`). The same code
+  rejects a header value with CR, LF or NUL, and a custom header the service writes itself (From, To, Cc,
+  Bcc, Subject, MIME-Version, Importance, Content-*). A `Subject` or `FromName` containing CR or LF fails
+  with `mail.invalid_subject` / `mail.invalid_sender` instead of being sent.
 - An unreachable SMTP/IMAP server (`SocketException`) is now `mail.smtp_connection_failed` /
   `mail.imap_connection_failed` (`UnavailableError`) instead of `Unknown` / `ImapError`.
 - A template file that deserializes to nothing is `mail.template_rendering_failed` (was
@@ -106,6 +113,9 @@ All notable changes to **CodeLogic.Mail** are documented here. Versions follow
 ### Changed
 
 - Package versions are pinned (MailKit and MimeKit 4.18.2) instead of floating (`4.*`), so a build restores the same dependencies every time.
+- `SimpleTemplateEngine` uses source-generated regexes (`[GeneratedRegex]`) for its block, section and
+  placeholder patterns instead of parsing them through the static `Regex` cache on each render. Output is
+  unchanged.
 
 ## 2026-10-27
 
