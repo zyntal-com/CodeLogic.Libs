@@ -16,9 +16,11 @@ you are working on before changing anything.
 | 5.x | .NET 11, C# 15 | `main` | `prerelease/5.x` | `release/5.x` | `5.0` | `[5.0.0, 6.0.0)` |
 | 4.x | .NET 10, C# 13 | `support/4.x` | `prerelease/4.x` | `release/4.x` | `4.9` | `[4.9.0, 5.0.0)` |
 
-> **Current state (2026-10-31):** `main` still carries the 4.9 code. The 5.0 work (net11, CodeLogic 5
-> `Result`/`Error`) is in draft PR #28 from `feature/dotnet-11`. It is deliberately held back while the
-> database libraries get a major redesign. **No library has been published as 5.x.**
+> **Current state (2026-10-31):** `main` is the 5.x line (net11, CodeLogic 5 `Result`/`Error`) and builds
+> against the newest CodeLogic 5.0 preview. **No library has been published as 5.x**: the database
+> libraries get a major redesign first. The `Deploy Documentation` workflow is **disabled**, so the public
+> docs site keeps showing 4.9 until the 5.x libraries are released. Do not run Promote or re-enable that
+> workflow without the owner's explicit go-ahead.
 
 - **Integration branches** (`main`, `support/**`) take changes through pull requests only, and the
   required checks must pass. That means the full suite, including the MySQL, PostgreSQL and SQL Server
