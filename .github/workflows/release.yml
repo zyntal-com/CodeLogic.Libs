@@ -76,6 +76,9 @@ jobs:
           $tagPattern = if ('${{ github.ref_name }}'.StartsWith('prerelease/')) { "libs-preview-v$line-*" } else { "libs-v$line-*" }
           "line=$line" >> $env:GITHUB_OUTPUT
           $lastTag = git describe --tags --abbrev=0 --match $tagPattern 2>$null
+          # No tag yet is not an error: the first release of a line builds everything. Clear git's exit code, or the
+          # runner's pwsh wrapper (which ends every step with `exit $LASTEXITCODE`) fails the step afterwards.
+          $global:LASTEXITCODE = 0
 
           if ($buildAll -or -not $lastTag) {
             Write-Host "Building all libraries (build_all=$buildAll, lastTag=$lastTag)"
