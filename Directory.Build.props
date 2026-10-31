@@ -81,7 +81,7 @@
     <!-- Pinned to the latest CodeLogic 5.0 preview on nuget.org (net11, union Result/Error). Bump it
          as new previews ship; switch to a 5.0.x GA version once CodeLogic 5.0 is stable. The release
          pipeline rewrites each published nuspec's CodeLogic dependency to the supported range. -->
-    <CodeLogicPackageVersion Condition="'$(CodeLogicPackageVersion)' == ''">5.0.30-preview</CodeLogicPackageVersion>
+    <CodeLogicPackageVersion Condition="'$(CodeLogicPackageVersion)' == ''">5.0.33-preview</CodeLogicPackageVersion>
   </PropertyGroup>
   <Import Project="build/StrongName.props" />
 </Project>
