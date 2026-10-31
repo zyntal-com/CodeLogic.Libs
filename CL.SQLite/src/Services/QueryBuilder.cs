@@ -842,7 +842,7 @@ public sealed class QueryBuilder<T> where T : class, new()
                 await using var cmd = BuildCommand(conn, sql, parms);
                 var raw = await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
                 if (raw is null || raw is DBNull) return default!;
-                return (TResult)Convert.ChangeType(raw, typeof(TResult))!;
+                return (TResult)SQLiteValueConverter.FromDbValue(raw, typeof(TResult))!;
             }, _connectionId, ct).ConfigureAwait(false);
 
             sw.Stop();

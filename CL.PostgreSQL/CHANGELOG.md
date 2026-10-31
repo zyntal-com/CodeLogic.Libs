@@ -16,6 +16,10 @@ All notable changes to **CodeLogic.PostgreSQL** are documented here. Versions fo
 
 - Still on Npgsql 10, which runs on .NET 11. Npgsql 11 follows once it ships.
 
+### Fixed
+
+- `array.Contains(x.Column)` in a `Where` predicate threw `NotSupportedException` when the caller compiles with C# 14 or later (the default on .NET 10 and 11). C# 14 binds it to `MemoryExtensions.Contains(ReadOnlySpan<T>, T)`, and the translator now reads the array through the span conversion and emits `IN (...)` again.
+
 ## 2026-10-26
 
 ### Security
