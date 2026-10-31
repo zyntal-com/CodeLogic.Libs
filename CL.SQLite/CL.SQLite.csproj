@@ -9,7 +9,7 @@
     <PackageTags>sqlite;database;orm;linq</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <Authors>Zyntal.com</Authors>
-    <Description>SQLite database library with connection pooling, LINQ queries, and table sync for CodeLogic 4</Description>
+    <Description>SQLite database library with connection pooling, LINQ queries, and table sync for CodeLogic 5</Description>
     <NoWarn>CS1591</NoWarn>
   </PropertyGroup>
   <ItemGroup>

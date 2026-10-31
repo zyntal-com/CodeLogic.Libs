@@ -9,7 +9,7 @@
     <PackageTags>smtp;imap;email;template</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <Authors>Zyntal.com</Authors>
-    <Description>SMTP/IMAP email library with template engine for CodeLogic 4 applications</Description>
+    <Description>SMTP/IMAP email library with template engine for CodeLogic 5 applications</Description>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="MailKit" Version="4.*" />

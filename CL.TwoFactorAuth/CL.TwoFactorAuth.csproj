@@ -7,7 +7,7 @@
     <Authors>Zyntal.com</Authors>
     <Company>Zyntal.com</Company>
     <Product>CL.TwoFactorAuth</Product>
-    <Description>TOTP 2FA with QR code generation for CodeLogic 4 applications</Description>
+    <Description>TOTP 2FA with QR code generation for CodeLogic 5 applications</Description>
     <PackageId>CodeLogic.TwoFactorAuth</PackageId>
     <PackageTags>2fa;totp;qrcode;authentication</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>

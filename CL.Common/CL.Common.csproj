@@ -9,7 +9,7 @@
     <PackageTags>utilities;imaging;caching;hashing;compression</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <Authors>Zyntal.com</Authors>
-    <Description>General-purpose utility toolkit for CodeLogic 4 applications</Description>
+    <Description>General-purpose utility toolkit for CodeLogic 5 applications</Description>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="K4os.Compression.LZ4.Streams" Version="1.3.8" />

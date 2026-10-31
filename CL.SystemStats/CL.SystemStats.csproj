@@ -10,7 +10,7 @@
     <Authors>Zyntal.com</Authors>
     <Company>Zyntal.com</Company>
     <Product>CL.SystemStats</Product>
-    <Description>Cross-platform system statistics (CPU, memory, processes, uptime) for CodeLogic 4 — Windows and Linux via /proc</Description>
+    <Description>Cross-platform system statistics (CPU, memory, processes, uptime) for CodeLogic 5 — Windows and Linux via /proc</Description>
     <PackageId>CodeLogic.SystemStats</PackageId>
     <PackageTags>cpu;memory;process;monitoring;cross-platform</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>

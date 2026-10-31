@@ -7,7 +7,7 @@
     <Authors>Zyntal.com</Authors>
     <Company>Zyntal.com</Company>
     <Product>CL.SocialConnect</Product>
-    <Description>Social platform integrations (Discord, Steam) for CodeLogic 4 applications</Description>
+    <Description>Social platform integrations (Discord, Steam) for CodeLogic 5 applications</Description>
     <PackageId>CodeLogic.SocialConnect</PackageId>
     <PackageTags>discord;steam;webhook;social</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
