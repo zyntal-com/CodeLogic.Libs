@@ -74,6 +74,9 @@ jobs:
         with:
           global-json-file: global.json
 
+      - name: Enable local_infile (native bulk copy)
+        run: docker exec $(docker ps -q --filter ancestor=mysql:8.4) mysql -uroot -e "SET GLOBAL local_infile = 1"
+
       - name: Run CL.Data MySQL tests
         run: dotnet test tests/Data.MySql.Tests/Data.MySql.Tests.csproj --configuration Release -p:CodeLogicFromNuGet=true --logger "console;verbosity=normal"
 

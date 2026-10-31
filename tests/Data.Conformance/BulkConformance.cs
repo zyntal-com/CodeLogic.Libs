@@ -46,7 +46,11 @@ public abstract class BulkConformance(ProviderFixture fixture) : ConformanceSuit
         var receipt = (await Db.Bulk<Product>().InsertAsync(source)).ValueOrThrow();
 
         Assert.Equal(10_000, receipt.Rows);
-        Assert.True(receipt.Native, "the provider's native bulk path should run");
+        // MySQL's native path (LOAD DATA LOCAL INFILE) also needs the server's local_infile, which MySQL 8.4 ships off;
+        // without it CL.Data falls back to batched inserts, which must give the same result.
+        var nativeExpected = Db.Provider.Name != "mysql"
+            || (await Db.SqlScalarAsync<long>($"SELECT @@local_infile")).ValueOrThrow() == 1;
+        Assert.Equal(nativeExpected, receipt.Native);
         Assert.Equal(10_000L, (await Db.Query<Product>().Where(p => p.Sku.StartsWith("B-")).CountAsync()).ValueOrThrow());
 
         var sample = (await Db.Query<Product>().Where(p => p.Sku == "B-004242").FirstOrDefaultAsync()).ValueOrThrow()!;
