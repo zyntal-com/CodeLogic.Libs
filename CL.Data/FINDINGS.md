@@ -93,7 +93,8 @@ the current numbers) and for time relative to Dapper or raw ADO.NET in the same 
 
 - **Libs:** `feature/cl-data` with every WP branch (`cl-data/<wp>`) merged in locally.
 - **CodeLogic:** `feature/result-throw-if-failure` adds `Result.ThrowIfFailure()` and `ResultFailedException`, and moves the README and docs to 5.x. The libraries build against this local source (`CodeLogicFromNuGet=false`). At the end: publish CodeLogic and switch the libraries back to NuGet.
-- **4.x fix:** see the table above.
+- **4.x fix:** see the table above. The branch `fix/4x-span-contains` builds on top of `origin/support/4.x`, which already has 485cb9a, the two-argument span `Contains` fix. It adds only the three-argument form (enum and nullable arrays), so the two complement each other. The local `support/4.x` label is stale; compare against `origin/support/4.x`.
+- **Old database libraries:** no code, project, CI or release references remain (WP-B2). What's left is history: the parity checklist, a release-workflow comment about 4.8.86, and the 4.9 benchmark baseline project.
 - **CI cannot pass until CodeLogic 5 is published.** CI builds with `-p:CodeLogicFromNuGet=true`, but the libraries and tests use `Result.ThrowIfFailure()` and `ResultFailedException`. Those exist only on the local CodeLogic branch, not in `CodeLogic 5.0.29-preview` on nuget.org. Publish CodeLogic and bump `CodeLogicPackageVersion` before any CI run means anything.
 
 ## Test environment notes

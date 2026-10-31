@@ -137,8 +137,8 @@ var status = await mysql.HealthCheckAsync();
 
 ### Databases
 
-Databases use **CL.Data**: `CodeLogic.Data` (typed LINQ queries, repositories, upserts, joins, grouping, cursor
-paging, transactions, batches) plus one provider package per database: `CodeLogic.Data.MySql`,
+Databases use **[CL.Data](data/index.md)**: `CodeLogic.Data` (typed LINQ, repositories, joins, schema sync and
+migrations, unified caching, read replicas, resilience, OpenTelemetry, bulk copy) plus one provider package per database: `CodeLogic.Data.MySql`,
 `CodeLogic.Data.PostgreSql`, `CodeLogic.Data.SqlServer` and `CodeLogic.Data.Sqlite`. It replaces the 4.x libraries
 CL.MySQL2, CL.MSSQL, CL.PostgreSQL and CL.SQLite, which stay on the `support/4.x` line.
 

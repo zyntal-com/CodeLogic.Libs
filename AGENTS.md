@@ -21,9 +21,9 @@ you are working on before changing anything.
 | 4.x | .NET 10, C# 13 | `support/4.x` | `prerelease/4.x` | `release/4.x` | `4.9` | `[4.9.0, 5.0.0)` |
 
 > **Current state (2026-10-31):** `main` is the 5.x line (net11, CodeLogic 5 `Result`/`Error`) and builds
-> against the newest CodeLogic 5.0 preview. **No library has been published as 5.x**: the database
-> libraries get a major redesign first (CL.Data, on `feature/cl-data`; work packages `cl-data/<wp>` merge
-> into it locally). The `Deploy Documentation` workflow is **disabled**, so the public
+> against the newest CodeLogic 5.0 preview. **No library has been published as 5.x.** CL.Data, the redesigned
+> database framework, is complete on `feature/cl-data` (work packages `cl-data/<wp>` merged locally) and waits for
+> CodeLogic 5 to be published with `Result.ThrowIfFailure` and for the owner's release PR. See `CL.Data/FINDINGS.md`. The `Deploy Documentation` workflow is **disabled**, so the public
 > docs site keeps showing 4.9 until the 5.x libraries are released. Do not run Promote or re-enable that
 > workflow without the owner's explicit go-ahead.
 
@@ -71,6 +71,9 @@ dotnet test tests/Storage.Tests -c Release -p:CodeLogicFromNuGet=true           
   - **CL.Data (5.x):** a connection string per provider, with the database created first:
     `CL_DATA_MYSQL_CS` (MySQL 8.4), `CL_DATA_PG_CS` (PostgreSQL 18), `CL_DATA_MSSQL_CS` (SQL Server 2019).
     SQLite always runs. Every provider runs the shared suites in `tests/Data.Conformance`.
+    Live replica pairs: `docker compose -f tests/replicas/docker-compose.yml up -d`, then `CL_DATA_REPLICAS=1`.
+    `CL_DATA_FORCE_REFLECTION=1` runs the suites without generated mapping; run both modes before a release.
+    Performance budgets: `dotnet run -c Release --project benchmarks/Data.Benchmarks -- --check-budgets benchmarks/budgets.json`.
   - **4.x database libraries:** `CL_MYSQL2_TEST_HOST/PORT/DB/USER/PASS`, `CL_PG_TEST_HOST/PORT/DB/USER/PASS`,
     `CL_MSSQL_TEST_CONNECTION_STRING` (database `cl_test` created first).
   - **Storage:** `docker compose -f tests/Storage.Integration.Tests/docker-compose.yml up -d --build`,
@@ -103,7 +106,8 @@ dotnet test tests/Storage.Tests -c Release -p:CodeLogicFromNuGet=true           
     error.
   - Every captured value is a parameter. Never splice values into SQL text.
 - **.NET 11 behavior changes to remember:**
-  - A double → decimal cast is exact, so CL.SQLite converts through the shortest round-trip string.
+  - A double → decimal cast is exact, so the SQLite provider (CL.SQLite in 4.x) converts through the shortest
+    round-trip string.
   - Zstandard is built in: `CompressionHelper.CompressZstandard`.
 - **Modern C#:** collection expressions, including `[with(StringComparer.OrdinalIgnoreCase), …]`;
   `System.Threading.Lock`; interpolated strings for logging (disabled levels cost nothing).
