@@ -49,7 +49,7 @@ public abstract class ProviderStorageConfigBase<TConnection> : ProviderStorageCo
     where TConnection : StorageConnectionConfigBase
 {
     /// <summary>Gets or sets the provider connections keyed by case-insensitive connection ID.</summary>
-    public Dictionary<string, TConnection> Connections { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    public Dictionary<string, TConnection> Connections { get; set; } = [with(StringComparer.OrdinalIgnoreCase)];
 
     /// <inheritdoc />
     public override ConfigValidationResult Validate()

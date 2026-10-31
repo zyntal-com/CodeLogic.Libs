@@ -65,7 +65,7 @@ internal sealed class IsolatedPoolHandle<TClient>(ProviderClientPool<TClient> po
 internal static class SharedResources
 {
     private static readonly Lock Gate = new();
-    private static readonly Dictionary<string, Holder> Resources = new(StringComparer.Ordinal);
+    private static readonly Dictionary<string, Holder> Resources = [with(StringComparer.Ordinal)];
 
     private sealed class Holder(object value, Func<object, ValueTask> dispose)
     {
@@ -76,7 +76,7 @@ internal static class SharedResources
         /// <summary>Cancels the linger of a resource nobody uses, so it is disposed at once.</summary>
         public CancellationTokenSource? Linger { get; set; }
         /// <summary>The storage libraries that have used the resource, so stopping one flushes only its own.</summary>
-        public HashSet<object> Owners { get; } = new(ReferenceEqualityComparer.Instance);
+        public HashSet<object> Owners { get; } = [with(ReferenceEqualityComparer.Instance)];
     }
 
     /// <summary>Returns the shared resource for a key, creating it for the first user.</summary>

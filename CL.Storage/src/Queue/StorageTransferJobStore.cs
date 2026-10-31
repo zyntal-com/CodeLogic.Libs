@@ -92,11 +92,11 @@ public interface IStorageTransferJobStore
 public sealed class InMemoryStorageTransferJobStore : IStorageTransferJobStore
 {
     private readonly Lock _gate = new();
-    private readonly Dictionary<string, StorageTransferJobRecord> _jobs = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, StorageTransferJobRecord> _jobs = [with(StringComparer.Ordinal)];
     // The highest fencing token issued per id; kept after a removal so a re-added id never reuses a token.
-    private readonly Dictionary<string, long> _fences = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, long> _fences = [with(StringComparer.Ordinal)];
     // The last revision of each removed id, so a re-added id continues above it.
-    private readonly Dictionary<string, long> _revisions = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, long> _revisions = [with(StringComparer.Ordinal)];
     private readonly TimeProvider _time;
 
     /// <summary>Creates an empty store.</summary>

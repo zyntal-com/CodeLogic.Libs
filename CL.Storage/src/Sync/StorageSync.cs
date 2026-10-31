@@ -129,7 +129,7 @@ public static class StorageSync
             OptionsDigest = options.Fingerprint(),
             Actions = Order(ReadThroughLinks(actions, diff.Value!)),
             Unchanged = unchanged,
-            Agreed = options.StateStore is not null ? agreed : new Dictionary<string, StorageSyncBaselineEntry>(),
+            Agreed = options.StateStore is not null ? agreed : [],
             Warnings = warnings,
             CreatedAt = DateTimeOffset.UtcNow
         };
@@ -239,7 +239,7 @@ public static class StorageSync
     /// <summary>Serializes applies of one sync within this process; an entry is dropped when no one holds or waits for it.</summary>
     private sealed class ApplyGate : IDisposable
     {
-        private static readonly Dictionary<string, ApplyGate> Gates = new(StringComparer.Ordinal);
+        private static readonly Dictionary<string, ApplyGate> Gates = [with(StringComparer.Ordinal)];
         private readonly SemaphoreSlim _semaphore = new(1, 1);
         private readonly string _syncId;
         private int _users;

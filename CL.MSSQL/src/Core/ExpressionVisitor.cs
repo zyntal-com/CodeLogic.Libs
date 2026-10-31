@@ -13,7 +13,7 @@ namespace CL.MSSQL.Core;
 internal sealed class SqlServerExpressionVisitor : ExpressionVisitor
 {
     private readonly StringBuilder _sql = new();
-    private readonly Dictionary<string, object?> _parameters = new();
+    private readonly Dictionary<string, object?> _parameters = [];
     private int _paramCounter;
     private int _largestInListCount;
     private readonly string _tableAlias;

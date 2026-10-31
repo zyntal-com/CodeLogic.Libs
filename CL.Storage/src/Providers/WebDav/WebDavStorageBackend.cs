@@ -712,7 +712,7 @@ public sealed class WebDavStorageBackend : IStorageBackend, IStorageMetadataServ
         ContentType = item.ContentType,
         ETag = item.Etag,
         Metadata = item.FoundProperties?.ToDictionary(pair => $"{pair.Key.Namespace}{pair.Key.LocalName}", pair => pair.Value, StringComparer.Ordinal) ??
-            new Dictionary<string, string>()
+            []
     };
 
     private static StorageItem DirectoryItem(string path) => new()

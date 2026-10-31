@@ -350,7 +350,7 @@ public sealed class SQLiteLibrary : ILibrary, IConfigReloadable
 
     private static Dictionary<string, SQLiteDatabaseConfig> EnabledDatabases(SQLiteConfig? config) =>
         config?.Databases.Where(d => d.Value.Enabled).ToDictionary(d => d.Key, d => d.Value)
-        ?? new Dictionary<string, SQLiteDatabaseConfig>();
+        ?? [];
 
     // ── IDisposable ───────────────────────────────────────────────────────────
 

@@ -36,14 +36,15 @@ public static class StorageErrorInfo
     /// <summary>Details key naming an internal object (a provider's own backup or staging copy) a mutation left behind.</summary>
     public const string LeftBehindKey = "leftBehind";
 
-    private static readonly HashSet<string> TransientCodes = new(StringComparer.Ordinal)
-    {
+    private static readonly HashSet<string> TransientCodes =
+    [
+        with(StringComparer.Ordinal),
         StorageErrors.TimeoutCode,
         StorageErrors.UnavailableCode,
         StorageErrors.ConnectionFailedCode,
         StorageErrors.ConnectionLostCode,
         StorageErrors.ServerBusyCode
-    };
+    ];
 
     /// <summary>Returns whether repeating the operation later may succeed without caller changes.</summary>
     /// <param name="error">Error to classify.</param>

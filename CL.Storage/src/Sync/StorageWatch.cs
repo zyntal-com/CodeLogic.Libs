@@ -310,7 +310,7 @@ public static class StorageWatch
 
     private static HashSet<string> Children(Dictionary<string, HashSet<string>> byParent, string parent)
     {
-        if (!byParent.TryGetValue(parent, out var children)) byParent[parent] = children = new HashSet<string>(StringComparer.Ordinal);
+        if (!byParent.TryGetValue(parent, out var children)) byParent[parent] = children = [with(StringComparer.Ordinal)];
         return children;
     }
 

@@ -505,7 +505,7 @@ internal sealed class SchemaAnalyzer
             var colName = reader.GetString(2);
             if (!result.TryGetValue(name, out var info))
             {
-                info = new IndexInfo(name, isUnique, new List<string>());
+                info = new IndexInfo(name, isUnique, []);
                 result[name] = info;
             }
             info.Columns.Add(colName);

@@ -249,7 +249,7 @@ public sealed class QueryBuilder<T> where T : class, new()
     public QueryBuilder<T> Exclude(params Expression<Func<T, object?>>[] columns)
     {
         ArgumentNullException.ThrowIfNull(columns);
-        _excluded ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        _excluded ??= [with(StringComparer.OrdinalIgnoreCase)];
         foreach (var column in columns)
             _excluded.Add(EntityMetadata<T>.RequireColumn(SqlServerExpressionVisitor.TranslateSelector(column)).ColumnName);
         if (EntityMetadata<T>.Columns.All(c => _excluded.Contains(c.ColumnName)))

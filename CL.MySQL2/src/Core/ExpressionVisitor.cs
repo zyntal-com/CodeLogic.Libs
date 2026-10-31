@@ -13,7 +13,7 @@ namespace CL.MySQL2.Core;
 internal sealed class MySqlExpressionVisitor : ExpressionVisitor
 {
     private readonly StringBuilder _sql = new();
-    private readonly Dictionary<string, object?> _parameters = new();
+    private readonly Dictionary<string, object?> _parameters = [];
     private int _paramCounter;
     // Widest generated IN (...) list in this translation, compared once against the
     // configured MaxInClauseValues so an oversized list warns exactly once per build.

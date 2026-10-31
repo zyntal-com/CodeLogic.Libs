@@ -32,9 +32,9 @@ public sealed partial class StorageLibrary : ILibrary, IAsyncDisposable
     // Transfer queues opened from this library; stopping the library stops them first (B43).
     private readonly List<Queue.StorageTransferQueue> _queues = [];
     private readonly SemaphoreSlim _mutationGate = new(1, 1);
-    private readonly Dictionary<string, BackendEntry> _registry = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, StorageServiceProxy> _proxies = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, StorageConnectionInfo> _connectionInfos = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, BackendEntry> _registry = [with(StringComparer.OrdinalIgnoreCase)];
+    private readonly Dictionary<string, StorageServiceProxy> _proxies = [with(StringComparer.OrdinalIgnoreCase)];
+    private readonly Dictionary<string, StorageConnectionInfo> _connectionInfos = [with(StringComparer.OrdinalIgnoreCase)];
     private readonly IReadOnlyDictionary<Type, IStorageBackendFactory> _factories;
     private readonly Action? _defaultConnectionSnapshotCaptured;
     private readonly StorageConnectionObserver _connectionObserver;
@@ -47,7 +47,7 @@ public sealed partial class StorageLibrary : ILibrary, IAsyncDisposable
     private TransferLimits _libraryLimits = TransferLimits.None;
     private LocalStorageConfig? _localConfig;
     private LocalStorageConfig? _persistedLocalConfig;
-    private readonly Dictionary<string, LocalConnectionConfig?> _runtimeLocalOverrides = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, LocalConnectionConfig?> _runtimeLocalOverrides = [with(StringComparer.OrdinalIgnoreCase)];
     private Task? _stopTask;
     private LifecycleState _state;
     private bool _enabled;

@@ -97,7 +97,7 @@ public sealed class SmartCachePool : IAsyncDisposable
             ConnectionId  = connectionId,
             TableName     = tableName,
             Sql           = sql,
-            Parms         = new Dictionary<string, object?>(parms),
+            Parms         = [with(parms)],
             RefreshFactory = refreshFactory,
         });
         Interlocked.Exchange(ref entry.LastReadUtcTicks, DateTime.UtcNow.Ticks);

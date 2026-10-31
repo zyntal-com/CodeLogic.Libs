@@ -766,7 +766,7 @@ public sealed class QueryBuilder<T> where T : class, new()
 
     private (string Clause, Dictionary<string, object?> Params) BuildWhereSql()
     {
-        if (_wheres.Count == 0) return (string.Empty, new());
+        if (_wheres.Count == 0) return (string.Empty, []);
 
         var allParms = new Dictionary<string, object?>();
         var clauses = new List<string>();

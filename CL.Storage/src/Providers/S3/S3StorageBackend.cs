@@ -599,7 +599,7 @@ public sealed class S3StorageBackend :
 
             var values = options.Mode == StorageMetadataUpdateMode.Merge
                 ? UserMetadata(current.Metadata)
-                : new Dictionary<string, string>(StringComparer.Ordinal);
+                : [with(StringComparer.Ordinal)];
             foreach (var (name, value) in snapshot)
                 values[name] = value;
 

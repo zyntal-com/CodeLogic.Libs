@@ -53,7 +53,7 @@ public sealed class WebDavConnectionConfig : StorageConnectionConfigBase
     public string? BearerToken { get; set; }
 
     /// <summary>Gets or sets additional safe HTTP request headers.</summary>
-    public Dictionary<string, string> Headers { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    public Dictionary<string, string> Headers { get; set; } = [with(StringComparer.OrdinalIgnoreCase)];
     /// <summary>Allows clear-text HTTP only when explicitly enabled for a deliberate endpoint.</summary>
     public bool AllowInsecureHttp { get; set; }
 

@@ -706,7 +706,7 @@ public sealed class GoogleCloudStorageBackend :
 
             var values = options.Mode == StorageMetadataUpdateMode.Merge && current.Metadata is not null
                 ? new Dictionary<string, string>(current.Metadata, StringComparer.Ordinal)
-                : new Dictionary<string, string>(StringComparer.Ordinal);
+                : [with(StringComparer.Ordinal)];
             foreach (var (name, value) in snapshot)
                 values[name] = value;
             var patched = await _client.PatchObjectAsync(new GcsObject
@@ -986,7 +986,7 @@ public sealed class GoogleCloudStorageBackend :
         ETag = item.ETag,
         VersionId = item.Generation?.ToString(System.Globalization.CultureInfo.InvariantCulture),
         Metadata = item.Metadata is null
-            ? new Dictionary<string, string>()
+            ? []
             : new Dictionary<string, string>(item.Metadata, StringComparer.Ordinal)
     };
 

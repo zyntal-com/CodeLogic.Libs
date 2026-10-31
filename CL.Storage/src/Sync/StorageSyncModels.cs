@@ -186,7 +186,7 @@ public interface IStorageSyncStateStore
 public sealed class InMemoryStorageSyncStateStore : IStorageSyncStateStore
 {
     private readonly Lock _gate = new();
-    private readonly Dictionary<string, StorageSyncBaseline> _baselines = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, StorageSyncBaseline> _baselines = [with(StringComparer.Ordinal)];
 
     /// <inheritdoc />
     public Task<StorageSyncBaseline?> LoadAsync(string syncId, CancellationToken cancellationToken)

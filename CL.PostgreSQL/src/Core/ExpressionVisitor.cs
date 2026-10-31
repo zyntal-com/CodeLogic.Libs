@@ -13,7 +13,7 @@ namespace CL.PostgreSQL.Core;
 internal sealed class PostgreSqlExpressionVisitor : ExpressionVisitor
 {
     private readonly StringBuilder _sql = new();
-    private readonly Dictionary<string, object?> _parameters = new();
+    private readonly Dictionary<string, object?> _parameters = [];
     private int _paramCounter;
     // Widest IN (...) value list this translation produced. Reported so the caller can
     // warn against the configured MaxInClauseValues ceiling; the list is never chunked.

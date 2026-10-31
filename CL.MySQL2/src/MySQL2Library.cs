@@ -55,7 +55,7 @@ public sealed class MySQL2Library : ILibrary, IConfigReloadable
     // than on every poll. Null until the first check.
     private bool? _lastHealthy;
     private RetentionWorker? _retentionWorker;
-    private readonly HashSet<(Type Type, string ConnectionId)> _registeredEntities = new();
+    private readonly HashSet<(Type Type, string ConnectionId)> _registeredEntities = [];
     private readonly ConcurrentDictionary<string, SyncMode> _syncModeOverrides = new(StringComparer.OrdinalIgnoreCase);
 
     // ── Phase 1: Configure ────────────────────────────────────────────────────
@@ -830,7 +830,7 @@ public sealed class MySQL2Library : ILibrary, IConfigReloadable
 
     private static Dictionary<string, MySqlDatabaseConfig> EnabledDatabases(DatabaseConfiguration? config) =>
         config?.Databases.Where(d => d.Value.Enabled).ToDictionary(d => d.Key, d => d.Value)
-        ?? new Dictionary<string, MySqlDatabaseConfig>();
+        ?? [];
 
     private static void ApplyCacheConfiguration(CacheConfiguration cache) =>
         QueryCache.Configure(

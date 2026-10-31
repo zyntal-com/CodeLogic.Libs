@@ -233,7 +233,7 @@ public sealed class JoinedQuery<TLeft, TRight, TResult>
 
     private (string Clause, Dictionary<string, object?> Params) BuildWhereSql()
     {
-        if (_wheres.Count == 0) return (string.Empty, new());
+        if (_wheres.Count == 0) return (string.Empty, []);
 
         var allParms = new Dictionary<string, object?>();
         var clauses = new List<string>();
