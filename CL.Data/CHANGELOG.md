@@ -248,3 +248,7 @@
   - **CLD102** unsupported member on a row value
   - **CLD103** unmapped or `[Ignore]` property
   - **Severity:** warnings (raise them to errors with `.editorconfig`). The checks mirror the translator's supported surface; parts that don't read the row are never flagged.
+- **Entity save hooks:** `IDataInterceptor.OnSavingAsync`/`OnSavedAsync` with `EntitySaveContext` (kind, entities, changed properties) run around inserts, updates, upserts and deletes.
+  - **Before planning:** `OnSavingAsync` runs first, so changes it makes to the entities are saved, and returning an error cancels the save.
+  - **Cost:** nothing extra without interceptors.
+- **Auditing conformance:** `[CreatedAt]`/`[UpdatedAt]` (from `DatabaseOptions.Time`) and `[CreatedBy]`/`[UpdatedBy]` (from `IDataUserAccessor`) are verified on insert, update, both upsert paths, set-based updates and counters. An update never writes the created columns.

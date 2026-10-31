@@ -2,6 +2,7 @@ using System.Linq.Expressions;
 using CL.Data.Errors;
 using CL.Data.Execution;
 using CL.Data.Mapping;
+using CL.Data.Pipeline;
 using CL.Data.Sql;
 using CL.Data.Translation;
 using CL.Data.Writes;
@@ -47,9 +48,29 @@ public sealed class Repository<T>
         var accessor = Accessor();
         if (accessor.IsFailure) return accessor.Error!;
         var list = entities as IReadOnlyList<T> ?? entities.ToList();
-        var plan = WritePlanner.Insert(accessor.Value!, list, _db.WriteContext);
-        if (plan.IsFailure) return plan.Error!;
-        return await _db.ExecuteWritesAsync(plan.Value!, list, accessor.Value!, ct).ConfigureAwait(false);
+        return await SaveAsync(SaveKind.Insert, list, null, async () =>
+        {
+            var plan = WritePlanner.Insert(accessor.Value!, list, _db.WriteContext);
+            if (plan.IsFailure) return plan.Error!;
+            return await _db.ExecuteWritesAsync(plan.Value!, list, accessor.Value!, ct).ConfigureAwait(false);
+        }).ConfigureAwait(false);
+    }
+
+    /// <summary>Runs <paramref name="save"/> between the interceptors' save hooks (nothing extra when there are none).</summary>
+    private async ValueTask<Result<TResult>> SaveAsync<TResult>(SaveKind kind, IReadOnlyList<T> entities, IReadOnlyList<string>? changed,
+        Func<ValueTask<Result<TResult>>> save)
+    {
+        var interceptors = _db.Options.Interceptors;
+        if (interceptors.Count == 0) return await save().ConfigureAwait(false);
+
+        var context = new EntitySaveContext(_db, kind, typeof(T), entities.Cast<object>().ToArray(), changed);
+        foreach (var interceptor in interceptors)
+            if (await interceptor.OnSavingAsync(context).ConfigureAwait(false) is { } stop)
+                return stop;
+        var result = await save().ConfigureAwait(false);
+        foreach (var interceptor in interceptors)
+            await interceptor.OnSavedAsync(context, result.IsFailure ? result.Error : null).ConfigureAwait(false);
+        return result;
     }
 
     /// <summary>
@@ -123,10 +144,13 @@ public sealed class Repository<T>
         ArgumentNullException.ThrowIfNull(entity);
         var accessor = Accessor();
         if (accessor.IsFailure) return accessor.Error!;
-        var plan = WritePlanner.Update(accessor.Value!, entity, _db.WriteContext, only);
-        if (plan.IsFailure) return plan.Error!;
-        var result = await _db.ExecuteWritesAsync([plan.Value!], [entity], accessor.Value!, ct).ConfigureAwait(false);
-        return result.IsSuccess ? Result<T>.Success(entity) : result.Error!;
+        return await SaveAsync(SaveKind.Update, [entity], only as IReadOnlyList<string> ?? only?.ToArray(), async () =>
+        {
+            var plan = WritePlanner.Update(accessor.Value!, entity, _db.WriteContext, only);
+            if (plan.IsFailure) return plan.Error!;
+            var result = await _db.ExecuteWritesAsync([plan.Value!], [entity], accessor.Value!, ct).ConfigureAwait(false);
+            return result.IsSuccess ? Result<T>.Success(entity) : result.Error!;
+        }).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -143,10 +167,13 @@ public sealed class Repository<T>
         ArgumentNullException.ThrowIfNull(entity);
         var accessor = Accessor();
         if (accessor.IsFailure) return accessor.Error!;
-        var plan = WritePlanner.Delete(accessor.Value!, entity, _db.WriteContext, hard);
-        if (plan.IsFailure) return plan.Error!;
-        var result = await _db.ExecuteWritesAsync([plan.Value!], [entity], accessor.Value!, ct).ConfigureAwait(false);
-        return result.IsSuccess ? Result<bool>.Success(result.Value > 0) : result.Error!;
+        return await SaveAsync(SaveKind.Delete, [entity], null, async () =>
+        {
+            var plan = WritePlanner.Delete(accessor.Value!, entity, _db.WriteContext, hard);
+            if (plan.IsFailure) return plan.Error!;
+            var result = await _db.ExecuteWritesAsync([plan.Value!], [entity], accessor.Value!, ct).ConfigureAwait(false);
+            return result.IsSuccess ? Result<bool>.Success(result.Value > 0) : result.Error!;
+        }).ConfigureAwait(false);
     }
 
     /// <summary>Deletes by a single-column key (soft delete when the entity has one). Returns false when no row matched.</summary>
@@ -183,9 +210,12 @@ public sealed class Repository<T>
         var accessor = Accessor();
         if (accessor.IsFailure) return accessor.Error!;
         var list = entities as IReadOnlyList<T> ?? entities.ToList();
-        var plan = WritePlanner.Upsert(accessor.Value!, list, _db.WriteContext, options);
-        if (plan.IsFailure) return plan.Error!;
-        return await _db.ExecuteWritesAsync(plan.Value!, list, accessor.Value!, ct).ConfigureAwait(false);
+        return await SaveAsync(options?.IgnoreOnConflict == true ? SaveKind.Insert : SaveKind.Upsert, list, null, async () =>
+        {
+            var plan = WritePlanner.Upsert(accessor.Value!, list, _db.WriteContext, options);
+            if (plan.IsFailure) return plan.Error!;
+            return await _db.ExecuteWritesAsync(plan.Value!, list, accessor.Value!, ct).ConfigureAwait(false);
+        }).ConfigureAwait(false);
     }
 
     /// <summary>
