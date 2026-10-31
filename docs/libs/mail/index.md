@@ -2,7 +2,7 @@
 
 > SMTP sending and IMAP reading with a JSON template engine, attachments, and RFC 2177 IDLE push notifications — built on MailKit.
 
-`CL.Mail` adds e-mail to a CodeLogic 4 application. Compose messages with a fluent `MailBuilder`, send them through `mail.Smtp`, render variable-substitution templates, and read mailboxes through `mail.Imap` — including live IDLE push. It builds on [MailKit](https://www.nuget.org/packages/MailKit) and [MimeKit](https://www.nuget.org/packages/MimeKit). Operations do **not** use the framework `Result`; they return a mail-specific `MailResult` / `MailResult<T>` carrying a categorised `MailError` instead of throwing on protocol, auth, or timeout failures.
+`CL.Mail` adds e-mail to a CodeLogic application. Compose messages with a fluent `MailBuilder`, send them through `mail.Smtp`, render variable-substitution templates, and read mailboxes through `mail.Imap` — including live IDLE push. It builds on [MailKit](https://www.nuget.org/packages/MailKit) and [MimeKit](https://www.nuget.org/packages/MimeKit). Operations do **not** use the framework `Result`; they return a mail-specific `MailResult` / `MailResult<T>` carrying a categorised `MailError` instead of throwing on protocol, auth, or timeout failures.
 
 | | |
 |---|---|

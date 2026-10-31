@@ -3,7 +3,7 @@
 [![NuGet](https://img.shields.io/nuget/v/CodeLogic.NetUtils)](https://www.nuget.org/packages/CodeLogic.NetUtils)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/zyntal-com/CodeLogic.Libs/blob/main/LICENSE)
 
-> DNSBL blacklist checking and MaxMind GeoIP geolocation for [CodeLogic 4](https://github.com/zyntal-com/CodeLogic) — screen abusive IPs and locate visitors with one library.
+> DNSBL blacklist checking and MaxMind GeoIP geolocation for [CodeLogic 5](https://github.com/zyntal-com/CodeLogic) — screen abusive IPs and locate visitors with one library.
 
 Bundles two network-reputation tools behind a single `NetUtilsLibrary`. The **DNSBL checker** queries multiple blacklist zones (IPv4 and IPv6, primary plus fallback) in parallel and short-circuits private/loopback addresses without a DNS query. The **GeoIP service** does city-level lookups against a [MaxMind GeoLite2/GeoIP2](https://www.maxmind.com/) `.mmdb` database — loaded from disk or auto-downloaded with your MaxMind credentials.
 
@@ -105,7 +105,7 @@ Full guide: **[CL.NetUtils documentation](https://zyntal-com.github.io/CodeLogic
 
 ## Requirements
 
-- [CodeLogic 4.9+](https://github.com/zyntal-com/CodeLogic) · .NET 10
+- [CodeLogic 5.0+](https://github.com/zyntal-com/CodeLogic) · .NET 11
 - MaxMind.GeoIP2 5.x · SharpCompress 0.x
 - A MaxMind GeoLite2/GeoIP2 `.mmdb` for GeoIP (on disk, or auto-downloaded with credentials)
 

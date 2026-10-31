@@ -3,7 +3,7 @@
 [![NuGet](https://img.shields.io/nuget/v/CodeLogic.Mail)](https://www.nuget.org/packages/CodeLogic.Mail)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/zyntal-com/CodeLogic.Libs/blob/main/LICENSE)
 
-> SMTP sending and IMAP reading for [CodeLogic 4](https://github.com/zyntal-com/CodeLogic) — with a built-in template engine, attachments, and RFC 2177 IDLE push notifications.
+> SMTP sending and IMAP reading for [CodeLogic 5](https://github.com/zyntal-com/CodeLogic) — with a built-in template engine, attachments, and RFC 2177 IDLE push notifications.
 
 Compose messages with a fluent `MailBuilder`, send them over SMTP, render variable-substitution templates (conditionals, loops, and layouts), and read mailboxes over IMAP — including live IDLE push. Built on [MailKit](https://www.nuget.org/packages/MailKit) and [MimeKit](https://www.nuget.org/packages/MimeKit). Every fallible operation returns a `MailResult` / `MailResult<T>` carrying a categorised `MailError` instead of throwing on protocol, auth, or timeout errors.
 
@@ -110,7 +110,7 @@ Full guide: **[CL.Mail documentation](https://zyntal-com.github.io/CodeLogic.Lib
 
 ## Requirements
 
-- [CodeLogic 4.9+](https://github.com/zyntal-com/CodeLogic) · .NET 10
+- [CodeLogic 5.0+](https://github.com/zyntal-com/CodeLogic) · .NET 11
 - MailKit 4.x · MimeKit 4.x
 
 ## License

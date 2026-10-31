@@ -1,10 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <LangVersion>13</LangVersion>
     <AssemblyName>CL.MySQL2.Tests</AssemblyName>
     <!-- Console test runner (PASS/FAIL + non-zero exit), matching the repo's test style.
          Boots the real CodeLogic runtime against a local MySQL/MariaDB on 127.0.0.1:3310. -->

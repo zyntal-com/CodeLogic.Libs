@@ -2,7 +2,7 @@
 
 > A broad, stateless utility toolkit — security, generators, JSON, compression, imaging, strings, time, web, networking, caching, file handling, and reflection for CodeLogic applications.
 
-`CL.Common` is a grab-bag of small, dependency-light helpers used across CodeLogic 4 applications. Almost everything is exposed as **static helper classes** grouped by namespace, so you call them directly without wiring up a library instance. Many fallible operations return a framework `Result` / `Result<T>` instead of throwing; the simplest helpers return plain values (`string`, `bool`, `byte[]`). The package also ships a `CommonLibrary` (`ILibrary`) so it participates in the CodeLogic lifecycle and health system — but loading it is optional for the static helpers.
+`CL.Common` is a grab-bag of small, dependency-light helpers used across CodeLogic applications. Almost everything is exposed as **static helper classes** grouped by namespace, so you call them directly without wiring up a library instance. Many fallible operations return a framework `Result` / `Result<T>` instead of throwing; the simplest helpers return plain values (`string`, `bool`, `byte[]`). The package also ships a `CommonLibrary` (`ILibrary`) so it participates in the CodeLogic lifecycle and health system — but loading it is optional for the static helpers.
 
 | | |
 |---|---|

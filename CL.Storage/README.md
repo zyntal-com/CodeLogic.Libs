@@ -3,7 +3,7 @@
 [![NuGet](https://img.shields.io/nuget/v/CodeLogic.Storage)](https://www.nuget.org/packages/CodeLogic.Storage)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/zyntal-com/CodeLogic.Libs/blob/main/LICENSE)
 
-Provider-neutral, root-scoped storage for CodeLogic 4 and .NET 10. One API mounts local/UNC,
+Provider-neutral, root-scoped storage for CodeLogic 5 and .NET 11. One API mounts local/UNC,
 S3-compatible, FTP/FTPS, SFTP, WebDAV, Azure Blob, Google Cloud Storage, and OpenStack Swift
 connections, and adds what a desktop file-transfer client needs on top: verified and resumable
 transfers between any two connections, a durable background queue, three-way sync with approved plans,
@@ -277,7 +277,7 @@ Upgrading from 4.8.93 or from the legacy S3-only package? See [MIGRATION.md](MIG
 
 ## Requirements
 
-- CodeLogic 4.9+
-- .NET 10
+- CodeLogic 5.0+
+- .NET 11
 
 MIT license.

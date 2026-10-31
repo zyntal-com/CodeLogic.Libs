@@ -1,6 +1,6 @@
 # CL.SQLite
 
-> An embedded SQLite data-access layer for CodeLogic 4 — connection pooling, WAL, attribute-driven table sync, a repository, and a fluent LINQ-shaped query builder.
+> An embedded SQLite data-access layer for CodeLogic — connection pooling, WAL, attribute-driven table sync, a repository, and a fluent LINQ-shaped query builder.
 
 `CL.SQLite` is the embedded-database member of the `CL.*` data-access family. Map a plain class with attributes and the library keeps the live table in shape, then read and write through a `Repository<T>` or a fluent `QueryBuilder<T>`. It builds on [Microsoft.Data.Sqlite](https://learn.microsoft.com/en-us/dotnet/standard/data/sqlite/), pools connections per database, and enables Write-Ahead Logging by default. Every fallible operation returns a `Result` / `Result<T>` — no exceptions for the expected failure paths.
 

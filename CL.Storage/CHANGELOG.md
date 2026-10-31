@@ -1,5 +1,14 @@
 # Changelog
 
+## 5.0 (unreleased)
+
+### Breaking
+
+- Targets **.NET 11** (`net11.0`) and requires **CodeLogic 5.0** (`[5.0.0, 6.0.0)`). On .NET 10, stay on
+  4.9.x. CodeLogic 5 makes `Result<T>` / `Result` C# 15 unions and `Error` a closed record with
+  kind subtypes (`NotFoundError`, `ValidationError`, ...). This library's API is unchanged, and
+  its results can now be matched exhaustively with `switch`.
+
 ## 2026-10-27 (4.9.104)
 
 ### Fixed

@@ -3,7 +3,7 @@
 [![NuGet](https://img.shields.io/nuget/v/CodeLogic.SQLite)](https://www.nuget.org/packages/CodeLogic.SQLite)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/zyntal-com/CodeLogic.Libs/blob/main/LICENSE)
 
-> An embedded SQLite data-access layer for [CodeLogic 4](https://github.com/zyntal-com/CodeLogic) — connection pooling, WAL, attribute-driven table sync, a repository, and a fluent LINQ-shaped query builder.
+> An embedded SQLite data-access layer for [CodeLogic 5](https://github.com/zyntal-com/CodeLogic) — connection pooling, WAL, attribute-driven table sync, a repository, and a fluent LINQ-shaped query builder.
 
 Map a plain class with attributes and the library keeps the live table in shape, then read and write through a `Repository<T>` or a fluent `QueryBuilder<T>`. It builds on [Microsoft.Data.Sqlite](https://learn.microsoft.com/en-us/dotnet/standard/data/sqlite/), pools connections per database, and enables Write-Ahead Logging by default. Every fallible operation returns a `Result` / `Result<T>` — no exceptions for the expected failure paths.
 
@@ -137,7 +137,7 @@ Full guide: **[CL.SQLite documentation](https://zyntal-com.github.io/CodeLogic.L
 
 ## Requirements
 
-- [CodeLogic 4.9+](https://github.com/zyntal-com/CodeLogic) · .NET 10
+- [CodeLogic 5.0+](https://github.com/zyntal-com/CodeLogic) · .NET 11
 - Microsoft.Data.Sqlite 9.x
 
 ## License

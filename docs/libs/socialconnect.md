@@ -2,7 +2,7 @@
 
 > Discord webhooks and Steam integration — send rich Discord notifications, read Steam player profiles, bans, and game libraries, and add "Sign in through Steam" to a website.
 
-`CL.SocialConnect` adds two third-party integrations to a CodeLogic 4 application: outbound **Discord webhooks** and read access to the **Steam Web API**, plus **Steam ticket authentication** for game-server scenarios and **Steam sign-in** (OpenID 2.0) for websites. The library exposes a single `SocialConnectLibrary` surface with four services — `Discord`, `Steam`, `Auth`, and `OpenId` — each independently toggled by configuration. It has no external NuGet dependencies; HTTP is handled with `System.Net.Http.Json`.
+`CL.SocialConnect` adds two third-party integrations to a CodeLogic application: outbound **Discord webhooks** and read access to the **Steam Web API**, plus **Steam ticket authentication** for game-server scenarios and **Steam sign-in** (OpenID 2.0) for websites. The library exposes a single `SocialConnectLibrary` surface with four services — `Discord`, `Steam`, `Auth`, and `OpenId` — each independently toggled by configuration. It has no external NuGet dependencies; HTTP is handled with `System.Net.Http.Json`.
 
 | | |
 |---|---|

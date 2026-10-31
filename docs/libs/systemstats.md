@@ -2,7 +2,7 @@
 
 > Cross-platform CPU, memory, uptime, and process statistics — one API over Windows performance counters and Linux `/proc`.
 
-`CL.SystemStats` gives a CodeLogic 4 application a single surface for reading live system metrics. It samples CPU usage, memory pressure, uptime, and per-process resource use through platform-specific providers, returns every reading as a `Result<T>`, caches common reads for a short window, and raises events when CPU or memory usage crosses a configured threshold. The library exposes a `SystemStatsLibrary` that forwards every stats method directly and also surfaces the underlying service through its `Stats` property.
+`CL.SystemStats` gives a CodeLogic application a single surface for reading live system metrics. It samples CPU usage, memory pressure, uptime, and per-process resource use through platform-specific providers, returns every reading as a `Result<T>`, caches common reads for a short window, and raises events when CPU or memory usage crosses a configured threshold. The library exposes a `SystemStatsLibrary` that forwards every stats method directly and also surfaces the underlying service through its `Stats` property.
 
 | | |
 |---|---|

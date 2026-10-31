@@ -3,7 +3,7 @@
 [![NuGet](https://img.shields.io/nuget/v/CodeLogic.TwoFactorAuth)](https://www.nuget.org/packages/CodeLogic.TwoFactorAuth)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/zyntal-com/CodeLogic.Libs/blob/main/LICENSE)
 
-> TOTP two-factor authentication with QR-code generation for [CodeLogic 4](https://github.com/zyntal-com/CodeLogic) — compatible with Google Authenticator, Authy, and 1Password.
+> TOTP two-factor authentication with QR-code generation for [CodeLogic 5](https://github.com/zyntal-com/CodeLogic) — compatible with Google Authenticator, Authy, and 1Password.
 
 Implements RFC 6238 time-based one-time passwords over [Otp.NET](https://www.nuget.org/packages/Otp.NET) and renders provisioning QR codes with [QRCoder](https://www.nuget.org/packages/QRCoder). Two services are exposed: an **authenticator** (generate/validate codes) and a **QR-code generator**.
 
@@ -72,7 +72,7 @@ Full guide: **[CL.TwoFactorAuth documentation](https://zyntal-com.github.io/Code
 
 ## Requirements
 
-- [CodeLogic 4.9+](https://github.com/zyntal-com/CodeLogic) · .NET 10
+- [CodeLogic 5.0+](https://github.com/zyntal-com/CodeLogic) · .NET 11
 - Otp.NET 1.x · QRCoder 1.x
 
 ## License

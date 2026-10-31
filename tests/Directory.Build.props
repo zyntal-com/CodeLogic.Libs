@@ -8,5 +8,8 @@
   -->
   <PropertyGroup>
     <IsPackable>false</IsPackable>
+    <!-- Keep in step with the repo-root Directory.Build.props (not inherited, see above). -->
+    <TargetFramework>net11.0</TargetFramework>
+    <LangVersion>15</LangVersion>
   </PropertyGroup>
 </Project>

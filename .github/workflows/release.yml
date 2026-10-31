@@ -41,17 +41,11 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.ref_name }}
 
-      - name: Setup .NET 10
+      # SDK version comes from global.json (11.0 line; prerelease allowed until GA).
+      - name: Setup .NET 11
         uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: '10.0.x'
-
-      - name: Clone CodeLogic framework dependency
-        shell: bash
-        run: |
-          TARGET="$(dirname "$GITHUB_WORKSPACE")/CodeLogic"
-          git clone --depth 1 "https://github.com/${{ github.repository_owner }}/CodeLogic.git" "$TARGET"
-          echo "Cloned CodeLogic to $TARGET"
+          global-json-file: global.json
 
       - name: Detect changes and compute version
         id: changes
@@ -147,9 +141,9 @@ jobs:
 
           # NuGet normalizes PackageReference ranges to use the restored version as
           # the lower bound. For libs to keep accepting older CodeLogic versions,
-          # rewrite each nupkg's .nuspec to use the literal range "[4.9.0, 5.0.0)".
-          # 4.9 is the floor: the libraries implement IConfigReloadable, which earlier lines lack.
-          $targetRange = '[4.9.0, 5.0.0)'
+          # rewrite each nupkg's .nuspec to use the literal range "[5.0.0-0, 6.0.0)".
+          # 5.0 is the floor: the libraries use the net11 union Result/Error API; "-0" admits 5.0 previews.
+          $targetRange = '[5.0.0-0, 6.0.0)'
           foreach ($nupkg in Get-ChildItem artifacts -Filter '*.nupkg') {
             $tmp = "$env:RUNNER_TEMP/nupkg-$([Guid]::NewGuid())"
             New-Item -ItemType Directory -Force -Path $tmp | Out-Null

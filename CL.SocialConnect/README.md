@@ -3,7 +3,7 @@
 [![NuGet](https://img.shields.io/nuget/v/CodeLogic.SocialConnect)](https://www.nuget.org/packages/CodeLogic.SocialConnect)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/zyntal-com/CodeLogic.Libs/blob/main/LICENSE)
 
-> Discord webhooks and Steam integration for [CodeLogic 4](https://github.com/zyntal-com/CodeLogic) — send rich Discord notifications, read Steam player profiles, bans, and game libraries, and add "Sign in through Steam" to a website.
+> Discord webhooks and Steam integration for [CodeLogic 5](https://github.com/zyntal-com/CodeLogic) — send rich Discord notifications, read Steam player profiles, bans, and game libraries, and add "Sign in through Steam" to a website.
 
 Four services behind one library: a **Discord webhook** sender (text, rich embeds, full payloads), a **Steam profile** reader (players, bans, owned games — cached), **Steam authentication** for validating game-session tickets, and **Steam sign-in** (OpenID 2.0) for websites. No external NuGet dependencies — built on `System.Net.Http.Json`.
 
@@ -124,7 +124,7 @@ Full guide: **[CL.SocialConnect documentation](https://zyntal-com.github.io/Code
 
 ## Requirements
 
-- [CodeLogic 4.9+](https://github.com/zyntal-com/CodeLogic) · .NET 10
+- [CodeLogic 5.0+](https://github.com/zyntal-com/CodeLogic) · .NET 11
 - No external NuGet dependencies
 
 ## License

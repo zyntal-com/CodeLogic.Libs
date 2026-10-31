@@ -3,7 +3,7 @@
 [![NuGet](https://img.shields.io/nuget/v/CodeLogic.Common)](https://www.nuget.org/packages/CodeLogic.Common)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/zyntal-com/CodeLogic.Libs/blob/main/LICENSE)
 
-> A broad, stateless utility toolkit for [CodeLogic 4](https://github.com/zyntal-com/CodeLogic) — security, ID/password generation, JSON, compression, imaging, strings, time, web, networking, caching, file handling, and reflection.
+> A broad, stateless utility toolkit for [CodeLogic 5](https://github.com/zyntal-com/CodeLogic) — security, ID/password generation, JSON, compression, imaging, strings, time, web, networking, caching, file handling, and reflection.
 
 `CodeLogic.Common` is a grab-bag of small, dependency-light helpers used across CodeLogic applications. Almost everything is exposed as **static helper classes** grouped by namespace, so you call them directly — `Hashing.Sha256(...)`, `IdGenerator.NanoId()`, `JsonHelper.Serialize(...)` — with no library instance to wire up. Many fallible operations return a framework `Result` / `Result<T>` instead of throwing, while simple helpers return plain values (`string`, `bool`, `byte[]`). The package also ships a `CommonLibrary` (`ILibrary`) so it participates in the CodeLogic lifecycle and health system.
 
@@ -70,7 +70,7 @@ Full guide: **[CL.Common documentation](https://zyntal-com.github.io/CodeLogic.L
 ## Requirements
 
 - No configuration required — `CL.Common` is a stateless utility library and writes no config file.
-- [CodeLogic 4.9+](https://github.com/zyntal-com/CodeLogic) · .NET 10
+- [CodeLogic 5.0+](https://github.com/zyntal-com/CodeLogic) · .NET 11
 - SkiaSharp 3.x (imaging) · K4os.Compression.LZ4 1.x (LZ4) · Newtonsoft.Json 13.x
 
 ## License

@@ -1,6 +1,6 @@
 # Libraries
 
-The CodeLogic Libraries suite is twelve independent NuGet packages. Each is a CodeLogic
+The CodeLogic Libraries suite is thirteen independent NuGet packages. Each is a CodeLogic
 `ILibrary` — load the ones you need, configure them through their JSON files, and use them from
 your application or from other libraries after `StartAsync()`.
 

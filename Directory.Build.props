@@ -1,4 +1,13 @@
 <Project>
+  <!--
+    Target framework and language version for every project in the repo (libraries and tests).
+    The 5.x line is .NET 11 only; .NET 10 consumers stay on 4.9.x (branch release-4.x).
+  -->
+  <PropertyGroup>
+    <TargetFramework>net11.0</TargetFramework>
+    <LangVersion>15</LangVersion>
+  </PropertyGroup>
+
   <!-- Shared NuGet metadata for all CL.* libraries -->
   <PropertyGroup>
     <Authors>Zyntal.com</Authors>
@@ -62,9 +71,9 @@
   -->
   <PropertyGroup>
     <CodeLogicFromNuGet Condition="'$(CodeLogicFromNuGet)' == ''">true</CodeLogicFromNuGet>
-    <!-- Restore/build floor: 4.9 carries the API surface these libs use (IConfigReloadable and
-         ConfigDiff for live config changes). The release
+    <!-- Restore/build floor: CodeLogic 5.0 (net11, union Result/Error). "-*" admits 5.0 previews until
+         GA; switch to "5.0.*" once CodeLogic 5.0 is stable. The release
          pipeline rewrites each published nuspec's CodeLogic dependency to the supported range. -->
-    <CodeLogicPackageVersion Condition="'$(CodeLogicPackageVersion)' == ''">4.9.*</CodeLogicPackageVersion>
+    <CodeLogicPackageVersion Condition="'$(CodeLogicPackageVersion)' == ''">5.0.*-*</CodeLogicPackageVersion>
   </PropertyGroup>
 </Project>

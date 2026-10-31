@@ -2,7 +2,7 @@
 
 > Programmatic Git repository management — clone, fetch, pull, push, commit, branch, and reset across a pool of configured repositories.
 
-`CL.GitHelper` brings Git operations into a CodeLogic 4 application as a managed, async service. It wraps [LibGit2Sharp](https://www.nuget.org/packages/LibGit2Sharp) and exposes a `GitHelperLibrary` surface that hands out `GitRepository` objects keyed by id. Every operation returns a `GitResult<T>` instead of throwing, and each result carries `GitDiagnostics` — timing, object counts, and bytes transferred — so you can log or measure what happened.
+`CL.GitHelper` brings Git operations into a CodeLogic application as a managed, async service. It wraps [LibGit2Sharp](https://www.nuget.org/packages/LibGit2Sharp) and exposes a `GitHelperLibrary` surface that hands out `GitRepository` objects keyed by id. Every operation returns a `GitResult<T>` instead of throwing, and each result carries `GitDiagnostics` — timing, object counts, and bytes transferred — so you can log or measure what happened.
 
 | | |
 |---|---|

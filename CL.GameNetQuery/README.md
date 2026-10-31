@@ -3,7 +3,7 @@
 [![NuGet](https://img.shields.io/nuget/v/CodeLogic.GameNetQuery)](https://www.nuget.org/packages/CodeLogic.GameNetQuery)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/zyntal-com/CodeLogic.Libs/blob/main/LICENSE)
 
-> Query and administer game servers from [CodeLogic 4](https://github.com/zyntal-com/CodeLogic) — Valve A2S over UDP, Source RCON, and Minecraft GameSpy4 / RCON.
+> Query and administer game servers from [CodeLogic 5](https://github.com/zyntal-com/CodeLogic) — Valve A2S over UDP, Source RCON, and Minecraft GameSpy4 / RCON.
 
 Speaks the wire protocols used by Source-engine and Minecraft servers: A2S over UDP for live server info and player lists, the Source RCON TCP protocol for remote console commands (with high-level Counter-Strike 2 / Counter-Strike: Source admin wrappers), and Minecraft's GameSpy4 UDP query plus RCON. No external NuGet dependencies.
 
@@ -64,7 +64,7 @@ Full guide: **[CL.GameNetQuery documentation](https://zyntal-com.github.io/CodeL
 
 ## Requirements
 
-- [CodeLogic 4.9+](https://github.com/zyntal-com/CodeLogic) · .NET 10
+- [CodeLogic 5.0+](https://github.com/zyntal-com/CodeLogic) · .NET 11
 - No external NuGet dependencies.
 
 ## License

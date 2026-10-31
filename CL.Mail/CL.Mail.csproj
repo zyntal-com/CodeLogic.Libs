@@ -1,11 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
     <RootNamespace>CL.Mail</RootNamespace>
     <AssemblyName>CL.Mail</AssemblyName>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <LangVersion>13</LangVersion>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <PackageId>CodeLogic.Mail</PackageId>
     <PackageTags>smtp;imap;email;template</PackageTags>

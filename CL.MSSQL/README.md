@@ -2,7 +2,7 @@
 
 [![NuGet](https://img.shields.io/nuget/v/CodeLogic.MSSQL)](https://www.nuget.org/packages/CodeLogic.MSSQL)
 
-Typed SQL Server 2019+ and Azure SQL data access for CodeLogic 4: repositories, LINQ-shaped queries, stable paging, schema synchronization, migrations, caching, resilience, and operational diagnostics.
+Typed SQL Server 2019+ and Azure SQL data access for CodeLogic 5: repositories, LINQ-shaped queries, stable paging, schema synchronization, migrations, caching, resilience, and operational diagnostics.
 
 ```bash
 dotnet add package CodeLogic.MSSQL
@@ -76,5 +76,5 @@ See the [full documentation](../docs/libs/mssql/index.md) and [capability parity
 
 ## Requirements
 
-- [CodeLogic 4.9+](https://github.com/zyntal-com/CodeLogic) · .NET 10
+- [CodeLogic 5.0+](https://github.com/zyntal-com/CodeLogic) · .NET 11
 - Microsoft.Data.SqlClient 7.x · SQL Server 2019+ or Azure SQL
