@@ -13,6 +13,8 @@ public static partial class StoreTypeNormalizer
         {
             "bool" or "boolean" => "tinyint(1)",
             "integer" => "int",
+            // Whole-second time types: the catalog reports DATETIME(0) as plain "datetime".
+            "datetime(0)" or "timestamp(0)" or "time(0)" => type[..^3],
             _ when type.StartsWith("numeric(", StringComparison.Ordinal) => "decimal" + type["numeric".Length..],
             _ => type,
         };

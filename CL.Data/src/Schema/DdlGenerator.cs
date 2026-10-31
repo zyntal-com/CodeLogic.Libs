@@ -17,7 +17,7 @@ public class DdlGenerator(SqlDialect dialect)
     {
         CreateTableChange c => CreateTable(c.Definition),
         AddColumnChange a => [AddColumn(a)],
-        AlterColumnChange a => AlterColumn(a),
+        AlterColumnChange a => [.. BackfillNulls(a), .. AlterColumn(a)],
         RenameColumnChange r => [RenameColumn(r)],
         DropColumnChange d => DropColumn(d),
         CreateIndexChange i => [CreateIndex(i.Table, i.Schema, i.Index)],
@@ -127,6 +127,17 @@ public class DdlGenerator(SqlDialect dialect)
         if (type.Contains("time", StringComparison.Ordinal)) return "'1970-01-01 00:00:00'";
         if (type.Contains("binary", StringComparison.Ordinal) || type.Contains("blob", StringComparison.Ordinal) || type == "bytea") return "''";
         return "''";
+    }
+
+    /// <summary>
+    /// Before a nullable column becomes NOT NULL: an UPDATE that replaces existing NULLs with the column's default (or an
+    /// implicit one), since every database refuses the change while NULLs remain (MySQL strict mode included).
+    /// </summary>
+    protected virtual IReadOnlyList<string> BackfillNulls(AlterColumnChange change)
+    {
+        if (!change.From.Nullable || change.To.Nullable || change.To.Identity) return [];
+        var value = change.To.DefaultSql ?? ImplicitDefault(change.To);
+        return [$"UPDATE {Table(change.Table, change.Schema)} SET {Q(change.To.Name)} = {value} WHERE {Q(change.To.Name)} IS NULL"];
     }
 
     /// <summary>Changes a column's type and nullability.</summary>

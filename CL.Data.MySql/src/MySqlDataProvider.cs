@@ -185,7 +185,7 @@ public sealed class MySqlTypeMapper : ITypeMapper
         if (column.NativeType is { } native) return native;
         var unsigned = hint?.Unsigned == true ? " UNSIGNED" : "";
         var size = column.Size > 0 ? column.Size : config.DefaultStringSize;
-        var fraction = column.Precision is > 0 and <= 6 ? column.Precision : 6;
+        var fraction = column.Precision is >= 0 and <= 6 ? column.Precision : 6;
         return column.DataType switch
         {
             DataType.Boolean => "TINYINT(1)",

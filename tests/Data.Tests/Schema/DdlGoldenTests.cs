@@ -111,4 +111,101 @@ public sealed class DdlGoldenTests
         Assert.Equal(["ALTER TABLE [t] DROP CONSTRAINT [fk]"], SqlServerDataProvider.Instance.Ddl.Generate(new DropForeignKeyChange("t", null, "fk", desired)));
         Assert.Equal(4, SqliteDataProvider.Instance.Ddl.Generate(new DropForeignKeyChange("t", null, "fk", desired)).Count);   // rebuild
     }
+
+    [Fact]
+    public void Making_a_column_not_null_backfills_existing_nulls_first()
+    {
+        var desired = new TableSchema("t", null, [new ColumnSchema("Name", "varchar(80)", false)], []);
+        var altered = new AlterColumnChange("t", null, new ColumnSchema("Name", "varchar(80)", true), new ColumnSchema("Name", "varchar(80)", false), desired);
+        Assert.Equal(
+        [
+            "UPDATE `t` SET `Name` = '' WHERE `Name` IS NULL",
+            "ALTER TABLE `t` MODIFY COLUMN `Name` varchar(80) NOT NULL",
+        ], MySqlDataProvider.Instance.Ddl.Generate(altered));
+        Assert.Equal("UPDATE \"t\" SET \"Name\" = '' WHERE \"Name\" IS NULL", PostgreSqlDataProvider.Instance.Ddl.Generate(altered)[0]);
+
+        // A declared default wins over the implicit one; text columns get MySQL's expression default.
+        var withDefault = altered with { To = new ColumnSchema("Name", "varchar(80)", false, DefaultSql: "'none'") };
+        Assert.Equal("UPDATE `t` SET `Name` = 'none' WHERE `Name` IS NULL", MySqlDataProvider.Instance.Ddl.Generate(withDefault)[0]);
+        var text = altered with { From = new ColumnSchema("Body", "longtext", true), To = new ColumnSchema("Body", "longtext", false) };
+        Assert.Equal("UPDATE `t` SET `Body` = ('') WHERE `Body` IS NULL", MySqlDataProvider.Instance.Ddl.Generate(text)[0]);
+
+        // Widening to NULL needs no backfill.
+        var widened = altered with { From = altered.To, To = altered.From };
+        Assert.Single(MySqlDataProvider.Instance.Ddl.Generate(widened));
+    }
+
+    [Table(Name = "ddl_times")]
+    [CompositeIndex("ix_ddl_times_server", nameof(ServerId), nameof(At))]
+    public sealed class DdlTimes
+    {
+        [Column(Primary = true, AutoIncrement = true)] public long Id { get; set; }
+        public int ServerId { get; set; }
+        [Column(Precision = 0)] public DateTime At { get; set; }
+        [Column(Precision = 3)] public DateTime Precise { get; set; }
+        public DateTime Default { get; set; }
+        [Index(Name = "ix_ddl_times_cover", Include = [nameof(Precise)])] public int Score { get; set; }
+        [Column(Precision = 10, Scale = 3)] public decimal Amount { get; set; }
+        public decimal DefaultAmount { get; set; }
+    }
+
+    [Fact]
+    public void Time_precision_zero_means_whole_seconds_and_unset_means_the_maximum()
+    {
+        var map = EntityAccessorRegistry.Get<DdlTimes>().ValueOrThrow().Map;
+        TableSchema For(DataProvider provider) => SchemaBuilder.FromMap(map, provider, new DataConnectionConfig()).ValueOrThrow();
+
+        var mysql = For(MySqlDataProvider.Instance);
+        Assert.Equal("datetime", mysql.Column("At")!.StoreType);
+        Assert.Equal("datetime(3)", mysql.Column("Precise")!.StoreType);
+        Assert.Equal("datetime(6)", mysql.Column("Default")!.StoreType);
+        Assert.Equal("decimal(10,3)", mysql.Column("Amount")!.StoreType);
+        Assert.Equal("decimal(18,2)", mysql.Column("DefaultAmount")!.StoreType);
+
+        Assert.Contains("(0)", For(PostgreSqlDataProvider.Instance).Column("At")!.StoreType, StringComparison.Ordinal);
+        Assert.Contains("(6)", For(PostgreSqlDataProvider.Instance).Column("Default")!.StoreType, StringComparison.Ordinal);
+        Assert.Equal("datetime2(0)", For(SqlServerDataProvider.Instance).Column("At")!.StoreType);
+    }
+
+    [Fact]
+    public void Covering_columns_fold_into_the_key_where_indexes_have_no_include()
+    {
+        var map = EntityAccessorRegistry.Get<DdlTimes>().ValueOrThrow().Map;
+        var mysql = SchemaBuilder.FromMap(map, MySqlDataProvider.Instance, new DataConnectionConfig()).ValueOrThrow();
+        var cover = Assert.Single(mysql.Indexes, i => i.Name == "ix_ddl_times_cover");
+        Assert.Equal(["Score", "Precise"], cover.Columns);
+        Assert.Empty(cover.Include);
+
+        // What MySQL reports back for that index has the same shape, so a sync finds nothing to do.
+        var introspected = new IndexSchema("ix_ddl_times_cover", false, ["Score", "Precise"]);
+        Assert.True(cover.SameShape(introspected));
+
+        var postgres = SchemaBuilder.FromMap(map, PostgreSqlDataProvider.Instance, new DataConnectionConfig()).ValueOrThrow();
+        var pgCover = Assert.Single(postgres.Indexes, i => i.Name == "ix_ddl_times_cover");
+        Assert.Equal(["Score"], pgCover.Columns);
+        Assert.Equal(["Precise"], pgCover.Include);
+    }
+
+    [Fact]
+    public void Script_renders_changes_with_comments_and_pending_items()
+    {
+        var desired = new TableSchema("t", null, [new ColumnSchema("Name", "varchar(80)", false)], []);
+        var alter = new AlterColumnChange("t", null, new ColumnSchema("Name", "varchar(80)", true), desired.Columns[0], desired);
+        var drop = new DropColumnChange("t", null, "Old", desired);
+        var ddl = MySqlDataProvider.Instance.Ddl;
+        var script = new SchemaScript("mysql", SchemaSyncLevel.Safe, ddl.SessionSetup, ddl.SessionTeardown,
+            [new SchemaScriptTable("t", [alter], [drop], ddl.Generate(alter))]);
+
+        Assert.False(script.IsEmpty);
+        Assert.True(script.HasPending);
+        var sql = script.ToSql();
+        Assert.Contains("-- t\n", sql.ReplaceLineEndings("\n"), StringComparison.Ordinal);
+        Assert.Contains("--   alter column t.Name: varchar(80) null -> varchar(80) not null", sql, StringComparison.Ordinal);
+        Assert.Contains("--   PENDING (not allowed at Safe): drop column t.Old", sql, StringComparison.Ordinal);
+        Assert.Contains("UPDATE `t` SET `Name` = '' WHERE `Name` IS NULL;", sql, StringComparison.Ordinal);
+        Assert.Contains("ALTER TABLE `t` MODIFY COLUMN `Name` varchar(80) NOT NULL;", sql, StringComparison.Ordinal);
+        Assert.Equal(2, script.Statements.Count);
+
+        Assert.Equal("", new SchemaScript("mysql", SchemaSyncLevel.Full, [], [], []).ToSql());
+    }
 }

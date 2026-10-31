@@ -33,13 +33,31 @@ public static class SchemaBuilder
                         ?? c.Hint<SqlServerColumnAttribute>()?.Collation ?? c.Hint<SqliteColumnAttribute>()?.Collation,
         }).ToArray();
 
-        var indexes = map.Indexes.Select(i => new IndexSchema(
-                i.Name ?? Identifier($"{(i.Unique ? "ux" : "ix")}_{names.Table}_{string.Join("_", i.Columns.Select(c => names.Of(c.Column)))}", maxLength),
-                i.Unique,
-                i.Columns.Select(c => names.Of(c.Column)).ToArray())
+        var includeColumns = provider.Capabilities.IncludeColumns;
+        var indexes = map.Indexes.Select(i =>
             {
-                Descending = i.Columns.Any(c => c.Direction == SortOrder.Descending) ? i.Columns.Select(c => c.Direction == SortOrder.Descending).ToArray() : [],
-                Include = i.Include.Select(names.Of).ToArray(),
+                var key = i.Columns.Select(c => names.Of(c.Column)).ToList();
+                var descending = i.Columns.Select(c => c.Direction == SortOrder.Descending).ToList();
+                var include = i.Include.Select(names.Of).ToArray();
+                if (!includeColumns)
+                {
+                    // No INCLUDE (MySQL): the DDL appends covering columns to the key, so the desired shape must too,
+                    // or every sync would see a missing index and create it again.
+                    foreach (var column in include.Where(c => !key.Contains(c, StringComparer.OrdinalIgnoreCase)))
+                    {
+                        key.Add(column);
+                        descending.Add(false);
+                    }
+                    include = [];
+                }
+                return new IndexSchema(
+                    i.Name ?? Identifier($"{(i.Unique ? "ux" : "ix")}_{names.Table}_{string.Join("_", i.Columns.Select(c => names.Of(c.Column)))}", maxLength),
+                    i.Unique,
+                    key.ToArray())
+                {
+                    Descending = descending.Any(d => d) ? descending.ToArray() : [],
+                    Include = include,
+                };
             })
             .ToArray();
 

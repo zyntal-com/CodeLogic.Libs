@@ -51,8 +51,11 @@ public sealed class ColumnAttribute : Attribute
     /// <summary>Length for text and binary types (0 = default; -1 = unbounded).</summary>
     public int Size { get; set; }
 
-    /// <summary>Total digits for <see cref="DataType.Decimal"/> (0 = 18), or fractional-second digits for time types.</summary>
-    public int Precision { get; set; }
+    /// <summary>
+    /// Total digits for <see cref="DataType.Decimal"/> (-1 or 0 = 18), or fractional-second digits for time types
+    /// (-1 = the provider maximum, 0 = whole seconds, for example MySQL <c>DATETIME</c>).
+    /// </summary>
+    public int Precision { get; set; } = -1;
 
     /// <summary>Digits after the decimal point for <see cref="DataType.Decimal"/> (-1 = default of 2).</summary>
     public int Scale { get; set; } = -1;

@@ -29,6 +29,10 @@ public sealed class SchemaParent
     [Index(Name = "ix_sch_parent_seen", Direction = SortOrder.Descending)] public DateTimeOffset Seen { get; set; }
     /// <summary>Optional counter.</summary>
     public int? Count { get; set; }
+    /// <summary>Whole-second timestamp (MySQL <c>DATETIME</c>), covered by an index with an included column.</summary>
+    [Column(Precision = 0)]
+    [Index(Name = "ix_sch_parent_stamp", Include = [nameof(Amount)])]
+    public DateTime Stamp { get; set; } = new(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
 }
 
 /// <summary>Schema child: composite key and a cascading foreign key.</summary>
@@ -116,7 +120,7 @@ public abstract class SchemaConformance(ProviderFixture fixture) : ConformanceSu
         RequireProvider();
         var (parent, _) = await CreateAsync();
         var provider = Db.Provider;
-        (await Db.ExecuteSqlAsync($"INSERT INTO {Sql.Identifier("sch_parent")} ({Sql.Identifier("Code")}, {Sql.Identifier("Region")}, {Sql.Identifier("Amount")}, {Sql.Identifier("Enabled")}, {Sql.Identifier("Ref")}, {Sql.Identifier("Seen")}) VALUES ({"A"}, {"eu"}, {1.5m}, {true}, {Guid.NewGuid()}, {DateTimeOffset.UtcNow})")).ValueOrThrow();
+        (await Db.ExecuteSqlAsync($"INSERT INTO {Sql.Identifier("sch_parent")} ({Sql.Identifier("Code")}, {Sql.Identifier("Region")}, {Sql.Identifier("Amount")}, {Sql.Identifier("Enabled")}, {Sql.Identifier("Ref")}, {Sql.Identifier("Seen")}, {Sql.Identifier("Stamp")}) VALUES ({"A"}, {"eu"}, {1.5m}, {true}, {Guid.NewGuid()}, {DateTimeOffset.UtcNow}, {new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc)})")).ValueOrThrow();
 
         // Widen Code, add a NOT NULL column (existing rows need the implicit default), rename Note, drop Count, add an index.
         var desired = parent with
