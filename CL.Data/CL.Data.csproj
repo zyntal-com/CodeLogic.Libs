@@ -34,6 +34,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <None Include="build/CodeLogic.Data.targets" Pack="true" PackagePath="buildTransitive/CodeLogic.Data.targets" />
     <None Include="README.md" Pack="true" PackagePath="/" />
   </ItemGroup>
 </Project>

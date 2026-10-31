@@ -15,7 +15,7 @@ namespace CL.Data;
 /// }
 /// </code>
 /// </example>
-[AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct, Inherited = false)]
+[AttributeUsage(AttributeTargets.Class, Inherited = false)]
 public sealed class TableAttribute : Attribute
 {
     /// <summary>Table name; null derives it from the class name and the connection's naming policy.</summary>

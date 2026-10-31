@@ -27,3 +27,14 @@
     `[UpdatedBy]` and `[TenantKey]`.
   - Types: a provider-neutral `DataType` enum, plus provider hint attributes (`[MySqlTable]`/`[MySqlColumn]`,
     `[PostgresTable]`/`[PostgresColumn]`, `[SqlServerTable]`/`[SqlServerColumn]`, `[SqliteTable]`/`[SqliteColumn]`).
+- **Metadata model:**
+  - `EntityMap` / `ColumnMap` / `KeyMap`: composite keys are first-class. Column roles: identity, soft delete,
+    concurrency token, audit, tenant, retention. Also indexes and foreign keys.
+  - Names are resolved per `NamingPolicy` (AsIs, SnakeCase, CamelCase) and cached.
+  - Invalid models report every problem at once.
+- **Entity keys:** `EntityKey` holds single and composite key values, normalized so `5` equals `5L`.
+- **Accessors:** `IEntityAccessor<T>` with an `EntityAccessorRegistry` for generated accessors.
+  - Types without generated mapping fall back to reflection (compiled delegates where dynamic code is available).
+  - The fallback can be switched off with `CLDataReflectionMapping=false`; Native AOT publishes switch it off by default.
+- **Value conversion:** `ValueReader<T>` / `ValueConversion` handle driver differences: integers as booleans or enums,
+  bytes or text as GUIDs, `DateTime` as `DateTimeOffset` (UTC), and double → decimal through round-trip text.
