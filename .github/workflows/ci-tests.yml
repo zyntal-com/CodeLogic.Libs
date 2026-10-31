@@ -27,7 +27,7 @@ jobs:
       # CodeLogic source clone is needed here.
       #
       # Live-service tests (SMTP, S3, Steam, Postgres, DNSBL/GeoIP, git remote, and the
-      # MySQL2 DB facts) self-skip when their connection/env vars are absent, so this job
+      # CL.Data provider suites) self-skip when their connection/env vars are absent, so this job
       # runs the full offline suite with no external infrastructure or secrets.
       - name: Run tests
         shell: bash
@@ -45,44 +45,7 @@ jobs:
           done
           exit $fail
 
-  # MySQL2 and PostgreSQL have large live suites that self-skip without a reachable
-  # server. Before these jobs existed only their offline subset ran in CI, so the
-  # majority of each suite was never exercised on a push. Mirrors mssql-integration.
-  mysql2-integration:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    services:
-      mysql:
-        image: mysql:8.4
-        env:
-          MYSQL_ALLOW_EMPTY_PASSWORD: 'yes'
-          MYSQL_DATABASE: cl_test
-        ports:
-          - 3306:3306
-        options: >-
-          --health-cmd="mysqladmin ping -h 127.0.0.1"
-          --health-interval=5s
-          --health-timeout=5s
-          --health-retries=20
-    env:
-      CL_MYSQL2_TEST_HOST: 127.0.0.1
-      CL_MYSQL2_TEST_PORT: '3306'
-      CL_MYSQL2_TEST_DB: cl_test
-      CL_MYSQL2_TEST_USER: root
-      CL_MYSQL2_TEST_PASS: ''
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      # SDK version comes from global.json (11.0 line; prerelease allowed until GA).
-      - name: Setup .NET 11
-        uses: actions/setup-dotnet@v6
-        with:
-          global-json-file: global.json
-
-      - name: Run MySQL2 tests
-        run: dotnet test tests/MySQL2.Tests/MySQL2.Tests.csproj --configuration Release -p:CodeLogicFromNuGet=true --logger "console;verbosity=normal"
-
+  # PostgreSQL has a large live suite that self-skips without a reachable server. Mirrors mssql-integration.
   postgresql-integration:
     runs-on: ubuntu-latest
     timeout-minutes: 20

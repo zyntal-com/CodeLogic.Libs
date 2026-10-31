@@ -12,6 +12,5 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\CL.MSSQL\CL.MSSQL.csproj" />
-    <ProjectReference Include="..\..\CL.MySQL2\CL.MySQL2.csproj" />
   </ItemGroup>
 </Project>

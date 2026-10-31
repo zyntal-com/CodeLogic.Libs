@@ -2,16 +2,6 @@
   href: index.md
 
 - name: Databases
-- name: CL.MySQL2
-  items:
-    - name: Overview
-      href: mysql2/index.md
-    - name: Query Builder
-      href: mysql2/queries.md
-    - name: Schema & Migrations
-      href: mysql2/schema-migrations.md
-    - name: Performance & Caching
-      href: mysql2/performance.md
 - name: CL.MSSQL
   items:
     - name: Overview

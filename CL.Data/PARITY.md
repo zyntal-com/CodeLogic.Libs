@@ -30,3 +30,36 @@ git history.
 - `DateTimeOffset`/`DateTime` values are stored as UTC ISO-8601 text.
 - Decimals use NUMERIC affinity.
 - GUIDs are stored as 16-byte BLOBs.
+
+## CL.MySQL2 (removed 2026-10-31, after WP-50)
+
+The CodeLogic.MySQL2 4.9 package stays on nuget.org and on `support/4.x`. The WP-3B benchmark compares against it.
+
+| CL.MySQL2 feature | CL.Data | Status |
+|---|---|---|
+| Repository: Insert/InsertMany (identity write-back), Update, Delete (soft)/HardDelete, GetById, GetAll, GetPaged, Count, Find | `Repository<T>` | done |
+| Upsert, UpsertMany, UpsertWithIncrements, expression upsert | `UpsertAsync` (options), `UpsertWithIncrementsAsync`; set-based `UpdateAsync` covers expression updates | done |
+| InsertIgnore / InsertManyIgnore (`InsertOutcome`) | same names | done |
+| Increment / Decrement / Adjust | same names (generic math) | done |
+| `GetByColumnAsync(string, value)` | `FindAsync(x => x.Col == value)` (string-based API dropped on purpose) | dropped |
+| QueryBuilder: Where, WhereExists/NotExists, WhereIn/NotIn, IncludeDeleted, OrderBy, Exclude, Take/Skip, After | `db.Query<T>()` (ThenBy added; `After` is `ToCursorPageAsync`) | done |
+| Typed joins (2 tables), raw-string `Join(table, condition)` | joins over 2-5 tables; raw-string join dropped on purpose | done / dropped |
+| `Select` projections (columns only) | computed projections | done |
+| `GroupBy` + grouped Select (no HAVING) | `GroupBy` + `Having` + `IDataGroup` | done |
+| ForUpdate / ForShare (Wait/NoWait/SkipLocked), UpdateAndGetAsync | same | done |
+| ToPagedList, ToCursorPagedList, aggregates, Any, Count | same | done |
+| `UpdateAsync(Dictionary)` | member-initializer `UpdateAsync` (dictionary form dropped on purpose) | dropped |
+| SqlFn (in projections/updates) | `SqlFn` (also in `Where`), plus JSON and full text | done |
+| Raw SQL: `SqlQueryAsync`, `ExecuteSqlAsync`, `SqlScalarAsync` | same, parameterized interpolation | done |
+| Transactions (`BeginTransactionAsync`, `TransactionScope`) | `DataTransaction`, `InTransactionAsync`, savepoints | done |
+| `DistinguishDuplicateKeyError` option | always `data.duplicate_key` | dropped (always on) |
+| Multiple named connections, live config reload, health, localization | `DataLibrary` | **open, WP-A2** |
+| Transient retry with backoff | resilience middleware | **open, WP-90** |
+| Query cache (`WithCache`), SmartCache pools, cache coordinator | unified cache | **open, WP-80 to WP-84** |
+| Observability: query/slow-query events, EXPLAIN on slow, N+1 detector | telemetry middleware | **open, WP-A0** |
+| Table sync (`SyncTableAsync`, sync modes, CRC state, `GET_LOCK`, backup before alter) | schema management | **open, WP-70 to WP-73** |
+| Migrations (`IMigration`, runner, tracker, rollback) | migrations | **open, WP-74** |
+| BackupManager (DDL backups, restore), DatabaseAdmin (create/drop/exists db and table, truncate), `CreateDatabaseIfMissing` | admin and backup | **open, WP-75** |
+| RetentionWorker (`[RetainDays]`) | retention on `DataScheduler` | **open, WP-75** |
+| Bulk insert (batched multi-row) | batched `InsertManyAsync`; native `MySqlBulkCopy` | batched done; native **open, WP-A1** |
+| Charset/engine/collation per table and column | `[MySqlTable]`/`[MySqlColumn]` hints (used by DDL in WP-72) | mapping done; DDL **open, WP-72** |

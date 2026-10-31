@@ -23,25 +23,19 @@ Every `CL.*` package plugs directly into the CodeLogic boot sequence. You load i
 handles initialization order, dependency wiring, and graceful shutdown.
 
 ```csharp
-await Libraries.LoadAsync<CL.MySQL2.MySQL2Library>();
 await Libraries.LoadAsync<CL.Mail.MailLibrary>();
 await Libraries.LoadAsync<CL.TwoFactorAuth.TwoFactorAuthLibrary>();
 
 await CodeLogic.ConfigureAsync();
 await CodeLogic.StartAsync();
 
-var mysql = Libraries.Get<CL.MySQL2.MySQL2Library>();
+var mail = Libraries.Get<CL.Mail.MailLibrary>();
 ```
 
 [Get started →](getting-started.md) &nbsp;·&nbsp; [Browse all libraries →](libs/index.md)
 
 <div class="cl-group">Databases</div>
 <div class="lib-grid">
-  <a class="lib-card" href="libs/mysql2/index.md">
-    <div class="lib-name">CL.MySQL2</div>
-    <div class="lib-pkg">CodeLogic.MySQL2</div>
-    <p class="lib-desc">MySQL / MariaDB / Percona with typed LINQ → SQL, a working result cache, schema sync modes, and migrations.</p>
-  </a>
   <a class="lib-card" href="libs/mssql/index.md">
     <div class="lib-name">CL.MSSQL</div>
     <div class="lib-pkg">CodeLogic.MSSQL</div>

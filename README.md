@@ -22,7 +22,7 @@
 | Package | Version | Description |
 |---------|---------|-------------|
 | [CodeLogic.Common](CL.Common/) | [![NuGet](https://img.shields.io/nuget/v/CodeLogic.Common?label=)](https://www.nuget.org/packages/CodeLogic.Common) | Utility toolkit — encryption, hashing, ID/password generation, JSON, cron, networking |
-| [CodeLogic.MySQL2](CL.MySQL2/) | [![NuGet](https://img.shields.io/nuget/v/CodeLogic.MySQL2?label=)](https://www.nuget.org/packages/CodeLogic.MySQL2) | MySQL / MariaDB / Percona — typed LINQ → SQL, result cache, schema-sync modes, migrations, row locking, database/table admin |
+| [CodeLogic.Data](CL.Data/) | [![NuGet](https://img.shields.io/nuget/v/CodeLogic.Data?label=)](https://www.nuget.org/packages/CodeLogic.Data) | Database framework (preview): typed LINQ queries, repositories, upserts, joins, grouping, cursor paging, transactions, batches; providers `CodeLogic.Data.MySql` and `CodeLogic.Data.Sqlite` (PostgreSQL and SQL Server in progress) |
 | [CodeLogic.MSSQL](CL.MSSQL/) | [![NuGet](https://img.shields.io/nuget/v/CodeLogic.MSSQL?label=)](https://www.nuget.org/packages/CodeLogic.MSSQL) | SQL Server 2019+ / Azure SQL — typed LINQ → SQL, caching, schema sync, migrations, row locking, database/table admin |
 | [CodeLogic.PostgreSQL](CL.PostgreSQL/) | [![NuGet](https://img.shields.io/nuget/v/CodeLogic.PostgreSQL?label=)](https://www.nuget.org/packages/CodeLogic.PostgreSQL) | PostgreSQL — multi-database, repository + query builder, joins, cursor paging, caching, migrations, schema sync, row locking, database/table admin |
 | [CodeLogic.Mail](CL.Mail/) | [![NuGet](https://img.shields.io/nuget/v/CodeLogic.Mail?label=)](https://www.nuget.org/packages/CodeLogic.Mail) | SMTP send, IMAP read + IDLE, and a lightweight template engine |
@@ -47,8 +47,8 @@ number. See [Versioning](docs/versioning.md) for the full scheme.
 
 ```bash
 # The CodeLogic framework comes in transitively — install only the libraries you need.
-dotnet add package CodeLogic.MySQL2
 dotnet add package CodeLogic.Mail
+dotnet add package CodeLogic.Data.MySql   # brings CodeLogic.Data
 ```
 
 ### 2. Load & start
@@ -61,7 +61,6 @@ using CodeLogic;
 var init = await CodeLogic.InitializeAsync(o => { o.AppVersion = "1.0.0"; });
 if (!init.Success) return 1;
 
-await Libraries.LoadAsync<CL.MySQL2.MySQL2Library>();
 await Libraries.LoadAsync<CL.Mail.MailLibrary>();
 
 await CodeLogic.ConfigureAsync();   // generates/loads each library's config
@@ -75,20 +74,31 @@ Every library runs the same four-phase lifecycle automatically:
 ### 3. Configure
 
 On first run each library writes a JSON config file with defaults into its own directory under
-`Libraries/<LibraryId>/` — for example `config.mysql.json`, `config.mail.json`. Edit and restart.
+`Libraries/<LibraryId>/` — for example `config.mail.json`. Edit and restart.
 Validation runs on startup, so invalid config stops the boot with a clear error.
 
 ### 4. Use
 
 ```csharp
-var mysql = Libraries.Get<CL.MySQL2.MySQL2Library>();
+using CL.Data.Configuration;
+using CL.Data.Execution;
+using CL.Data.MySql;
+using CL.Data.Providers;
 
-var users = await mysql.Query<UserRecord>()
+DataProviderRegistry.Register(MySqlDataProvider.Instance);
+await using var db = Database.Create("main", new DataConnectionConfig
+{
+    Provider = "mysql", Host = "localhost", Database = "app", Username = "app", Password = "secret",
+}).ValueOrThrow();
+
+var users = await db.Query<UserRecord>()
     .Where(u => u.IsActive && u.Role == "admin")
     .OrderBy(u => u.Name)
-    .WithCache(TimeSpan.FromMinutes(5))
     .ToPagedListAsync(page: 1, pageSize: 20);
 ```
+
+CL.Data also works without the CodeLogic runtime, as above; its CodeLogic library (with configuration
+files and health checks) arrives with the 5.0 previews.
 
 ## How libraries work
 
@@ -104,8 +114,8 @@ rely on database connections, mail services, and the rest being available.
 
 ```csharp
 // Resolve a loaded library anywhere in your code:
-var mysql = Libraries.Get<CL.MySQL2.MySQL2Library>();
-var repo  = mysql.GetRepository<UserRecord>();
+var mail = Libraries.Get<CL.Mail.MailLibrary>();
+var sent = await mail.Smtp.SendAsync(message);
 ```
 
 Most operations return `Result` / `Result<T>` rather than throwing for expected failures

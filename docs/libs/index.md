@@ -6,11 +6,6 @@ your application or from other libraries after `StartAsync()`.
 
 <div class="cl-group">Databases</div>
 <div class="lib-grid">
-  <a class="lib-card" href="mysql2/index.md">
-    <div class="lib-name">CL.MySQL2</div>
-    <div class="lib-pkg">CodeLogic.MySQL2</div>
-    <p class="lib-desc">MySQL / MariaDB / Percona — typed LINQ → SQL, result cache, schema-sync modes, migrations.</p>
-  </a>
   <a class="lib-card" href="mssql/index.md">
     <div class="lib-name">CL.MSSQL</div>
     <div class="lib-pkg">CodeLogic.MSSQL</div>
@@ -110,11 +105,11 @@ The libraries follow a handful of consistent patterns, so once you've used one t
 ### Loading & access
 
 ```csharp
-await Libraries.LoadAsync<CL.MySQL2.MySQL2Library>();   // register before ConfigureAsync()
+await Libraries.LoadAsync<CL.Mail.MailLibrary>();   // register before ConfigureAsync()
 await CodeLogic.ConfigureAsync();
 await CodeLogic.StartAsync();
 
-var mysql = Libraries.Get<CL.MySQL2.MySQL2Library>();   // resolve after StartAsync()
+var mail = Libraries.Get<CL.Mail.MailLibrary>();   // resolve after StartAsync()
 ```
 
 ### Result-based APIs
@@ -132,7 +127,7 @@ else
 ### Configuration files
 
 Each library auto-generates its JSON config on first run under its own config directory
-(e.g. `…/Libraries/CL.MySQL2/config.mysql.json`). Defaults are written if the file is missing,
+(e.g. `…/Libraries/CL.Mail/config.mail.json`). Defaults are written if the file is missing,
 so first boot always succeeds and you tune from there.
 
 ### Health checks
@@ -147,9 +142,9 @@ var status = await mysql.HealthCheckAsync();
 
 ### The database libraries
 
-`CL.MySQL2`, `CL.MSSQL` and `CL.PostgreSQL` share the same shape: `GetRepository<T>()` for CRUD and a
+`CL.MSSQL` and `CL.PostgreSQL` share the same shape: `GetRepository<T>()` for CRUD and a
 fluent query builder (`Query<T>()`) that translates LINQ-style expressions to SQL, plus attribute-driven
 table sync. In CodeLogic 5 they are being replaced by **CL.Data** (`CodeLogic.Data` plus one provider
-package per database); SQLite is already served by `CodeLogic.Data.Sqlite`.
+package per database); SQLite and MySQL are already served by `CodeLogic.Data.Sqlite` and `CodeLogic.Data.MySql`.
 
 See the [API Reference](../api/index.md) for the full generated type and member listing.
