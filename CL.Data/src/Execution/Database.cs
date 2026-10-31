@@ -192,6 +192,21 @@ public sealed partial class Database : IAsyncDisposable
     public ValueTask<Result<List<T>>> SqlQueryAsync<T>(SqlText sql, CancellationToken ct = default) =>
         QueryCoreAsync<T>(sql, ct);
 
+    /// <summary>Runs a query and builds each row with <paramref name="read"/> (catalog queries, custom readers).</summary>
+    public ValueTask<Result<List<T>>> SqlReadAsync<T>(SqlText sql, Func<DbDataReader, T> read, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(read);
+        return RunAsync(Context(sql, CommandKind.Query, ct), read,
+            static async (cmd, build, token) =>
+            {
+                List<T> rows = [];
+                await using var reader = await cmd.ExecuteReaderAsync(token).ConfigureAwait(false);
+                while (await reader.ReadAsync(token).ConfigureAwait(false)) rows.Add(build(reader));
+                return rows;
+            },
+            static list => list.Count);
+    }
+
     /// <summary>Runs a statement and returns the number of affected rows. Raw statements are treated as writes.</summary>
     public async ValueTask<Result<int>> ExecuteSqlAsync(SqlText sql, CancellationToken ct = default)
     {

@@ -68,12 +68,15 @@ public sealed class PostgreSqlDataProvider : DataProvider
     public override CL.Data.Schema.DdlGenerator Ddl => field ??= new PostgreSqlDdlGenerator(Dialect);
 
     /// <inheritdoc />
+    public override CL.Data.Schema.SchemaIntrospector Introspector { get; } = new PostgreSqlSchemaIntrospector();
+
+    /// <inheritdoc />
     public override string? GetDefaultSchema(DataConnectionConfig config) => config.PostgreSql?.DefaultSchema ?? "public";
 
     /// <inheritdoc />
     public override string NormalizeStoreType(string storeType)
     {
-        var type = base.NormalizeStoreType(storeType);
+        var type = CL.Data.Schema.StoreTypeNormalizer.PostgreSqlTimes(base.NormalizeStoreType(storeType));
         foreach (var (alias, canonical) in TypeAliases)
         {
             if (type == alias) return canonical;

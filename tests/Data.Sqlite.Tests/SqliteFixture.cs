@@ -79,3 +79,6 @@ public sealed class SqliteTransactionTests(SqliteFixture fixture) : TransactionC
 
 [Collection("sqlite")]
 public sealed class SqliteBatchTests(SqliteFixture fixture) : BatchConformance(fixture);
+
+[Collection("sqlite")]
+public sealed class SqliteSchemaTests(SqliteFixture fixture) : SchemaConformance(fixture);

@@ -59,3 +59,5 @@ public sealed class SqlServerCollection : ICollectionFixture<SqlServerFixture>;
 [Collection("sqlserver")] public sealed class SqlServerGroupingTests(SqlServerFixture f) : GroupingConformance(f);
 [Collection("sqlserver")] public sealed class SqlServerTransactionTests(SqlServerFixture f) : TransactionConformance(f);
 [Collection("sqlserver")] public sealed class SqlServerBatchTests(SqlServerFixture f) : BatchConformance(f);
+
+[Collection("sqlserver")] public sealed class SqlServerSchemaTests(SqlServerFixture f) : SchemaConformance(f);

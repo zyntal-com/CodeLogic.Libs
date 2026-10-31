@@ -56,3 +56,5 @@ public sealed class MySqlCollection : ICollectionFixture<MySqlFixture>;
 [Collection("mysql")] public sealed class MySqlGroupingTests(MySqlFixture f) : GroupingConformance(f);
 [Collection("mysql")] public sealed class MySqlTransactionTests(MySqlFixture f) : TransactionConformance(f);
 [Collection("mysql")] public sealed class MySqlBatchTests(MySqlFixture f) : BatchConformance(f);
+
+[Collection("mysql")] public sealed class MySqlSchemaTests(MySqlFixture f) : SchemaConformance(f);

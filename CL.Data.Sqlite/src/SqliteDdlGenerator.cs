@@ -17,6 +17,9 @@ public sealed class SqliteDdlGenerator(SqlDialect dialect) : DdlGenerator(dialec
     protected override bool SupportsInclude => false;
 
     /// <inheritdoc />
+    protected override string IfNotExists => "IF NOT EXISTS ";   // a rebuild earlier in the plan may have created it
+
+    /// <inheritdoc />
     protected override bool InlinePrimaryKey(TableSchema table) => IdentityKey(table) is not null;
 
     /// <inheritdoc />

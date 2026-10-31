@@ -66,7 +66,7 @@ public sealed class DdlGoldenTests
             "CREATE TABLE \"ddl_items\" (\"Id\" INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, \"Code\" text NOT NULL, \"Note\" text NULL, " +
             "\"Active\" integer NOT NULL, \"OwnerId\" integer NOT NULL, " +
             "CONSTRAINT \"fk_ddl_items_OwnerId\" FOREIGN KEY (\"OwnerId\") REFERENCES \"ddl_owner\" (\"Id\") ON DELETE CASCADE ON UPDATE RESTRICT)",
-            "CREATE UNIQUE INDEX \"ux_ddl_items_Code\" ON \"ddl_items\" (\"Code\")",
+            "CREATE UNIQUE INDEX IF NOT EXISTS \"ux_ddl_items_Code\" ON \"ddl_items\" (\"Code\")",
         ], Create(SqliteDataProvider.Instance));
     }
 

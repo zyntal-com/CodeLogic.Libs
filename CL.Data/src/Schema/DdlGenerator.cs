@@ -137,7 +137,7 @@ public class DdlGenerator(SqlDialect dialect)
     protected virtual string CreateIndex(string table, string? schema, IndexSchema index)
     {
         var columns = index.Columns.Select((c, i) => Q(c) + (index.Descending.Count > i && index.Descending[i] ? " DESC" : "")).ToList();
-        var sb = new StringBuilder("CREATE ").Append(index.Unique ? "UNIQUE " : "").Append("INDEX ").Append(Q(index.Name))
+        var sb = new StringBuilder("CREATE ").Append(index.Unique ? "UNIQUE " : "").Append("INDEX ").Append(IfNotExists).Append(Q(index.Name))
             .Append(" ON ").Append(Table(table, schema)).Append(" (");
         if (SupportsInclude)
         {
@@ -152,6 +152,9 @@ public class DdlGenerator(SqlDialect dialect)
         }
         return sb.ToString();
     }
+
+    /// <summary><c>IF NOT EXISTS </c> where CREATE INDEX supports it and a table rebuild may already have created the index.</summary>
+    protected virtual string IfNotExists => "";
 
     /// <summary>True when indexes support <c>INCLUDE</c>.</summary>
     protected virtual bool SupportsInclude => true;

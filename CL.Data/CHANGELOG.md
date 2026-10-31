@@ -167,3 +167,7 @@
 - **DDL generation:** `DdlGenerator` writes standard DDL for every `SchemaChange`; `DataProvider.Ddl` exposes it.
   - **Implicit defaults:** a NOT NULL column added without a default gets one, so existing rows stay valid.
   - **Covering columns:** where the provider has no `INCLUDE`, they are appended to the index key.
+- **Schema introspection:** `SchemaIntrospector` (`ReadTableAsync`, `ListTablesAsync`), exposed as `DataProvider.Introspector`.
+  - **Type normalization:** `StoreTypeNormalizer` converts the type names catalogs report into the names the type mappers write.
+  - **New query method:** `Database.SqlReadAsync(sql, read)` builds each row of a raw query with your own reader function.
+  - **Schema conformance:** generated DDL is run, the table is read back, and the diff against the model must be empty; changes apply with the rows kept.

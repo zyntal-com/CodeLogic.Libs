@@ -66,6 +66,12 @@ public sealed class MySqlDataProvider : DataProvider
     public override CL.Data.Schema.DdlGenerator Ddl => field ??= new MySqlDdlGenerator(Dialect);
 
     /// <inheritdoc />
+    public override CL.Data.Schema.SchemaIntrospector Introspector { get; } = new MySqlSchemaIntrospector();
+
+    /// <inheritdoc />
+    public override string NormalizeStoreType(string storeType) => CL.Data.Schema.StoreTypeNormalizer.MySql(base.NormalizeStoreType(storeType));
+
+    /// <inheritdoc />
     public override IReadOnlyDictionary<string, string> TableOptions(EntityMap map, DataConnectionConfig config) =>
         MySqlTableOptions.For(map, config);
 

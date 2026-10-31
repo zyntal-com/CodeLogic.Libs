@@ -126,6 +126,9 @@ public abstract class DataProvider
     /// <summary>Exception classification.</summary>
     public abstract IErrorClassifier Errors { get; }
 
+    /// <summary>Catalog reader for schema sync and drift detection (null when the provider has none).</summary>
+    public virtual CL.Data.Schema.SchemaIntrospector? Introspector => null;
+
     /// <summary>DDL generation for schema sync. Default: standard SQL through <see cref="Dialect"/>.</summary>
     public virtual CL.Data.Schema.DdlGenerator Ddl => field ??= new CL.Data.Schema.DdlGenerator(Dialect);
 

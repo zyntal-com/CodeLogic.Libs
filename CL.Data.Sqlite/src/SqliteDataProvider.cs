@@ -60,6 +60,9 @@ public sealed class SqliteDataProvider : DataProvider
     public override CL.Data.Schema.DdlGenerator Ddl => field ??= new SqliteDdlGenerator(Dialect);
 
     /// <inheritdoc />
+    public override CL.Data.Schema.SchemaIntrospector Introspector { get; } = new SqliteSchemaIntrospector();
+
+    /// <inheritdoc />
     public override IReadOnlyDictionary<string, string> TableOptions(CL.Data.Mapping.EntityMap map, DataConnectionConfig config)
     {
         var hint = map.Hint<SqliteTableAttribute>();

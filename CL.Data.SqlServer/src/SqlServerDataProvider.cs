@@ -68,6 +68,12 @@ public sealed class SqlServerDataProvider : DataProvider
     public override CL.Data.Schema.DdlGenerator Ddl => field ??= new SqlServerDdlGenerator(Dialect);
 
     /// <inheritdoc />
+    public override CL.Data.Schema.SchemaIntrospector Introspector { get; } = new SqlServerSchemaIntrospector();
+
+    /// <inheritdoc />
+    public override string NormalizeStoreType(string storeType) => CL.Data.Schema.StoreTypeNormalizer.SqlServer(base.NormalizeStoreType(storeType));
+
+    /// <inheritdoc />
     public override string? GetDefaultSchema(DataConnectionConfig config) => config.SqlServer?.DefaultSchema ?? "dbo";
 
     /// <inheritdoc />
