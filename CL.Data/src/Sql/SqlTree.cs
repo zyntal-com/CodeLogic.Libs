@@ -286,6 +286,8 @@ public sealed record DeleteStatement(TableRef Table) : SqlStatement
     public SqlExpr? Where { get; init; }
     /// <summary>Most rows to delete (batched deletes); rendered by the dialect.</summary>
     public SqlExpr? Limit { get; init; }
+    /// <summary>Which rows a limited delete takes first (with <see cref="Limit"/> only).</summary>
+    public IReadOnlyList<OrderItem> OrderBy { get; init; } = [];
     /// <summary>Key columns used when the dialect emulates a limited delete through a key subquery.</summary>
     public IReadOnlyList<string> KeyColumns { get; init; } = [];
 }

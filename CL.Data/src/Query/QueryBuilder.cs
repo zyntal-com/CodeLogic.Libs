@@ -472,12 +472,25 @@ public sealed class QueryBuilder<T>
         var where = BuildWhere(map, alias: null);
         if (where.IsFailure) return where.Error!;
 
+        // Batched deletes: Where(...).OrderBy(...).Take(n) deletes at most n rows, oldest (or whatever the order says) first.
+        if (_state.Skip is > 0) return DataErrors.Validation("A set-based delete cannot Skip rows; use OrderBy and Take to delete in batches.");
+        List<OrderItem> order = [];
+        foreach (var sort in _state.Order)
+        {
+            var key = SqlTranslator.TranslateValue(sort.Key, Scope(map, sort.Key.Parameters[0], alias: null));
+            if (key.IsFailure) return key.Error!;
+            order.Add(new OrderItem(key.Value!, sort.Descending));
+        }
+        var limit = _state.Take is { } take ? LimitParam(take) : null;
+
         var ctx = _db.WriteContext;
         var names = map.GetNames(ctx.Policy);
         var table = WritePlanner.TableOf(map, names, ctx);
         SqlStatement statement;
         if (!hard && map.SoftDelete is { } soft)
         {
+            if (limit is not null)
+                return DataErrors.Validation($"A limited soft delete is not supported; {typeof(T).Name} is [SoftDelete], so delete hard (hard: true) or without Take.");
             var now = ctx.Time.GetUtcNow();
             List<SetItem> set = [new SetItem(names.Of(soft), TimeParam(soft, now))];
             if (map.UpdatedAt is { } updatedAt) set.Add(new SetItem(names.Of(updatedAt), TimeParam(updatedAt, now)));
@@ -485,7 +498,13 @@ public sealed class QueryBuilder<T>
         }
         else
         {
-            statement = new DeleteStatement(table) { Where = where.Value };
+            statement = new DeleteStatement(table)
+            {
+                Where = where.Value,
+                Limit = limit,
+                OrderBy = limit is null ? [] : order,
+                KeyColumns = map.Key.Columns.Select(names.Of).ToArray(),
+            };
         }
 
         var command = new WriteCommand(statement, WriteKind.Delete, names.Table, 0, [DataTags.Table(names.Table)]);
@@ -504,6 +523,8 @@ public sealed class QueryBuilder<T>
         if (accessor.IsFailure) return accessor.Error!;
         var map = accessor.Value!.Map;
 
+        if (_state.Take is not null || _state.Skip is not null)
+            return DataErrors.Validation("A set-based update cannot use Take or Skip; it updates every matching row (use UpdateAndGetAsync to claim a limited set).");
         var where = BuildWhere(map, alias: null);
         if (where.IsFailure) return where.Error!;
         var set = BuildSet(map, setter);
