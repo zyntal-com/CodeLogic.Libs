@@ -11,6 +11,9 @@
     <Authors>Zyntal.com</Authors>
     <Description>Game server query library — Valve Source Engine (CSS/CS2), Minecraft UDP/RCON queries</Description>
   </PropertyGroup>  <ItemGroup>
+    <InternalsVisibleTo Include="GameNetQuery.Tests" />
+  </ItemGroup>
+  <ItemGroup>
     <None Include="README.md" Pack="true" PackagePath="/" />
   </ItemGroup>
 </Project>
