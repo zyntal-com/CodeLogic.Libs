@@ -20,8 +20,12 @@ public sealed class TranslationScope(SqlDialect dialect, NamingPolicy policy)
     /// <summary>Naming policy for column names.</summary>
     public NamingPolicy Policy { get; } = policy;
 
-    /// <summary>Lambda parameters in scope.</summary>
-    public IReadOnlyCollection<ParameterExpression> Parameters => _tables.Keys;
+    /// <summary>Lambda parameters in scope (tables, plus the group parameter of a grouped query).</summary>
+    public IReadOnlyCollection<ParameterExpression> Parameters =>
+        Group is null ? _tables.Keys : [.. _tables.Keys, Group.Parameter];
+
+    /// <summary>The group a grouped-query lambda works on, when translating <c>Having</c>/<c>Select</c>/<c>OrderBy</c> of a group.</summary>
+    public GroupScope? Group { get; init; }
 
     /// <summary>Binds <paramref name="parameter"/> to <paramref name="map"/> with <paramref name="alias"/>.</summary>
     public TranslationScope Bind(ParameterExpression parameter, EntityMap map, string? alias = null)
@@ -33,6 +37,13 @@ public sealed class TranslationScope(SqlDialect dialect, NamingPolicy policy)
     /// <summary>The table bound to <paramref name="parameter"/>, if any.</summary>
     public ScopeTable? TableOf(ParameterExpression parameter) => _tables.GetValueOrDefault(parameter);
 }
+
+/// <summary>The group parameter of a grouped-query lambda and what its key translates to.</summary>
+/// <param name="Parameter">The <c>IDataGroup</c> lambda parameter.</param>
+/// <param name="Key">SQL of a single-value key; null for a composite key.</param>
+/// <param name="KeyMembers">SQL of each member of a composite (anonymous type) key.</param>
+/// <param name="Table">The grouped table (aggregate selectors bind to it).</param>
+public sealed record GroupScope(ParameterExpression Parameter, SqlExpr? Key, IReadOnlyDictionary<string, SqlExpr> KeyMembers, ScopeTable Table);
 
 /// <summary>Raised inside the translator; turned into <c>data.translation_failed</c> at the boundary.</summary>
 internal sealed class TranslationException(string message, string? details = null) : Exception(message)

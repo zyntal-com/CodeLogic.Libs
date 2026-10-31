@@ -99,6 +99,7 @@ internal sealed partial class ExpressionTranslator(TranslationScope scope)
 
     private SqlExpr Member(MemberExpression member)
     {
+        if (GroupMember(member) is { } groupMember) return groupMember;
         if (ColumnOf(member) is { } column) return column.Sql;
 
         // Nullable<T>.Value and .HasValue on a column.

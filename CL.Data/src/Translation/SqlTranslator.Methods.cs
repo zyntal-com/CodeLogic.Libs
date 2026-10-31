@@ -8,6 +8,8 @@ internal sealed partial class ExpressionTranslator
 {
     private SqlExpr Method(MethodCallExpression call)
     {
+        if (GroupAggregate(call) is { } aggregate) return aggregate;
+
         var method = call.Method;
         var declaring = method.DeclaringType;
         var args = call.Arguments;

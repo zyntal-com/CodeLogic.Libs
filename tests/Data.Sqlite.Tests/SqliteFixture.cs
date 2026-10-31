@@ -70,3 +70,6 @@ public sealed class SqliteProjectionTests(SqliteFixture fixture) : ProjectionCon
 
 [Collection("sqlite")]
 public sealed class SqliteJoinTests(SqliteFixture fixture) : JoinConformance(fixture);
+
+[Collection("sqlite")]
+public sealed class SqliteGroupingTests(SqliteFixture fixture) : GroupingConformance(fixture);

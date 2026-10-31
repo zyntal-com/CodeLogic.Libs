@@ -125,6 +125,13 @@ public sealed class QueryBuilder<T>
         return With(_state with { Excluded = excluded });
     }
 
+    /// <summary>Groups rows by <paramref name="key"/> (a value, or an anonymous type for several columns).</summary>
+    public GroupedQuery<T, TKey> GroupBy<TKey>(Expression<Func<T, TKey>> key)
+    {
+        ArgumentNullException.ThrowIfNull(key);
+        return new GroupedQuery<T, TKey>(this, key);
+    }
+
     /// <summary>Projects each row with <paramref name="selector"/> (computed values allowed).</summary>
     public ProjectedQuery<T, TResult> Select<TResult>(Expression<Func<T, TResult>> selector)
     {

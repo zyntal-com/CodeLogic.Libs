@@ -131,3 +131,8 @@
   - `Where`/`OrderBy`/`ThenBy`/`Take`/`Skip`, `Select` projections, `CountAsync`, and `ToListAsync` returning
     entity tuples (null for an unmatched LEFT JOIN).
   - Joined entities' soft-delete and tenant filters go into their ON clause.
+- **Grouping:** `GroupBy` takes a value, an anonymous type of columns, or a computed key.
+  - `Having`, `OrderBy`/`ThenBy` over aggregates, `Take`/`Skip`, and `Select` into any projection.
+  - Group lambdas receive `IDataGroup<TKey, T>`: `Key`, `Count`, `Count(predicate)`, `LongCount`, `CountDistinct`,
+    `Sum`, `Average`, `Min`, `Max`, `Any`.
+  - Sums of NULLs are zero, and integer averages are not truncated (SQL Server).
