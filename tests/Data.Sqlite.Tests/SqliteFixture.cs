@@ -58,3 +58,6 @@ public sealed class SqliteRepositoryTests(SqliteFixture fixture) : RepositoryCon
 
 [Collection("sqlite")]
 public sealed class SqliteUpsertTests(SqliteFixture fixture) : UpsertConformance(fixture);
+
+[Collection("sqlite")]
+public sealed class SqliteQueryTests(SqliteFixture fixture) : QueryConformance(fixture);

@@ -14,29 +14,39 @@ namespace CL.Data.Translation;
 public static class SqlTranslator
 {
     /// <summary>Translates a condition (WHERE, HAVING, ON).</summary>
-    public static Result<SqlExpr> TranslatePredicate(LambdaExpression lambda, TranslationScope scope) =>
-        Run(lambda, scope, static (t, body) => t.Predicate(body));
-
-    /// <summary>Translates a value (projection, ORDER BY, SET).</summary>
-    public static Result<SqlExpr> TranslateValue(LambdaExpression lambda, TranslationScope scope) =>
-        Run(lambda, scope, static (t, body) => t.Value(body));
-
-    private static Result<SqlExpr> Run(LambdaExpression lambda, TranslationScope scope, Func<ExpressionTranslator, Expression, SqlExpr> translate)
+    public static Result<SqlExpr> TranslatePredicate(LambdaExpression lambda, TranslationScope scope)
     {
         ArgumentNullException.ThrowIfNull(lambda);
+        return Run(lambda.Body, scope, static (t, body) => t.Predicate(body));
+    }
+
+    /// <summary>Translates a value (projection, ORDER BY, SET).</summary>
+    public static Result<SqlExpr> TranslateValue(LambdaExpression lambda, TranslationScope scope)
+    {
+        ArgumentNullException.ThrowIfNull(lambda);
+        return Run(lambda.Body, scope, static (t, body) => t.Value(body));
+    }
+
+    /// <summary>Translates a value expression whose parameters are bound in <paramref name="scope"/> (a part of a larger lambda).</summary>
+    public static Result<SqlExpr> TranslateValue(Expression body, TranslationScope scope) =>
+        Run(body, scope, static (t, b) => t.Value(b));
+
+    private static Result<SqlExpr> Run(Expression body, TranslationScope scope, Func<ExpressionTranslator, Expression, SqlExpr> translate)
+    {
+        ArgumentNullException.ThrowIfNull(body);
         ArgumentNullException.ThrowIfNull(scope);
         try
         {
-            return translate(new ExpressionTranslator(scope), lambda.Body);
+            return translate(new ExpressionTranslator(scope), body);
         }
         catch (TranslationException ex)
         {
-            return DataErrors.TranslationFailed(ex.Message, ex.Details ?? lambda.ToString());
+            return DataErrors.TranslationFailed(ex.Message, ex.Details ?? body.ToString());
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
             // Evaluating a captured value threw (for example a null reference in the caller's code).
-            return DataErrors.TranslationFailed($"Evaluating a value in the expression failed: {ex.GetType().Name}.", $"{lambda} — {ex.Message}");
+            return DataErrors.TranslationFailed($"Evaluating a value in the expression failed: {ex.GetType().Name}.", $"{body} — {ex.Message}");
         }
     }
 }

@@ -107,3 +107,10 @@
   `UpsertWithIncrementsAsync`, `InsertIgnoreAsync` (`InsertOutcome.Inserted`/`Duplicate`) and `InsertManyIgnoreAsync`,
   plus atomic `IncrementAsync`/`DecrementAsync`/`AdjustAsync` (generic math). Each update also writes the audit
   columns and bumps the concurrency token.
+- **Query builder:** `db.Query<T>()` is immutable and translates its lambdas at the terminal call.
+  - Shaping: `Where`, `OrderBy`/`ThenBy` (and descending), `Take`/`Skip`, `Exclude`, `IncludeDeleted`.
+  - Subqueries: correlated `WhereExists`/`WhereNotExists`, and `WhereIn`/`WhereNotIn` (the inner entity's filters apply).
+  - Reads: `ToListAsync`, `FirstOrDefaultAsync`, `CountAsync`, `AnyAsync`, `Max`/`Min`/`Sum`/`AverageAsync`.
+    Aggregates over no rows return null, and sums return zero.
+  - Set-based writes: `UpdateAsync(x => new T { ... })` (values may use the row's columns; audit columns are written and
+    the token bumped) and `DeleteAsync` (soft unless `hard`).

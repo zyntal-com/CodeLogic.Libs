@@ -34,6 +34,9 @@ public sealed partial class Database
     /// <summary>A repository for <typeparamref name="T"/>: key lookups and entity writes.</summary>
     public Repository<T> Repository<T>() => new(this);
 
+    /// <summary>A query over <typeparamref name="T"/>.</summary>
+    public QueryBuilder<T> Query<T>() => new(this);
+
     // ── Statements ──────────────────────────────────────────────────────────
 
     /// <summary>Renders <paramref name="statement"/>, or <c>data.unsupported</c> when the dialect cannot express it.</summary>
