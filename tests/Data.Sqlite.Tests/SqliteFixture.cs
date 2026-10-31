@@ -76,3 +76,6 @@ public sealed class SqliteGroupingTests(SqliteFixture fixture) : GroupingConform
 
 [Collection("sqlite")]
 public sealed class SqliteTransactionTests(SqliteFixture fixture) : TransactionConformance(fixture);
+
+[Collection("sqlite")]
+public sealed class SqliteBatchTests(SqliteFixture fixture) : BatchConformance(fixture);

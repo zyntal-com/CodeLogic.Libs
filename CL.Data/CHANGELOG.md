@@ -143,3 +143,8 @@
 - **Locking reads:** `ForUpdate`/`ForShare` with `LockWait.NoWait`/`SkipLocked` need a transaction.
 - **`UpdateAndGetAsync`:** locks the matching keys, updates them and returns the updated rows (RETURNING where
   available). With `OrderBy`/`Take`/`SkipLocked` it is a safe job-queue claim.
+- **Batches:** `db.Batch()` sends several queries in one round trip: `Add(query)`, `Count(query)`, `Sql<T>(...)`, then
+  `ExecuteAsync` and each result's `Value`.
+  - It uses `DbBatch` where the driver supports it, otherwise one multi-statement command with globally numbered
+    parameters.
+  - A planning error (such as a translation failure) runs nothing.

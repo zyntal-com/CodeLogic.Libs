@@ -20,16 +20,37 @@ public sealed class SqlWriter
     private readonly StringBuilder _sb = new(256);
     private readonly List<SqlParameterValue> _parameters = [];
 
-    private SqlWriter(SqlDialect dialect) => Dialect = dialect;
+    private readonly int _offset;
+
+    private SqlWriter(SqlDialect dialect, int parameterOffset = 0)
+    {
+        Dialect = dialect;
+        _offset = parameterOffset;
+    }
 
     /// <summary>The dialect being rendered.</summary>
     public SqlDialect Dialect { get; }
 
-    /// <summary>Renders <paramref name="statement"/>.</summary>
-    public static RenderedSql Render(SqlStatement statement, SqlDialect dialect)
+    /// <summary>Renders <paramref name="statement"/>; placeholders start at <paramref name="parameterOffset"/>.</summary>
+    public static RenderedSql Render(SqlStatement statement, SqlDialect dialect, int parameterOffset = 0)
+    {
+        var writer = new SqlWriter(dialect, parameterOffset);
+        writer.Statement(statement);
+        return new RenderedSql(writer._sb.ToString(), writer._parameters.ToArray());
+    }
+
+    /// <summary>
+    /// Renders several statements into one command text separated by <c>;</c>, numbering parameters across all of them
+    /// (for providers without <see cref="System.Data.Common.DbBatch"/>).
+    /// </summary>
+    public static RenderedSql RenderMany(IReadOnlyList<SqlStatement> statements, SqlDialect dialect)
     {
         var writer = new SqlWriter(dialect);
-        writer.Statement(statement);
+        for (var i = 0; i < statements.Count; i++)
+        {
+            if (i > 0) writer._sb.Append(";\n");
+            writer.Statement(statements[i]);
+        }
         return new RenderedSql(writer._sb.ToString(), writer._parameters.ToArray());
     }
 
@@ -75,7 +96,7 @@ public sealed class SqlWriter
     /// <summary>Binds <paramref name="value"/> and appends its placeholder.</summary>
     public SqlWriter Parameter(SqlParameterValue value)
     {
-        _sb.Append(Dialect.ParameterName(_parameters.Count));
+        _sb.Append(Dialect.ParameterName(_offset + _parameters.Count));
         _parameters.Add(value);
         return this;
     }

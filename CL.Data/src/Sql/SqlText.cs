@@ -129,7 +129,10 @@ public struct SqlText
     public readonly IReadOnlyList<SqlParameterValue> Parameters => _parameters ?? [];
 
     /// <summary>Renders the SQL text for <paramref name="dialect"/>, with placeholders <c>@p0</c>, <c>@p1</c>, ...</summary>
-    public readonly string Render(SqlDialect dialect)
+    public readonly string Render(SqlDialect dialect) => Render(dialect, 0);
+
+    /// <summary>Renders the SQL text with placeholders numbered from <paramref name="parameterOffset"/> (batches).</summary>
+    public readonly string Render(SqlDialect dialect, int parameterOffset)
     {
         if (_segments is null) return "";
         if (_segments.Count == 1 && _segments[0].Literal is { } only) return only;
@@ -138,7 +141,7 @@ public struct SqlText
         {
             if (segment.Literal is not null) sb.Append(segment.Literal);
             else if (segment.Identifier is not null) sb.Append(dialect.QuoteIdentifier(segment.Identifier));
-            else sb.Append(dialect.ParameterName(segment.Parameter));
+            else sb.Append(dialect.ParameterName(parameterOffset + segment.Parameter));
         }
         return sb.ToString();
     }
