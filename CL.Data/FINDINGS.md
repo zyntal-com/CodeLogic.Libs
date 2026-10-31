@@ -100,6 +100,8 @@ the current numbers) and for time relative to Dapper or raw ADO.NET in the same 
 | 5.5 | `SqlTables.Of` allocates on every cached call | True | Tags are computed only on a miss, inside the loader. |
 | 6.2 | `AsAsyncEnumerable` bypasses the pipeline and replicas | True | The stream opens through the pipeline: interceptors, telemetry, routing, and a retry of the open. |
 
+**Reported separately: MySQL unchanged saves.** `UseAffectedRows = true` (needed by insert-ignore, which is rendered as a no-op `ON DUPLICATE KEY UPDATE`) combined with the update's exactly-one-row check made saving an unchanged entity fail with `data.not_found`. The snapshot path hid it, because it skips no-op saves. Fixed with a match check when 0 rows are reported. Still different on MySQL, documented in PARITY: set-based `UpdateAsync` returns rows *changed*, not rows matched, and `AdjustAsync(..., 0)` returns false.
+
 **Found while testing:** a `SqlFn` call with only captured arguments, such as `SqlFn.BucketUtc(at, 60)` in a `Select`, was evaluated on the client and threw "SqlFn functions can only be used inside CL.Data query expressions". `SqlFn` calls are now always translated. There was no conformance test running `BucketUtc` against a real server, which is why 4.1 was missed; one exists now, for dates before and after 2038.
 
 ## Strong-name signing (2026-10-31)

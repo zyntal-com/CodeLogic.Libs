@@ -166,6 +166,7 @@ public static class WritePlanner
         return new WriteCommand(statement, WriteKind.Update, names.Table, 1, Tags(names.Table, key))
         {
             Check = RowCheck.ExactlyOne,
+            MatchCheck = new SelectStatement(statement.Table) { Projection = [new ProjectionItem(new LiteralExpr(1))], Where = where, Limit = new LiteralExpr(1) },
             ReturnedColumns = returned,
             OnSuccess = onSuccess,
         };

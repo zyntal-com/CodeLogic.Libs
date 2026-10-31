@@ -133,4 +133,20 @@ public abstract class TenantWriteConformance(ProviderFixture fixture) : Conforma
         Assert.Equal("UMIX-2", stored?.Sku);                                 // inserted under its own identity
         Assert.Equal(1L, (await Db.Query<Product>().Where(p => p.Sku == "UMIX-1").CountAsync()).ValueOrThrow());
     }
+
+    [SkippableFact]
+    public async Task Saving_an_unchanged_entity_succeeds_and_a_missing_row_is_still_not_found()
+    {
+        RequireProvider();
+        var note = await SeedForTenantOneAsync();
+        var one = Db.ForTenant(1).Repository<TenantNote>();
+
+        // Same values, no snapshot: the full UPDATE runs and changes nothing (MySQL then reports 0 affected rows).
+        (await one.UpdateAsync(new TenantNote { Id = note.Id, Text = "one", Hits = 1 })).ValueOrThrow();
+        Assert.Equal(("one", 1), ((await ReadAsTenantOneAsync(note.Id)).Text, (await ReadAsTenantOneAsync(note.Id)).Hits));
+
+        Assert.Equal(DataErrors.NotFoundCode, (await one.UpdateAsync(new TenantNote { Id = Guid.NewGuid(), Text = "ghost" })).Error!.Code);
+        // Another tenant's row is not "found" by the match check either.
+        Assert.Equal(DataErrors.NotFoundCode, (await Db.ForTenant(2).Repository<TenantNote>().UpdateAsync(new TenantNote { Id = note.Id, Text = "one", Hits = 1 })).Error!.Code);
+    }
 }

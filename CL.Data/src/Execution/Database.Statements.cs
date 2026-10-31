@@ -349,6 +349,24 @@ public sealed partial class Database
         }
     }
 
+    /// <summary>Runs a <c>SELECT 1 ... LIMIT 1</c> on the primary (inside the current transaction, if any).</summary>
+    private async ValueTask<Result<bool>> RowExistsAsync(SqlStatement check, string table, CancellationToken ct)
+    {
+        var rendered = Render(check);
+        if (rendered.IsFailure) return rendered.Error!;
+        var context = new CommandContext(this, new CommandSpec(rendered.Value!.Text, rendered.Value.Parameters), CommandKind.Query, ct)
+        {
+            Operation = "select",
+            Table = table,
+            IsWrite = true,   // read your own write: always the primary
+        };
+        return await RunAsync(context, 0, static async (cmd, _, token) =>
+        {
+            await using var reader = await cmd.ExecuteReaderAsync(token).ConfigureAwait(false);
+            return await reader.ReadAsync(token).ConfigureAwait(false);
+        }).ConfigureAwait(false);
+    }
+
     private async ValueTask<Result<int>> ExecuteWritesCoreAsync<T>(IReadOnlyList<WriteCommand> commands, IReadOnlyList<T> entities,
         IEntityAccessor<T> accessor, CancellationToken ct)
     {
@@ -406,6 +424,14 @@ public sealed partial class Database
             {
                 if (result.Value != 0) return DataErrors.Conflict($"A row in '{command.Table}' with the same key belongs to another tenant.");
                 continue;
+            }
+            if (command.Check == RowCheck.ExactlyOne && result.Value == 0 && command.MatchCheck is { } match
+                && Provider.Capabilities.AffectedRowsCountChangesOnly)
+            {
+                // The provider counts changed rows only: the row may have matched with nothing to change.
+                var matched = await RowExistsAsync(match, command.Table, ct).ConfigureAwait(false);
+                if (matched.IsFailure) return matched.Error!;
+                if (matched.Value) result = 1;
             }
             if (command.Check == RowCheck.ExactlyOne && result.Value != 1)
                 return accessor.Map.ConcurrencyToken is not null
