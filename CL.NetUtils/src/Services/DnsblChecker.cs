@@ -13,6 +13,7 @@ public class DnsblChecker
 {
     private readonly DnsblConfig _config;
     private readonly ILogger? _logger;
+    private readonly Func<string, CancellationToken, Task<IPAddress[]>> _resolve;
 
     /// <summary>
     /// Initializes a new <see cref="DnsblChecker"/>.
@@ -20,9 +21,16 @@ public class DnsblChecker
     /// <param name="config">DNSBL configuration.</param>
     /// <param name="logger">Optional logger; pass <see langword="null"/> to suppress logging.</param>
     public DnsblChecker(DnsblConfig config, ILogger? logger = null)
+        : this(config, logger, static (host, ct) => Dns.GetHostAddressesAsync(host, ct))
+    {
+    }
+
+    /// <summary>Test seam: resolves DNSBL names through <paramref name="resolve"/> instead of the system resolver.</summary>
+    internal DnsblChecker(DnsblConfig config, ILogger? logger, Func<string, CancellationToken, Task<IPAddress[]>> resolve)
     {
         _config = config ?? throw new ArgumentNullException(nameof(config));
         _logger = logger;
+        _resolve = resolve;
     }
 
     /// <summary>
@@ -30,6 +38,13 @@ public class DnsblChecker
     /// using the services declared in <see cref="NetUtilsConfig"/>.
     /// Local/private addresses are skipped and returned as <em>not blacklisted</em>.
     /// </summary>
+    /// <remarks>
+    /// The primary zones are queried first (concurrently when <see cref="DnsblConfig.ParallelQueries"/> is set);
+    /// the fallback zones are queried only when no primary zone lists the address. A zone that times out, fails
+    /// to resolve, or answers with a DNSBL error code is reported in <see cref="DnsblCheckResult.FailedServices"/>,
+    /// and a check with no listing but failed zones is <see cref="DnsblCheckStatus.Indeterminate"/>, never
+    /// <see cref="DnsblCheckStatus.NotBlacklisted"/>.
+    /// </remarks>
     /// <param name="ipAddress">The IP address string to check (IPv4 or IPv6).</param>
     /// <param name="cancellationToken">Optional cancellation token.</param>
     /// <returns>A <see cref="DnsblCheckResult"/> describing the outcome.</returns>
@@ -42,6 +57,7 @@ public class DnsblChecker
             Ipv6Services = _config.Ipv6Services,
             Ipv6FallbackServices = _config.Ipv6FallbackServices,
             Timeout = TimeSpan.FromSeconds(_config.TimeoutSeconds),
+            ParallelQueries = _config.ParallelQueries,
             DetailedLogging = _config.DetailedLogging
         };
         return CheckIpAsync(ipAddress, request, cancellationToken);
@@ -101,127 +117,163 @@ public class DnsblChecker
 
     // ── Private helpers ───────────────────────────────────────────────────────
 
+    private enum ZoneOutcome { NotListed, Listed, Failed }
+
     private async Task<DnsblCheckResult> CheckIpv4Async(string ipAddress, DnsblCheckRequest request, CancellationToken cancellationToken)
     {
         var reversedIp = string.Join(".", ipAddress.Split('.').Reverse());
-        var timeoutMs = (int)request.Timeout.TotalMilliseconds;
-
-        foreach (var service in request.Ipv4Services)
-        {
-            var result = await CheckServiceAsync($"{reversedIp}.{service}", ipAddress, service, timeoutMs, request.DetailedLogging, cancellationToken).ConfigureAwait(false);
-            if (result.IsBlacklisted)
-            {
-                _logger?.Warning($"IPv4 {ipAddress} is blacklisted by {service}");
-                return result;
-            }
-        }
-
-        foreach (var service in request.Ipv4FallbackServices)
-        {
-            var result = await CheckServiceAsync($"{reversedIp}.{service}", ipAddress, service, timeoutMs, request.DetailedLogging, cancellationToken).ConfigureAwait(false);
-            if (result.IsBlacklisted)
-            {
-                _logger?.Warning($"IPv4 {ipAddress} is blacklisted by fallback service {service}");
-                return result;
-            }
-        }
-
-        _logger?.Debug($"IPv4 {ipAddress} is not blacklisted");
-        return DnsblCheckResult.NotBlacklisted(ipAddress, IpAddressType.IPv4);
+        return await CheckZonesAsync(ipAddress, reversedIp, IpAddressType.IPv4, request.Ipv4Services, request.Ipv4FallbackServices, request, cancellationToken)
+            .ConfigureAwait(false);
     }
 
     private async Task<DnsblCheckResult> CheckIpv6Async(string ipAddress, DnsblCheckRequest request, CancellationToken cancellationToken)
     {
         var reversedIpv6 = ReverseIpv6(ipAddress);
-        var timeoutMs = (int)request.Timeout.TotalMilliseconds;
-
-        foreach (var service in request.Ipv6Services)
-        {
-            var result = await CheckServiceAsync($"{reversedIpv6}.{service}", ipAddress, service, timeoutMs, request.DetailedLogging, cancellationToken).ConfigureAwait(false);
-            if (result.IsBlacklisted)
-            {
-                _logger?.Warning($"IPv6 {ipAddress} is blacklisted by {service}");
-                return result;
-            }
-        }
-
-        foreach (var service in request.Ipv6FallbackServices)
-        {
-            var result = await CheckServiceAsync($"{reversedIpv6}.{service}", ipAddress, service, timeoutMs, request.DetailedLogging, cancellationToken).ConfigureAwait(false);
-            if (result.IsBlacklisted)
-            {
-                _logger?.Warning($"IPv6 {ipAddress} is blacklisted by fallback service {service}");
-                return result;
-            }
-        }
-
-        _logger?.Debug($"IPv6 {ipAddress} is not blacklisted");
-        return DnsblCheckResult.NotBlacklisted(ipAddress, IpAddressType.IPv6);
+        return await CheckZonesAsync(ipAddress, reversedIpv6, IpAddressType.IPv6, request.Ipv6Services, request.Ipv6FallbackServices, request, cancellationToken)
+            .ConfigureAwait(false);
     }
 
-    private async Task<DnsblCheckResult> CheckServiceAsync(
+    private async Task<DnsblCheckResult> CheckZonesAsync(
+        string ipAddress,
+        string reversed,
+        IpAddressType type,
+        IReadOnlyList<string> primaries,
+        IReadOnlyList<string> fallbacks,
+        DnsblCheckRequest request,
+        CancellationToken cancellationToken)
+    {
+        var failed = new List<string>();
+        var label = type == IpAddressType.IPv4 ? "IPv4" : "IPv6";
+
+        var listedBy = await CheckListAsync(reversed, primaries, request, failed, cancellationToken).ConfigureAwait(false);
+        if (listedBy is not null)
+        {
+            _logger?.Warning($"{label} {ipAddress} is blacklisted by {listedBy}");
+            return DnsblCheckResult.Blacklisted(ipAddress, type, listedBy, failed);
+        }
+
+        listedBy = await CheckListAsync(reversed, fallbacks, request, failed, cancellationToken).ConfigureAwait(false);
+        if (listedBy is not null)
+        {
+            _logger?.Warning($"{label} {ipAddress} is blacklisted by fallback service {listedBy}");
+            return DnsblCheckResult.Blacklisted(ipAddress, type, listedBy, failed);
+        }
+
+        if (failed.Count > 0)
+        {
+            _logger?.Warning($"{label} {ipAddress} is not listed by the zones that answered, but {failed.Count} zone(s) could not be checked: {string.Join(", ", failed)}");
+            return DnsblCheckResult.Indeterminate(ipAddress, type, failed);
+        }
+
+        _logger?.Debug($"{label} {ipAddress} is not blacklisted");
+        return DnsblCheckResult.NotBlacklisted(ipAddress, type);
+    }
+
+    /// <summary>Queries one zone list; returns the first listing zone (in list order) or null. Failed zones go to <paramref name="failed"/>.</summary>
+    private async Task<string?> CheckListAsync(
+        string reversed,
+        IReadOnlyList<string> services,
+        DnsblCheckRequest request,
+        List<string> failed,
+        CancellationToken cancellationToken)
+    {
+        if (services.Count == 0)
+            return null;
+
+        if (request.ParallelQueries && services.Count > 1)
+        {
+            var outcomes = await Task.WhenAll(services.Select(service =>
+                CheckServiceAsync($"{reversed}.{service}", service, request.Timeout, request.DetailedLogging, cancellationToken))).ConfigureAwait(false);
+
+            string? listed = null;
+            for (var i = 0; i < services.Count; i++)
+            {
+                if (outcomes[i] == ZoneOutcome.Listed)
+                    listed ??= services[i];
+                else if (outcomes[i] == ZoneOutcome.Failed)
+                    failed.Add(services[i]);
+            }
+            return listed;
+        }
+
+        foreach (var service in services)
+        {
+            var outcome = await CheckServiceAsync($"{reversed}.{service}", service, request.Timeout, request.DetailedLogging, cancellationToken)
+                .ConfigureAwait(false);
+            if (outcome == ZoneOutcome.Listed)
+                return service;
+            if (outcome == ZoneOutcome.Failed)
+                failed.Add(service);
+        }
+        return null;
+    }
+
+    private async Task<ZoneOutcome> CheckServiceAsync(
         string lookup,
-        string originalIp,
         string service,
-        int timeoutMs,
+        TimeSpan timeout,
         bool detailedLogging,
         CancellationToken cancellationToken)
     {
+        IPAddress[] addresses;
         try
         {
-            using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(timeoutMs));
-            using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, cts.Token);
-
-            var addresses = await Task.Run(() => Dns.GetHostAddresses(lookup), linked.Token).ConfigureAwait(false);
-
-            foreach (var answer in addresses)
-            {
-                // DNSBL convention: a listing is an A record inside 127.0.0.0/8.
-                // Anything else is a wildcarded/parked domain answering for a dead
-                // zone — treating it as a listing would flag every IP checked.
-                var bytes = answer.AddressFamily == AddressFamily.InterNetwork ? answer.GetAddressBytes() : null;
-                if (bytes is null || bytes[0] != 127)
-                {
-                    if (detailedLogging)
-                        _logger?.Debug($"Ignoring non-127/8 DNSBL answer {answer} from {service}");
-                    continue;
-                }
-
-                // 127.255.255.0/24 is the Spamhaus error range (open resolver,
-                // query volume exceeded, typing error) — a service-side problem,
-                // not a listing. Warn loudly: while this persists the zone is
-                // silently checking nothing.
-                if (bytes[1] == 255 && bytes[2] == 255)
-                {
-                    _logger?.Warning(
-                        $"DNSBL {service} returned error code {answer} (public resolver blocked / query limit / config error) — " +
-                        "results from this zone are unusable until the resolver setup is fixed.");
-                    continue;
-                }
-
-                var addrType = IPAddress.TryParse(originalIp, out var parsed)
-                    ? GetAddressType(parsed)
-                    : IpAddressType.Unknown;
-
-                return DnsblCheckResult.Blacklisted(originalIp, addrType, service);
-            }
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            linked.CancelAfter(timeout);
+            addresses = await _resolve(lookup, linked.Token).WaitAsync(linked.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (OperationCanceledException)
         {
             if (detailedLogging)
                 _logger?.Debug($"DNS lookup timeout for {lookup}");
+            return ZoneOutcome.Failed;
+        }
+        catch (SocketException ex) when (ex.SocketErrorCode is SocketError.HostNotFound or SocketError.NoData)
+        {
+            // NXDOMAIN / no A record: the zone answered, and the address is not listed.
+            return ZoneOutcome.NotListed;
         }
         catch (Exception ex)
         {
             if (detailedLogging)
                 _logger?.Debug($"DNS lookup failed for {lookup}: {ex.Message}");
+            return ZoneOutcome.Failed;
         }
 
-        var returnType = IPAddress.TryParse(originalIp, out var ip)
-            ? GetAddressType(ip)
-            : IpAddressType.Unknown;
+        var sawError = false;
+        foreach (var answer in addresses)
+        {
+            // DNSBL convention: a listing is an A record inside 127.0.0.0/8.
+            // Anything else is a wildcarded/parked domain answering for a dead
+            // zone — treating it as a listing would flag every IP checked.
+            var bytes = answer.AddressFamily == AddressFamily.InterNetwork ? answer.GetAddressBytes() : null;
+            if (bytes is null || bytes[0] != 127)
+            {
+                if (detailedLogging)
+                    _logger?.Debug($"Ignoring non-127/8 DNSBL answer {answer} from {service}");
+                continue;
+            }
 
-        return DnsblCheckResult.NotBlacklisted(originalIp, returnType);
+            // 127.255.255.0/24 is the Spamhaus error range (open resolver,
+            // query volume exceeded, typing error) — a service-side problem,
+            // not a listing, and the zone was not actually checked.
+            if (bytes[1] == 255 && bytes[2] == 255)
+            {
+                _logger?.Warning(
+                    $"DNSBL {service} returned error code {answer} (public resolver blocked / query limit / config error) — " +
+                    "results from this zone are unusable until the resolver setup is fixed.");
+                sawError = true;
+                continue;
+            }
+
+            return ZoneOutcome.Listed;
+        }
+
+        return sawError ? ZoneOutcome.Failed : ZoneOutcome.NotListed;
     }
 
     private static bool IsLocalOrPrivateIp(IPAddress ip)

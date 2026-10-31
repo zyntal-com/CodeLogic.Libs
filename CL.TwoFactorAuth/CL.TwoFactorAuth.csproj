@@ -12,8 +12,8 @@
     <PackageTags>2fa;totp;qrcode;authentication</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>  <ItemGroup>
-    <PackageReference Include="Otp.NET" Version="1.*" />
-    <PackageReference Include="QRCoder" Version="1.*" />
+    <PackageReference Include="Otp.NET" Version="1.4.1" />
+    <PackageReference Include="QRCoder" Version="1.8.1" />
   </ItemGroup>
   <ItemGroup>
     <None Include="README.md" Pack="true" PackagePath="/" />

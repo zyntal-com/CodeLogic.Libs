@@ -43,7 +43,9 @@ jobs:
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
-          ref: ${{ github.ref_name }}
+          # The immutable commit of this run, not the branch name: if the branch moves while the suite runs, packing,
+          # the version's +sha and the release tag must all still describe the same commit.
+          ref: ${{ github.sha }}
 
       # SDK version comes from global.json (11.0 line; prerelease allowed until GA).
       - name: Setup .NET 11
@@ -87,10 +89,12 @@ jobs:
             $changedFiles = git diff --name-only "$lastTag..HEAD" 2>$null
             if (-not $changedFiles) { $changedFiles = @() }
 
-            # If version.txt changed, rebuild all — the major.minor line moved.
-            $versionFileChanged = $changedFiles | Where-Object { $_ -eq 'version.txt' }
-            if ($versionFileChanged) {
-              Write-Host "version.txt changed — rebuilding all libraries"
+            # Shared inputs that go into every package: the version line, the repo-wide build files, strong-name
+            # signing, the shared source, the SDK pin and the packed LICENSE. A change to any of them rebuilds all.
+            $sharedInputs = @('version.txt', 'Directory.Build.props', 'Directory.Build.targets', 'global.json', 'LICENSE')
+            $sharedChanged = $changedFiles | Where-Object { $sharedInputs -contains $_ -or $_ -like 'build/*' -or $_ -like 'Shared/*' }
+            if ($sharedChanged) {
+              Write-Host "Shared build inputs changed ($(@($sharedChanged) -join ', ')) — rebuilding all libraries"
               $changedProjects = $allProjects
             } else {
               # A lib counts as "changed" if any file under its folder changed since

@@ -38,7 +38,7 @@ public sealed class SqliteFixture : ProviderFixture
             DeletedAt TEXT NULL)
         """,
         "CREATE TABLE conf_tags (ProductId INTEGER NOT NULL, Tag TEXT NOT NULL, Weight INTEGER NOT NULL, PRIMARY KEY (ProductId, Tag))",
-        "CREATE TABLE conf_notes (Id BLOB PRIMARY KEY, TenantId INTEGER NOT NULL, Text TEXT NOT NULL)",
+        "CREATE TABLE conf_notes (Id BLOB PRIMARY KEY, TenantId INTEGER NOT NULL, Text TEXT NOT NULL, Hits INTEGER NOT NULL DEFAULT 0)",
     ];
 
     public override async Task DisposeAsync()
@@ -114,3 +114,6 @@ public sealed class SqliteBulkTests(SqliteFixture fixture) : BulkConformance(fix
 
 [Collection("sqlite")]
 public sealed class SqliteServerTests(SqliteFixture fixture) : ServerConformance(fixture);
+
+[Collection("sqlite")]
+public sealed class SqliteTenantWriteTests(SqliteFixture fixture) : TenantWriteConformance(fixture);

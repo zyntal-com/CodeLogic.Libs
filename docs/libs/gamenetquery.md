@@ -160,7 +160,12 @@ rcon.Disconnect();
 | `Disconnect()` | `void` | Close the socket |
 | `Dispose()` | `void` | Release resources |
 
+| `ResponseTimeout` | `TimeSpan` | Time allowed for an auth or command reply (default 5 s) |
+| `MultiPacketIdleTimeout` | `TimeSpan` | Ends a response after this pause when the server doesn't answer the end marker (default 500 ms) |
+
 > `SendCommandAsync` throws `InvalidOperationException` if called before a successful `ConnectAsync`.
+
+`ConnectAsync` succeeds only when the server sends `SERVERDATA_AUTH_RESPONSE` with the request id; a rejected password (id `-1`) returns `false`. After each command the client sends an empty `SERVERDATA_RESPONSE_VALUE` as an end marker; the server answers requests in order, so every response packet before the marker's echo belongs to the command and is joined into the returned string (long `status` or `cvarlist` output spans several packets). Packets are reassembled however TCP splits them. On a timeout `SendCommandAsync` returns an empty string; on a broken connection it also disconnects the client.
 
 ## Counter-Strike admin wrappers
 
@@ -304,6 +309,9 @@ rcon.Disconnect();
 | `ConnectAsync(int timeoutMs = 5000)` | `Task<bool>` |
 | `SendCommandAsync(string command)` | `Task<string>` |
 | `Disconnect()` / `Dispose()` | `void` |
+| `ResponseTimeout` / `MultiPacketIdleTimeout` | `TimeSpan` (5 s / 500 ms) |
+
+Authentication requires the auth response with the request id (`-1` means a wrong password). Multi-packet responses are joined: after each command the client sends a packet of unknown type 200, which Minecraft answers with "Unknown request" after the command's response.
 
 ## Health check
 

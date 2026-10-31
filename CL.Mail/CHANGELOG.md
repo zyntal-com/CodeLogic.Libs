@@ -38,6 +38,7 @@ All notable changes to **CodeLogic.Mail** are documented here. Versions follow
   | `InvalidSubject` | `mail.invalid_subject` | `ValidationError` |
   | `InvalidBody` (new) | `mail.invalid_body` | `ValidationError` |
   | `TemplateNotFound` | `mail.template_not_found` | `NotFoundError` |
+  | `InvalidTemplateId` (new) | `mail.invalid_template_id` | `ValidationError` |
   | `TemplateRenderingFailed` | `mail.template_rendering_failed` | `InternalError` |
   | `SmtpConfigInvalid` | `mail.smtp_config_invalid` | `ValidationError` |
   | `SmtpAuthenticationFailed` | `mail.smtp_authentication_failed` | `UnauthorizedError` |
@@ -86,6 +87,25 @@ All notable changes to **CodeLogic.Mail** are documented here. Versions follow
   `mail.imap_connection_failed` (`UnavailableError`) instead of `Unknown` / `ImapError`.
 - A template file that deserializes to nothing is `mail.template_rendering_failed` (was
   `TemplateNotFound`).
+
+### Security
+
+- **Template IDs can no longer escape the template directory.** `FileMailTemplateProvider` combined the
+  directory with the raw ID, so `../x`, `sub/x` or a rooted path could load, or overwrite on save, a JSON
+  file outside `TemplateDirectory`. IDs must now be file-name-safe (ASCII letters, digits, `-`, `_`, `.`;
+  starting with a letter or digit; at most 128 characters), and the resolved path is checked to sit
+  directly in the template directory. Anything else fails with the new code
+  `MailErrorCodes.InvalidTemplateId` (`mail.invalid_template_id`, `ValidationError`) for load, save and
+  layout lookup. `FileMailTemplateProvider.IsValidTemplateId` lets callers check an ID up front.
+
+### Documentation
+
+- Configuration examples in the README and the docs use the camelCase keys the CodeLogic loader reads.
+  The PascalCase keys shown before are matched case-sensitively and were ignored, leaving defaults active.
+
+### Changed
+
+- Package versions are pinned (MailKit and MimeKit 4.18.2) instead of floating (`4.*`), so a build restores the same dependencies every time.
 
 ## 2026-10-27
 

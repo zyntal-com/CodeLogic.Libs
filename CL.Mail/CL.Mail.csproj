@@ -12,8 +12,8 @@
     <Description>SMTP/IMAP email library with template engine for CodeLogic 5 applications</Description>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="MailKit" Version="4.*" />
-    <PackageReference Include="MimeKit" Version="4.*" />
+    <PackageReference Include="MailKit" Version="4.18.2" />
+    <PackageReference Include="MimeKit" Version="4.18.2" />
   </ItemGroup>  <ItemGroup>
     <None Include="README.md" Pack="true" PackagePath="/" />
   </ItemGroup>

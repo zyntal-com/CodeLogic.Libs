@@ -296,6 +296,11 @@ public abstract class SqlDialect
             var table = insert.Table.Name;
             w.Append(" DO UPDATE SET ");
             w.List(upsert.UpdateSet, (writer, s) => writer.Identifier(s.Column).Append(" = ").Expr(QualifyColumns(s.Value, table)));
+            if (upsert.GuardColumn is { } guard)
+            {
+                w.Append(" WHERE ").Identifier(table).Append('.').Identifier(guard).Append(" = ");
+                RenderExcluded(w, guard);
+            }
         }
         if (insert.Returning.Count > 0) RenderReturning(w, insert.Returning);
     }

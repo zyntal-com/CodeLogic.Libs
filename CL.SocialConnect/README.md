@@ -70,23 +70,23 @@ Auto-generated on first run as `config.socialconnect.json`:
 
 ```json
 {
-  "Enabled": true,
-  "Discord": {
-    "Enabled": true,
-    "DefaultWebhookUrl": "https://discord.com/api/webhooks/xxx/yyy",
-    "TimeoutSeconds": 10,
-    "DefaultUsername": "MyApp",
-    "DefaultAvatarUrl": "https://example.com/bot.png"
+  "enabled": true,
+  "discord": {
+    "enabled": true,
+    "defaultWebhookUrl": "https://discord.com/api/webhooks/xxx/yyy",
+    "timeoutSeconds": 10,
+    "defaultUsername": "MyApp",
+    "defaultAvatarUrl": "https://example.com/bot.png"
   },
-  "Steam": {
-    "Enabled": false,
-    "ApiKey": "your-steam-web-api-key",
-    "AuthEnabled": false,
-    "AppId": "",
-    "OpenIdEnabled": true,
-    "CacheTtlSeconds": 300,
-    "TimeoutSeconds": 15,
-    "ApiBaseUrl": "https://api.steampowered.com"
+  "steam": {
+    "enabled": false,
+    "apiKey": "your-steam-web-api-key",
+    "authEnabled": false,
+    "appId": "",
+    "openIdEnabled": true,
+    "cacheTtlSeconds": 300,
+    "timeoutSeconds": 15,
+    "apiBaseUrl": "https://api.steampowered.com"
   }
 }
 ```

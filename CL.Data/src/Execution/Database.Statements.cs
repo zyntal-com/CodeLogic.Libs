@@ -363,13 +363,18 @@ public sealed partial class Database
             var result = await RunAsync(context, state, static async (cmd, s, token) =>
                 {
                     var c = s.Command;
+                    if (c.Check == RowCheck.Empty)
+                    {
+                        await using var guard = await cmd.ExecuteReaderAsync(token).ConfigureAwait(false);
+                        return await guard.ReadAsync(token).ConfigureAwait(false) ? 1 : 0;
+                    }
                     if (c.Returns)
                     {
                         await using var reader = await cmd.ExecuteReaderAsync(token).ConfigureAwait(false);
                         var row = 0;
                         while (await reader.ReadAsync(token).ConfigureAwait(false))
                         {
-                            var entity = s.Entities[c.FirstRow + row++];
+                            var entity = s.Entities[c.EntityIndex(row++)];
                             for (var i = 0; i < c.ReturnedColumns.Count; i++)
                                 if (!reader.IsDBNull(i)) s.Accessor.SetValue(entity, c.ReturnedColumns[i].Ordinal, reader.GetValue(i));
                         }
@@ -382,7 +387,7 @@ public sealed partial class Database
                     {
                         // A multi-row INSERT gets consecutive identities starting at the first one.
                         var start = Convert.ToInt64(first, System.Globalization.CultureInfo.InvariantCulture);
-                        for (var i = 0; i < c.Rows; i++) s.Accessor.SetValue(s.Entities[c.FirstRow + i], identity.Ordinal, start + i);
+                        for (var i = 0; i < c.Rows; i++) s.Accessor.SetValue(s.Entities[c.EntityIndex(i)], identity.Ordinal, start + i);
                     }
                     return affected;
                 },
@@ -390,6 +395,11 @@ public sealed partial class Database
                 command.RequiresTransaction ? IsolationLevel.Serializable : null).ConfigureAwait(false);
 
             if (result.IsFailure) return result.Error!;
+            if (command.Check == RowCheck.Empty)
+            {
+                if (result.Value != 0) return DataErrors.Conflict($"A row in '{command.Table}' with the same key belongs to another tenant.");
+                continue;
+            }
             if (command.Check == RowCheck.ExactlyOne && result.Value != 1)
                 return accessor.Map.ConcurrencyToken is not null
                     ? DataErrors.Concurrency(command.Table)

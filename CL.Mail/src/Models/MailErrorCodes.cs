@@ -23,6 +23,12 @@ public static class MailErrorCodes
     /// <summary>The named template does not exist. Kind: <see cref="NotFoundError"/>.</summary>
     public const string TemplateNotFound = "mail.template_not_found";
 
+    /// <summary>
+    /// A template ID is not a file-name-safe identifier (it contains path separators, starts with a dot, ...).
+    /// Kind: <see cref="ValidationError"/>.
+    /// </summary>
+    public const string InvalidTemplateId = "mail.invalid_template_id";
+
     /// <summary>A template could not be read or rendered. Kind: <see cref="InternalError"/>.</summary>
     public const string TemplateRenderingFailed = "mail.template_rendering_failed";
 

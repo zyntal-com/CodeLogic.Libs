@@ -26,6 +26,8 @@ public enum RowCheck
     /// (<c>data.concurrency</c> when the entity has a token, <c>data.not_found</c> otherwise).
     /// </summary>
     ExactlyOne,
+    /// <summary>A guard query: it must return no rows (an upsert conflict row owned by another tenant, <c>data.conflict</c>).</summary>
+    Empty,
 }
 
 /// <summary>One planned write statement.</summary>
@@ -56,6 +58,12 @@ public sealed record WriteCommand(SqlStatement Statement, WriteKind Kind, string
 
     /// <summary>Start index of this batch's entities in the caller's list.</summary>
     public int FirstRow { get; init; }
+
+    /// <summary>The caller's entity index of each row, in statement order; null means consecutive from <see cref="FirstRow"/>.</summary>
+    public IReadOnlyList<int>? RowIndices { get; init; }
+
+    /// <summary>The entity index of the <paramref name="row"/>-th row of this command.</summary>
+    public int EntityIndex(int row) => RowIndices is { } indices ? indices[row] : FirstRow + row;
 
     /// <summary>Applied to the entity after the statement succeeded (new concurrency token, soft-delete timestamp).</summary>
     public Action? OnSuccess { get; init; }

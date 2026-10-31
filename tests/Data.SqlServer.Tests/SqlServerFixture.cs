@@ -43,7 +43,7 @@ public sealed class SqlServerFixture : ProviderFixture
             [DeletedAt] datetimeoffset(7) NULL)
         """,
         "CREATE TABLE dbo.conf_tags ([ProductId] bigint NOT NULL, [Tag] nvarchar(32) NOT NULL, [Weight] int NOT NULL, PRIMARY KEY ([ProductId], [Tag]))",
-        "CREATE TABLE dbo.conf_notes ([Id] uniqueidentifier NOT NULL PRIMARY KEY, [TenantId] int NOT NULL, [Text] nvarchar(500) NOT NULL)",
+        "CREATE TABLE dbo.conf_notes ([Id] uniqueidentifier NOT NULL PRIMARY KEY, [TenantId] int NOT NULL, [Text] nvarchar(500) NOT NULL, [Hits] int NOT NULL DEFAULT 0)",
     ];
 }
 
@@ -75,3 +75,4 @@ public sealed class SqlServerCollection : ICollectionFixture<SqlServerFixture>;
 [Collection("sqlserver")] public sealed class SqlServerTelemetryTests(SqlServerFixture f) : TelemetryConformance(f);
 [Collection("sqlserver")] public sealed class SqlServerBulkTests(SqlServerFixture f) : BulkConformance(f);
 [Collection("sqlserver")] public sealed class SqlServerServerTests(SqlServerFixture f) : ServerConformance(f);
+[Collection("sqlserver")] public sealed class SqlServerTenantWriteTests(SqlServerFixture f) : TenantWriteConformance(f);

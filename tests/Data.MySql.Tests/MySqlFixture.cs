@@ -40,7 +40,7 @@ public sealed class MySqlFixture : ProviderFixture
         ) ENGINE=InnoDB
         """,
         "CREATE TABLE conf_tags (ProductId BIGINT NOT NULL, Tag VARCHAR(32) NOT NULL, Weight INT NOT NULL, PRIMARY KEY (ProductId, Tag)) ENGINE=InnoDB",
-        "CREATE TABLE conf_notes (Id BINARY(16) NOT NULL PRIMARY KEY, TenantId INT NOT NULL, Text VARCHAR(500) NOT NULL) ENGINE=InnoDB",
+        "CREATE TABLE conf_notes (Id BINARY(16) NOT NULL PRIMARY KEY, TenantId INT NOT NULL, Text VARCHAR(500) NOT NULL, Hits INT NOT NULL DEFAULT 0) ENGINE=InnoDB",
     ];
 }
 
@@ -72,3 +72,4 @@ public sealed class MySqlCollection : ICollectionFixture<MySqlFixture>;
 [Collection("mysql")] public sealed class MySqlTelemetryTests(MySqlFixture f) : TelemetryConformance(f);
 [Collection("mysql")] public sealed class MySqlBulkTests(MySqlFixture f) : BulkConformance(f);
 [Collection("mysql")] public sealed class MySqlServerTests(MySqlFixture f) : ServerConformance(f);
+[Collection("mysql")] public sealed class MySqlTenantWriteTests(MySqlFixture f) : TenantWriteConformance(f);

@@ -70,22 +70,22 @@ health-check timeout, and library-wide speed limits. Example `config.storage.s3.
 
 ```json
 {
-  "Connections": {
+  "connections": {
     "media": {
-      "Enabled": true,
-      "Bucket": "company-media",
-      "Prefix": "production",
-      "Region": "eu-north-1",
-      "AuthenticationMode": "DefaultCredentialChain"
+      "enabled": true,
+      "bucket": "company-media",
+      "prefix": "production",
+      "region": "eu-north-1",
+      "authenticationMode": "DefaultCredentialChain"
     },
     "minio": {
-      "Enabled": true,
-      "Bucket": "documents",
-      "ServiceUrl": "https://minio.example.com",
-      "ForcePathStyle": true,
-      "AuthenticationMode": "StaticCredentials",
-      "AccessKey": "...",
-      "SecretKey": "..."
+      "enabled": true,
+      "bucket": "documents",
+      "serviceUrl": "https://minio.example.com",
+      "forcePathStyle": true,
+      "authenticationMode": "StaticCredentials",
+      "accessKey": "...",
+      "secretKey": "..."
     }
   }
 }
