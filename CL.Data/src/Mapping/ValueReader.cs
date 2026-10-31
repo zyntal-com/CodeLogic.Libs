@@ -1,5 +1,6 @@
 using System.Data.Common;
 using System.Globalization;
+using CL.Data.Mapping.Conversion;
 
 namespace CL.Data.Mapping;
 
@@ -25,6 +26,9 @@ public static class ValueReader<T>
                 ? default!
                 : throw new InvalidCastException($"Column {reader.GetName(ordinal)} is NULL but {Target.Name} is not nullable.");
         }
+
+        if (ValueConverters.TryGet(ValueType, out var converter))
+            return (T)converter.FromStoreObject(ValueConversion.FromDb(reader.GetValue(ordinal), converter.StoreType)!)!;
 
         if (reader.GetFieldType(ordinal) == ValueType && ValueType == Target)
             return reader.GetFieldValue<T>(ordinal);

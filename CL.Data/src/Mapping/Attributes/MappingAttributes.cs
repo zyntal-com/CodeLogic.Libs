@@ -86,6 +86,12 @@ public sealed class ColumnAttribute : Attribute
 
     /// <summary>Exact native type for all providers (for example <c>MEDIUMTEXT</c>). Prefer a provider hint attribute when providers differ.</summary>
     public string? NativeType { get; set; }
+
+    /// <summary>
+    /// A <c>ValueConverter</c> type with a public parameterless constructor used for this column only, for example
+    /// <c>typeof(EnumToStringConverter&lt;Role&gt;)</c>. Wins over a converter registered for the property type.
+    /// </summary>
+    public Type? Converter { get; set; }
 }
 
 /// <summary>The property is not mapped to a column.</summary>

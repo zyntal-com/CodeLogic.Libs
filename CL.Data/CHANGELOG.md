@@ -53,3 +53,9 @@
 - **Command pipeline:** every command runs through one middleware chain (`ICommandMiddleware`, `CommandContext`,
   allocation-free `CommandNext<T>`). Application `IDataInterceptor`s run outermost: they can rewrite the SQL,
   refuse a command or observe its result. Caching, routing, resilience and telemetry plug into this chain.
+- **Value converters:** one conversion layer for every boundary (reading rows, entity writes, raw SQL parameters,
+  scalars).
+  - `ValueConverter<TModel, TStore>` with a global `ValueConverters` registry and per-column `[Column(Converter = ...)]`.
+  - Typed ids implement `IDataValue<TSelf, TStore>` (static abstract members, no reflection).
+  - `EnumToStringConverter<TEnum>` stores enums by name.
+  - `JsonValueConverter<T>` stores JSON columns through System.Text.Json source-gen metadata.

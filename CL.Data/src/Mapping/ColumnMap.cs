@@ -1,3 +1,5 @@
+using CL.Data.Mapping.Conversion;
+
 namespace CL.Data.Mapping;
 
 /// <summary>Special meanings a column can have. A column can carry several (for example key and identity).</summary>
@@ -97,6 +99,13 @@ public sealed class ColumnMap
 
     /// <summary>Index attributes declared on this column.</summary>
     public IReadOnlyList<IndexAttribute> IndexAttributes { get; init; } = [];
+
+    /// <summary>Converter set on this column with <c>[Column(Converter = ...)]</c>.</summary>
+    public ValueConverter? ExplicitConverter { get; init; }
+
+    /// <summary>The converter in effect: the column's own, else one registered for the property type, else null.</summary>
+    public ValueConverter? Converter =>
+        ExplicitConverter ?? (ValueConverters.TryGet(ClrType, out var registered) ? registered : null);
 
     /// <summary>Provider hint attributes on the property (<c>[MySqlColumn]</c>, <c>[PostgresColumn]</c>, ...).</summary>
     public IReadOnlyList<Attribute> Hints { get; init; } = [];

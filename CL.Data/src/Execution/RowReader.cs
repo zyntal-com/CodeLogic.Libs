@@ -1,5 +1,6 @@
 using System.Data.Common;
 using CL.Data.Mapping;
+using CL.Data.Mapping.Conversion;
 using CodeLogic.Core.Results;
 
 namespace CL.Data.Execution;
@@ -8,7 +9,7 @@ namespace CL.Data.Execution;
 internal static class RowReader
 {
     /// <summary>True when <typeparamref name="T"/> is read from the first column rather than mapped.</summary>
-    public static bool IsScalar<T>() => ScalarCache<T>.Value;
+    public static bool IsScalar<T>() => ScalarCache<T>.Value || ValueConverters.TryGet(typeof(T), out _);
 
     /// <summary>Reads every row of the current result.</summary>
     public static async ValueTask<List<T>> ReadAllAsync<T>(DbDataReader reader, IEntityAccessor<T>? accessor, NamingPolicy policy,

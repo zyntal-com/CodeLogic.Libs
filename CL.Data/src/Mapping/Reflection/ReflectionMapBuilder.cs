@@ -1,5 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
+using CL.Data.Mapping.Conversion;
 
 namespace CL.Data.Mapping.Reflection;
 
@@ -73,8 +74,20 @@ internal static class ReflectionMapBuilder
         var retain = property.GetCustomAttribute<RetainDaysAttribute>();
         if (retain is not null) roles |= ColumnRoles.Retention;
 
+        ValueConverter? converter = null;
+        if (column?.Converter is { } converterType)
+        {
+            converter = Activator.CreateInstance(converterType) as ValueConverter
+                ?? throw new InvalidOperationException(
+                    $"[Column(Converter = typeof({converterType.Name}))] on '{property.DeclaringType?.Name}.{property.Name}' is not a ValueConverter.");
+        }
+
         var dataType = column?.DataType ?? DataType.Unspecified;
-        if (dataType == DataType.Unspecified) dataType = DataTypeInference.Infer(type);
+        if (dataType == DataType.Unspecified)
+        {
+            dataType = (converter ?? (ValueConverters.TryGet(type, out var registered) ? registered : null))?.StoreDataType
+                       ?? DataTypeInference.Infer(type);
+        }
 
         return new ColumnMap
         {
@@ -96,6 +109,7 @@ internal static class ReflectionMapBuilder
             Roles = roles,
             RetainDays = retain?.Days ?? 0,
             RetentionBatchSize = retain?.BatchSize ?? 5000,
+            ExplicitConverter = converter,
             ForeignKey = property.GetCustomAttribute<ForeignKeyAttribute>(),
             IndexAttributes = property.GetCustomAttributes<IndexAttribute>().ToArray(),
             Hints = HintTypes.Select(t => property.GetCustomAttribute(t)).OfType<Attribute>().ToArray(),

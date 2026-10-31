@@ -98,7 +98,11 @@ internal sealed class ReflectionEntityAccessor<T> : IEntityAccessor<T>
         var target = Map.Columns[column].ClrType;
         object? boxed = value;
         if (boxed is not null && !target.IsInstanceOfType(boxed))
-            boxed = ValueConversion.FromDb(boxed, Nullable.GetUnderlyingType(target) ?? target);
+        {
+            boxed = Map.Columns[column].Converter is { } converter
+                ? converter.FromStoreObject(ValueConversion.FromDb(boxed, converter.StoreType)!)
+                : ValueConversion.FromDb(boxed, Nullable.GetUnderlyingType(target) ?? target);
+        }
         set(entity, boxed);
     }
 
@@ -121,7 +125,10 @@ internal sealed class ReflectionEntityAccessor<T> : IEntityAccessor<T>
                 ? throw new InvalidCastException($"Column {reader.GetName(ordinal)} is NULL but {typeof(T).Name}.{column.PropertyName} is not nullable.")
                 : null;
         }
-        return ValueConversion.FromDb(reader.GetValue(ordinal), column.ValueType);
+        var raw = reader.GetValue(ordinal);
+        return column.Converter is { } converter
+            ? converter.FromStoreObject(ValueConversion.FromDb(raw, converter.StoreType)!)
+            : ValueConversion.FromDb(raw, column.ValueType);
     }
 
     [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Only value types reach here; their default instance needs no generated code.")]

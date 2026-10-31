@@ -1,6 +1,7 @@
 using System.Data.Common;
 using System.Runtime.CompilerServices;
 using System.Text;
+using CL.Data.Mapping.Conversion;
 using CL.Data.Providers;
 
 namespace CL.Data.Sql;
@@ -20,7 +21,10 @@ public abstract class SqlParameterValue
     private sealed class Typed<T>(T value) : SqlParameterValue
     {
         public override object? BoxedValue => value;
-        public override DbParameter Create(ITypeMapper types, string name) => types.CreateParameter(name, value, null);
+        public override DbParameter Create(ITypeMapper types, string name) =>
+            value is not null && ValueConverters.TryGet(typeof(T), out var converter)
+                ? types.CreateParameter(name, converter.ToStoreObject(value), null)
+                : types.CreateParameter(name, value, null);
     }
 }
 
