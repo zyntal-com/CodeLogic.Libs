@@ -18,6 +18,31 @@ public abstract class SqlParameterValue
     /// <summary>A typed parameter value.</summary>
     public static SqlParameterValue Of<T>(T value) => new Typed<T>(value);
 
+    /// <summary>
+    /// A value compared with or assigned to <paramref name="column"/>: the column's converter (or one registered
+    /// for the value's type) produces the stored form, and enums without a converter are bound as numbers.
+    /// </summary>
+    public static SqlParameterValue ForColumn(object? value, CL.Data.Mapping.ColumnMap? column)
+    {
+        if (value is null) return new Boxed(null, column);
+        // C# compiles enum comparisons as integer comparisons; give the column its enum value back.
+        if (column is not null && column.ValueType.IsEnum && value.GetType() != column.ValueType && value is IConvertible)
+            value = Enum.ToObject(column.ValueType, value);
+        var converter = column?.Converter;
+        if (converter is null || !converter.ModelType.IsInstanceOfType(value))
+            ValueConverters.TryGet(value.GetType(), out converter);
+        if (converter is not null) return new Boxed(converter.ToStoreObject(value), column);
+        if (value is Enum e)
+            return new Boxed(Convert.ChangeType(e, Enum.GetUnderlyingType(e.GetType()), System.Globalization.CultureInfo.InvariantCulture), column);
+        return new Boxed(value, column);
+    }
+
+    private sealed class Boxed(object? value, CL.Data.Mapping.ColumnMap? column) : SqlParameterValue
+    {
+        public override object? BoxedValue => value;
+        public override DbParameter Create(ITypeMapper types, string name) => types.CreateParameter(name, value, column);
+    }
+
     private sealed class Typed<T>(T value) : SqlParameterValue
     {
         public override object? BoxedValue => value;

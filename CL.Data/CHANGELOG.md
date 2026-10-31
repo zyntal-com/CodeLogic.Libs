@@ -67,3 +67,13 @@
     precedence needs.
   - Limits and offsets are parameters, so the SQL text does not change with their values.
   - Literals accept only numbers and booleans.
+- **LINQ translation** (`SqlTranslator`, strict). Anything that touches a column must translate or fail with
+  `data.translation_failed`; values independent of the row are evaluated once and bound as parameters.
+  - **Null handling:** comparisons with null (including captured nulls) become `IS NULL`.
+  - **Booleans:** boolean columns used as conditions become `= TRUE`.
+  - **Strings:** `Contains`/`StartsWith`/`EndsWith` become escaped LIKE patterns.
+  - **Collections:** collection `Contains` becomes `IN`. This covers C# 14+ span-bound array calls, including the
+    three-argument `MemoryExtensions.Contains` that nullable and enum arrays bind to. Long lists are split, and a
+    null entry in the list matches NULL rows.
+  - **Converters:** compared values go through the column's converter (enums stored as text bind their names).
+  - **Functions:** arithmetic, string, math and date/time functions, plus `??` and `?:`.

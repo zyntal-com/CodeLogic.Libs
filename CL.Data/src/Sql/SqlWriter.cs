@@ -211,8 +211,9 @@ public sealed class SqlWriter
                 Binary(binary, precedence);
                 break;
             case UnaryExpr { Operator: SqlUnaryOperator.Not } not:
+                // Always parenthesize: MySQL's HIGH_NOT_PRECEDENCE mode makes NOT bind tighter than comparisons.
                 _sb.Append("NOT ");
-                Expression(not.Operand, precedence, false);
+                Expression(not.Operand, 8, false);
                 break;
             case UnaryExpr negate:
                 _sb.Append('-');
