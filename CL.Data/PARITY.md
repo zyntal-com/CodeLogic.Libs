@@ -1,93 +1,90 @@
 # CL.Data parity checklist
 
-This file tracks the features of the 4.x database libraries (CL.MySQL2, CL.MSSQL, CL.PostgreSQL, CL.SQLite) that
-CL.Data must cover before the 5.0 release. Each old library is removed from `main` once CL.Data covers its provider.
-Anything still open is listed here, with the work package that closes it. The 4.x code remains on `support/4.x` and in
-git history.
+This is the finished parity sweep (WP-B0, 2026-10-31). It maps every feature of the 4.x database libraries to CL.Data:
+- **Libraries covered:** CL.MySQL2, CL.MSSQL, CL.PostgreSQL and CL.SQLite.
+- **Sources:** their public APIs and their test suites, read from git history (`ApiSurfaceTests`, `LiveServiceSurfaceTests`, the `ParityFix`, `BulkUpdateKeySafety`, `ContainsTranslation` and `SpanContainsTranslation` suites, and the others).
+- **Status values:** each feature is **done** (with the conformance suite that covers it on all four providers), **dropped on purpose** (with the replacement), or **partial** (with what's missing).
 
-## CL.SQLite (removed 2026-10-31, after WP-38)
+The 4.x code remains on `support/4.x`, and CodeLogic.MySQL2 4.9 stays on nuget.org. The WP-3B benchmarks compare against it.
 
-| CL.SQLite feature | CL.Data | Status |
+## Shared feature set (CL.MySQL2 = CL.MSSQL = CL.PostgreSQL; CL.SQLite a subset)
+
+| 4.x feature | CL.Data | Status / covered by |
 |---|---|---|
-| `GetRepository<T>()`: Insert, Update, Delete, GetById, GetAll, Find, Count, GetPaged | `db.Repository<T>()` | done |
-| `GetByKeysAsync` / `DeleteByKeysAsync` (composite keys) | `GetByKeyAsync` / `DeleteByKeyAsync(EntityKey)` | done |
-| `UpsertAsync` | `UpsertAsync` / `UpsertManyAsync` | done |
-| `UpdateAndGetAsync` | `QueryBuilder.UpdateAndGetAsync` | done |
-| Query builder: Where, OrderBy/ThenBy, Take/Skip, Any, Count, FirstOrDefault, ToPagedList | `db.Query<T>()` | done |
-| `RawQueryAsync` / `RawExecuteAsync` | `SqlQueryAsync` / `ExecuteSqlAsync` (parameterized interpolation) | done |
-| Connection pool, WAL, foreign keys, busy timeout | `SqliteDataSource` (driver pool, PRAGMAs per connection) | done |
-| `CacheMode` (shared/private) | Shared cache for `:memory:`; otherwise the driver default | partly; reopen if needed |
-| Live config reload | `DataLibrary` reload (WP-A2) | open, WP-A2 |
-| Health check | `Database.PingAsync`; library health (WP-A2) | open, WP-A2 |
-| `SyncTablesAsync` / `SyncNamespaceAsync` (table sync) | Table sync (WP-73) | **open, WP-73** |
-| `GetDatabaseColumnsAsync` (introspection) | SQLite introspector (WP-71) | **open, WP-71** |
-| Migration ledger (`RecordMigration`, `GetAppliedMigrations`, `HasMigrationBeenApplied`, `RemoveMigrationRecord`) | Migrations (WP-74) | **open, WP-74** |
-| `CreateDatabaseAsync` / `DropDatabaseAsync` / `DatabaseExistsAsync` / `TableExistsAsync` (file-based) | Admin (WP-75) | **open, WP-75** |
-| Observability (`SQLiteObservability`, slow-query log) | Telemetry middleware (WP-A0) | **open, WP-A0** |
-
-**Behavior differences to document in the port guide:**
-- Text values are compared case-insensitively by SQLite's `LIKE` for ASCII, as before.
-- `DateTimeOffset`/`DateTime` values are stored as UTC ISO-8601 text.
-- Decimals use NUMERIC affinity.
-- GUIDs are stored as 16-byte BLOBs.
-
-## CL.MySQL2 (removed 2026-10-31, after WP-50)
-
-The CodeLogic.MySQL2 4.9 package stays on nuget.org and on `support/4.x`. The WP-3B benchmark compares against it.
-
-| CL.MySQL2 feature | CL.Data | Status |
-|---|---|---|
-| Repository: Insert/InsertMany (identity write-back), Update, Delete (soft)/HardDelete, GetById, GetAll, GetPaged, Count, Find | `Repository<T>` | done |
-| Upsert, UpsertMany, UpsertWithIncrements, expression upsert | `UpsertAsync` (options), `UpsertWithIncrementsAsync`; set-based `UpdateAsync` covers expression updates | done |
-| InsertIgnore / InsertManyIgnore (`InsertOutcome`) | same names | done |
-| Increment / Decrement / Adjust | same names (generic math) | done |
-| `GetByColumnAsync(string, value)` | `FindAsync(x => x.Col == value)` (string-based API dropped on purpose) | dropped |
-| QueryBuilder: Where, WhereExists/NotExists, WhereIn/NotIn, IncludeDeleted, OrderBy, Exclude, Take/Skip, After | `db.Query<T>()` (ThenBy added; `After` is `ToCursorPageAsync`) | done |
-| Typed joins (2 tables), raw-string `Join(table, condition)` | joins over 2-5 tables; raw-string join dropped on purpose | done / dropped |
-| `Select` projections (columns only) | computed projections | done |
-| `GroupBy` + grouped Select (no HAVING) | `GroupBy` + `Having` + `IDataGroup` | done |
-| ForUpdate / ForShare (Wait/NoWait/SkipLocked), UpdateAndGetAsync | same | done |
-| ToPagedList, ToCursorPagedList, aggregates, Any, Count | same | done |
-| `UpdateAsync(Dictionary)` | member-initializer `UpdateAsync` (dictionary form dropped on purpose) | dropped |
-| SqlFn (in projections/updates) | `SqlFn` (also in `Where`), plus JSON and full text | done |
-| Raw SQL: `SqlQueryAsync`, `ExecuteSqlAsync`, `SqlScalarAsync` | same, parameterized interpolation | done |
-| Transactions (`BeginTransactionAsync`, `TransactionScope`) | `DataTransaction`, `InTransactionAsync`, savepoints | done |
+| Repository: Insert/InsertMany (identity write-back), Update, Delete (soft)/HardDelete, GetById, GetAll, GetPaged, Count, Find | `db.Repository<T>()` | done: `RepositoryConformance` |
+| Composite keys (`GetByKeysAsync`, `DeleteByKeysAsync`) | `GetByKeyAsync` / `DeleteByKeyAsync(EntityKey)` | done: `RepositoryConformance` |
+| Upsert, UpsertMany, UpsertWithIncrements, expression upsert | `UpsertAsync` (options), `UpsertWithIncrementsAsync`; set-based `UpdateAsync` | done: `UpsertConformance` |
+| InsertIgnore / InsertManyIgnore (`InsertOutcome`) | same names | done: `UpsertConformance` |
+| Increment / Decrement / Adjust | same names (generic math) | done: `RepositoryConformance` |
+| `GetByColumnAsync(string, value)` | `FindAsync(x => x.Col == value)` | dropped on purpose (no string-based APIs) |
+| QueryBuilder: Where, WhereExists/NotExists, WhereIn/NotIn, IncludeDeleted, OrderBy, Exclude, Take/Skip | `db.Query<T>()` (plus ThenBy) | done: `QueryConformance` |
+| `After` / cursor pagination, `ToPagedList`, aggregates, Any, Count | `ToCursorPageAsync`, `ToPagedListAsync` (COUNT only on request), aggregates | done: `PagingConformance`, `QueryConformance` |
+| Aggregates over empty sets | `Max`/`Min`/`Average` return `null`; `Sum` returns 0; `Count` returns 0 | done: `QueryConformance` |
+| `Contains` over arrays and lists, C# 14 span `Contains` (enum and nullable arrays) | translator: 2- and 3-argument `MemoryExtensions.Contains` | done: `PredicateTranslationTests`, `PlanCacheTests` |
+| Typed joins (2 tables) | joins over 2–5 tables, left/right | done: `JoinConformance` |
+| Raw-string `Join(table, condition)` | typed joins | dropped on purpose |
+| `Select` projections | computed projections | done: `ProjectionConformance` |
+| `GroupBy` + grouped Select | `GroupBy` + `Having` + `IDataGroup` | done: `GroupingConformance` |
+| ForUpdate / ForShare (Wait/NoWait/SkipLocked), UpdateAndGetAsync | same | done: `TransactionConformance`, `QueryConformance` |
+| Set-based update refusing key columns (`BulkUpdateKeySafety`) | `UpdateAsync` rejects key and tenant columns (`data.validation`) | done: `QueryConformance` (`Set_based_updates_refuse_key_columns`) |
+| `UpdateAsync(Dictionary)` | member-initializer `UpdateAsync` | dropped on purpose |
+| SqlFn in projections and updates | `SqlFn` (also in `Where`), JSON and full-text functions | done: `ProjectionConformance`, `QueryConformance` |
+| Raw SQL: `SqlQueryAsync`, `ExecuteSqlAsync`, `SqlScalarAsync` | same, with parameterized interpolation | done: `RawSqlTests` and the conformance suites |
+| `WithConnection` (raw driver connection) | `db.WithConnectionAsync` (joins a transaction view) | done: `ServerConformance` |
+| `GetServerInfoAsync` / `TestConnectionAsync` | `db.Admin.ServerVersionAsync`, `PingAsync`, `CheckHealthAsync` | done: `ServerConformance`, `RoutingTests` |
+| `GetOpenConnectionCount` / `GetAllConnectionCounts` | drivers' own pool metrics (MySqlConnector, Npgsql, SqlClient meters) | dropped on purpose |
+| Transactions (`BeginTransactionAsync`, `TransactionScope`) | `DataTransaction`, `InTransactionAsync(retryOnDeadlock)`, savepoints | done: `TransactionConformance` |
 | `DistinguishDuplicateKeyError` option | always `data.duplicate_key` | dropped (always on) |
-| Multiple named connections, live config reload, health, localization | `DataLibrary` | **open, WP-A2** |
-| Transient retry with backoff | resilience middleware | **open, WP-90** |
-| Query cache (`WithCache`), SmartCache pools, cache coordinator | unified cache | **open, WP-80 to WP-84** |
-| Observability: query/slow-query events, EXPLAIN on slow, N+1 detector | telemetry middleware | **open, WP-A0** |
-| Table sync (`SyncTableAsync`, sync modes, CRC state, `GET_LOCK`, backup before alter) | schema management | **open, WP-70 to WP-73** |
-| Migrations (`IMigration`, runner, tracker, rollback) | migrations | **open, WP-74** |
-| BackupManager (DDL backups, restore), DatabaseAdmin (create/drop/exists db and table, truncate), `CreateDatabaseIfMissing` | admin and backup | **open, WP-75** |
-| RetentionWorker (`[RetainDays]`) | retention on `DataScheduler` | **open, WP-75** |
-| Bulk insert (batched multi-row) | batched `InsertManyAsync`; native `MySqlBulkCopy` | batched done; native **open, WP-A1** |
-| Charset/engine/collation per table and column | `[MySqlTable]`/`[MySqlColumn]` hints (used by DDL in WP-72) | mapping done; DDL **open, WP-72** |
+| Multiple named connections, `GetConnectionIds`, `HasConfiguration`/`GetConfiguration` | `DataLibrary.Db(name)`, `Connections`, `Db(name).Config` | done: `DataLibraryTests` |
+| Live config reload | `DataLibrary` per-connection reload; a cache change rebuilds | done: `DataLibraryTests` |
+| Health checks | per-node `CheckHealthAsync`; library health; `NodeHealthChangedEvent` | done: `DataLibraryTests`, `RoutingTests` |
+| Localization of log messages | `DataStrings`, registered by `DataLibrary` | done |
+| Transient retry with backoff | resilience step (retries, a circuit breaker per node) | done: `ResilienceTests` |
+| Query cache (`WithCache`), SmartCache pools, cache coordinator | `DataCache`: `WithCache`, entity cache, warm queries (`Refresh`), invalidation bus | done: `CacheConformance` |
+| Observability: query and slow-query events, EXPLAIN on slow queries, N+1 detector | telemetry (OpenTelemetry spans and metrics, `SlowQueryEvent` with a plan, `NPlusOneDetectedEvent`) | done: `TelemetryTests`, `TelemetryConformance` |
+| Table sync (`SyncTableAsync`, `SyncSchemaAsync`, namespace sync, sync modes, CRC state, schema lock, backup before alter) | `db.Schema.SyncAsync<T>()` / `SyncAsync(maps)`, `SchemaSyncLevel`, `cl_data_schema`, advisory locks ×4 | done: `SchemaConformance`, `SyncConformance` |
+| Introspection (`GetDatabaseColumnsAsync`, `SchemaAnalyzer`) | `SchemaIntrospector` ×4 | done: `SchemaConformance` |
+| Migrations (`IMigration`, `RegisterMigrationsFrom`, runner, tracker, `GetPendingMigrationsAsync`, rollback) | `MigrationRunner` (`FromAssembly`, `PendingAsync`, `AppliedAsync`, `MigrateAsync`, `RollbackAsync`) | done: `MigrationConformance` |
+| BackupManager (DDL backup, restore) | `db.Backup` (plus `VACUUM INTO` snapshots on SQLite) | done: `BackupConformance` |
+| DatabaseAdmin (create/drop/exists for databases and tables, truncate), `CreateDatabaseIfMissing` | `db.Admin` | done: `AdminConformance` |
+| RetentionWorker (`[RetainDays]`) | `DataRetention.PurgeAsync` / `Schedule(scheduler, maps, every)` | done: `AdminConformance` |
+| Bulk insert | `db.Bulk<T>()` (native ×4, batched fallback); `InsertManyAsync` switches automatically | done: `BulkConformance` |
+| Seeding | `IDataSeed` / `db.Seeds` | done (new): `SeedConformance` |
 
-## CL.PostgreSQL (removed 2026-10-31, after WP-51)
+## Provider-specific
 
-CL.PostgreSQL had the same feature set as CL.MySQL2, minus `Exclude`, so the CL.MySQL2 table above applies.
-PostgreSQL-specific items:
-
-| CL.PostgreSQL feature | CL.Data | Status |
+| 4.x feature | CL.Data | Status |
 |---|---|---|
-| `DefaultSchema` scoping | `PostgreSql.DefaultSchema`; tables are schema-qualified | done |
-| `ON CONFLICT` upserts, `RETURNING` identities | dialect and write planner | done |
-| jsonb, uuid, timestamptz, bytea | type mapper | done |
-| inet, interval, arrays, ranges | `[PostgresColumn(Type = ...)]` hints, values bound as-is | partly (no array/range translation) |
-| N+1 detector, EXPLAIN on slow queries (`SlowQueryExplain`) | telemetry middleware | **open, WP-A0** |
-| `pg_advisory_lock` schema-sync lock, `pg_catalog` introspection, DDL | schema management | **open, WP-71 to WP-73** |
-| Runtime options (`PostgreSqlRuntimeOptions`) | `PostgreSqlOptions` (auto-prepare, multiplexing) | done |
+| **MySQL:** charset, engine and collation per table and column | `[MySqlTable]` / `[MySqlColumn]` hints, used by the DDL | done: `SchemaConformance` |
+| **MySQL:** `GET_LOCK` schema lock, `information_schema` introspection | advisory lock, introspector | done |
+| **MySQL:** OPTIMIZE / ANALYZE TABLE | `db.MySql.OptimizeTableAsync` / `AnalyzeTableAsync` | done (new): `MySqlExtensionTests` |
+| **PostgreSQL:** `DefaultSchema` scoping | `PostgreSql.DefaultSchema`; tables are schema-qualified | done |
+| **PostgreSQL:** `ON CONFLICT` upserts, `RETURNING` identities | dialect and write planner | done |
+| **PostgreSQL:** jsonb, uuid, timestamptz, bytea | type mapper | done |
+| **PostgreSQL:** inet, interval, arrays, ranges | `[PostgresColumn(Type = ...)]` hints; values bound as-is | **partial**: no LINQ translation of array or range operators (planned for 5.1) |
+| **PostgreSQL:** `pg_advisory_lock`, `pg_catalog` introspection | advisory lock, introspector | done |
+| **PostgreSQL:** LISTEN / NOTIFY | `db.Postgres.ListenAsync` / `NotifyAsync` | done (new): `PostgreSqlExtensionTests` |
+| **PostgreSQL:** runtime options | `PostgreSqlOptions` (auto-prepare, multiplexing) | done |
+| **SQL Server:** SQL login, integrated and Azure AD authentication | `SqlServer.Authentication` | done (Entra password dropped: deprecated upstream) |
+| **SQL Server:** `TOP` / `OFFSET FETCH`, table-hint locks, `OUTPUT INSERTED`, serializable upsert | dialect | done |
+| **SQL Server:** 2100-parameter chunking | `ParameterLimit` 2098 in batch planning | done |
+| **SQL Server:** JSON as `nvarchar(max)` with an `ISJSON` check, `rowversion`, `xml`, `geography` | type mapping; `CHECK (ISJSON(col) = 1)` in the DDL | done: `SqlServerJsonCheckTests` |
+| **SQL Server:** `sp_getapplock`, `sys.*` introspection | advisory lock, introspector | done |
+| **SQL Server:** explicit identity inserts | `IDENTITY_INSERT` handling, reset on failure | done: `RepositoryConformance` |
+| **SQLite:** pool, WAL, foreign keys, busy timeout, PRAGMAs | `SqliteDataSource` (PRAGMAs per connection) | done |
+| **SQLite:** `CacheMode` (shared/private) | shared cache for `:memory:`; otherwise the driver default | **partial**: no setting for file databases (rarely useful with WAL) |
 
-## CL.MSSQL (removed 2026-10-31, after WP-52)
+## Behaviour differences (for the 4.x → 5.x port guide)
 
-CL.MSSQL had the same feature set as CL.MySQL2, so the CL.MySQL2 table above applies. SQL Server-specific items:
-
-| CL.MSSQL feature | CL.Data | Status |
-|---|---|---|
-| SQL login / integrated / Azure AD authentication | `SqlServer.Authentication` (Entra password dropped: deprecated upstream) | done |
-| `TOP`/`OFFSET FETCH`, table-hint locks, `OUTPUT INSERTED`, serializable two-statement upsert | dialect | done |
-| 2100-parameter chunking | `ParameterLimit` 2098 in batch planning | done |
-| Json as `nvarchar(max)` + `ISJSON` check, `RowVersion`, `Xml`, `Geography` | type mapping done; `ISJSON` check constraint in DDL | DDL **open, WP-72** |
-| `sp_getapplock` schema-sync lock, `sys.*` introspection | schema management | **open, WP-71 to WP-73** |
-| API-parity test against CL.MySQL2 (`docs/libs/mssql/parity.md`) | replaced by the shared conformance suite | done |
+- **No string-based APIs:**
+  - `GetByColumn(string)`, the raw-string `Join` and `UpdateAsync(Dictionary)` are gone.
+  - An untranslatable lambda is a build warning (CLD1xx) and a `data.translation_failed` error at run time, never evaluated on the client.
+- **Paging:** paged queries run `COUNT` only when asked (`withTotal: true`). Keyset paging (`ToCursorPageAsync`) is the documented default.
+- **Dates:** `DateTimeOffset` and UTC are the default. On SQLite, `DateTime` and `DateTimeOffset` are stored as UTC ISO-8601 text.
+- **SQLite storage:** decimals use NUMERIC affinity, and GUIDs are stored as 16-byte BLOBs.
+- **Config, state tables and errors:**
+  - Config moves to the `data` and `data.cache` sections.
+  - State tables are renamed: `cl_data_schema`, `cl_data_migrations`, `cl_data_seeds` and `cl_data_cache_bus`.
+  - Error codes are `data.*`.
+- **Retries are on by default** (`RetryCount = 3`). Writes are retried only when they certainly didn't apply.
+- **Bulk copy doesn't read back server-generated identities.** `InsertManyAsync` uses bulk copy only when nothing has to be read back.

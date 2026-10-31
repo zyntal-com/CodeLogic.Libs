@@ -74,3 +74,4 @@ public sealed class SqlServerCollection : ICollectionFixture<SqlServerFixture>;
 [Collection("sqlserver")] public sealed class SqlServerReplicaTests(SqlServerFixture f) : ReplicaConformance(f);
 [Collection("sqlserver")] public sealed class SqlServerTelemetryTests(SqlServerFixture f) : TelemetryConformance(f);
 [Collection("sqlserver")] public sealed class SqlServerBulkTests(SqlServerFixture f) : BulkConformance(f);
+[Collection("sqlserver")] public sealed class SqlServerServerTests(SqlServerFixture f) : ServerConformance(f);

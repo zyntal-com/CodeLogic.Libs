@@ -74,6 +74,9 @@ public sealed class SqlServerDataProvider : DataProvider
     public override CL.Data.Routing.ReplicaProbe ReplicaProbe { get; } = new SqlServerReplicaProbe();
 
     /// <inheritdoc />
+    public override string ServerVersionSql => "SELECT CAST(SERVERPROPERTY('ProductVersion') AS nvarchar(128))";
+
+    /// <inheritdoc />
     public override CL.Data.Bulk.BulkCopier BulkCopier { get; } = new SqlServerBulkCopier();
 
     /// <inheritdoc />

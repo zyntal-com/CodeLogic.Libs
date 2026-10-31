@@ -74,6 +74,9 @@ public sealed class PostgreSqlDataProvider : DataProvider
     public override CL.Data.Routing.ReplicaProbe ReplicaProbe { get; } = new PostgreSqlReplicaProbe();
 
     /// <inheritdoc />
+    public override string ServerVersionSql => "SHOW server_version";
+
+    /// <inheritdoc />
     public override CL.Data.Bulk.BulkCopier BulkCopier { get; } = new PostgreSqlBulkCopier();
 
     /// <inheritdoc />

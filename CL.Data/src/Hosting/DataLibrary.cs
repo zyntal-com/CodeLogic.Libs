@@ -84,6 +84,7 @@ public sealed class DataLibrary : ILibrary, IConfigReloadable
         _context = context;
         context.Configuration.Register<DataConfig>("data");
         context.Configuration.Register<DataCacheConfig>("data.cache");
+        context.Localization.Register<CL.Data.Localization.DataStrings>();
         return Task.CompletedTask;
     }
 
@@ -102,9 +103,25 @@ public sealed class DataLibrary : ILibrary, IConfigReloadable
         };
         BuildCache();
         foreach (var (name, connection) in _config.EnabledConnections) Open(name, connection);
-        context.Logger.Info($"CL.Data initialized: {_databases.Count} connection(s) up, {_failed.Count} failed");
+        if (_databases.Count == 0 && _failed.IsEmpty) context.Logger.Warning(Strings.NoConnections);
+        else context.Logger.Info(Format(Strings.Initialized, _databases.Count));
         return Task.CompletedTask;
     }
+
+    private static readonly CL.Data.Localization.DataStrings DefaultStrings = new();
+
+    /// <summary>Localized messages (the defaults until CodeLogic has loaded the translations).</summary>
+    private CL.Data.Localization.DataStrings Strings
+    {
+        get
+        {
+            try { return _context?.Localization.Get<CL.Data.Localization.DataStrings>() ?? DefaultStrings; }
+            catch { return DefaultStrings; }
+        }
+    }
+
+    private static string Format(string template, params object?[] args) =>
+        string.Format(System.Globalization.CultureInfo.CurrentCulture, template, args);
 
     private void BuildCache() => _cache = _cacheConfig.Enabled ? new DataCache(_cacheConfig, Time) : null;
 
@@ -114,7 +131,9 @@ public sealed class DataLibrary : ILibrary, IConfigReloadable
         if (created.IsFailure)
         {
             _failed[name] = created.Error!;
-            _context?.Logger.Error($"CL.Data connection '{name}' could not be created: {created.Error!.Message} {created.Error.Details}");
+            _context?.Logger.Error(created.Error!.Code == DataErrors.ProviderMissingCode
+                ? Format(Strings.ProviderMissing, name, connection.Provider)
+                : $"CL.Data connection '{name}' could not be created: {created.Error.Message} {created.Error.Details}");
             return;
         }
         _failed.TryRemove(name, out _);
@@ -128,17 +147,27 @@ public sealed class DataLibrary : ILibrary, IConfigReloadable
         switch (e)
         {
             case QueryExecutedEvent x: bus.Publish(x); break;
-            case SlowQueryEvent x: bus.Publish(x); _context.Logger.Warning($"Slow query on '{x.ConnectionId}' ({x.Duration.TotalMilliseconds:F0} ms): {x.Sql}"); break;
-            case NPlusOneDetectedEvent x: bus.Publish(x); _context.Logger.Warning($"Possible N+1 on '{x.ConnectionId}': {x.Count}x in {x.Window.TotalSeconds:F0}s: {x.QueryShape}"); break;
+            case SlowQueryEvent x: bus.Publish(x); _context.Logger.Warning(Format(Strings.SlowQuery, x.ConnectionId, (long)x.Duration.TotalMilliseconds, x.Sql)); break;
+            case NPlusOneDetectedEvent x: bus.Publish(x); _context.Logger.Warning(Format(Strings.NPlusOne, x.ConnectionId, x.Count, x.QueryShape)); break;
             case CacheHitEvent x: bus.Publish(x); break;
             case CacheMissEvent x: bus.Publish(x); break;
-            case SchemaSyncedEvent x: bus.Publish(x); break;
-            case SchemaDriftDetectedEvent x: bus.Publish(x); _context.Logger.Warning($"Schema drift on '{x.ConnectionId}'"); break;
-            case MigrationAppliedEvent x: bus.Publish(x); break;
+            case SchemaSyncedEvent x:
+                bus.Publish(x);
+                if (x.Created) _context.Logger.Info(Format(Strings.TableCreated, x.Table));
+                else if (x.ChangesApplied > 0) _context.Logger.Info(Format(Strings.TableAltered, x.Table, x.ChangesApplied));
+                break;
+            case SchemaDriftDetectedEvent x: bus.Publish(x); _context.Logger.Warning(Format(Strings.SchemaDrift, x.Table, string.Join("; ", x.PendingChanges))); break;
+            case MigrationAppliedEvent x:
+                bus.Publish(x);
+                _context.Logger.Info(Format(x.RolledBack ? Strings.MigrationRolledBack : Strings.MigrationApplied, x.Version, x.Name));
+                break;
             case SeedAppliedEvent x: bus.Publish(x); break;
-            case RetentionPurgedEvent x: bus.Publish(x); break;
+            case RetentionPurgedEvent x: bus.Publish(x); _context.Logger.Info(Format(Strings.RetentionPurged, x.Rows, x.Table)); break;
             case BulkCopyCompletedEvent x: bus.Publish(x); break;
-            case NodeHealthChangedEvent x: bus.Publish(x); break;
+            case NodeHealthChangedEvent x:
+                bus.Publish(x);
+                _context.Logger.Warning(Format(Strings.NodeHealthChanged, x.ConnectionId, x.Node, x.Healthy ? "healthy" : "unhealthy", x.Message ?? ""));
+                break;
             case CircuitStateChangedEvent x: bus.Publish(x); _context.Logger.Warning($"Circuit of '{x.ConnectionId}/{x.Node}' is now {x.State}"); break;
         }
     }
@@ -230,6 +259,7 @@ public sealed class DataLibrary : ILibrary, IConfigReloadable
                 foreach (var (name, connection) in diff.Added.Concat(diff.Changed.Select(c => KeyValuePair.Create(c.Key, c.Value.New))))
                 {
                     Open(name, connection);
+                    if (diff.Changed.ContainsKey(name)) context.Logger.Info(Format(Strings.ConnectionReloaded, name));
                     if (_started && _databases.TryGetValue(name, out var db))
                     {
                         await WarmAsync(db).ConfigureAwait(false);
@@ -291,6 +321,7 @@ public sealed class DataLibrary : ILibrary, IConfigReloadable
         _databases.Clear();
         _cache?.Dispose();
         _cache = null;
+        _context?.Logger.Info(Strings.Stopped);
     }
 
     /// <summary>

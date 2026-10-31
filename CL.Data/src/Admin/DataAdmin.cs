@@ -98,6 +98,13 @@ public sealed class DataAdmin
         return target.IsFailure ? target.Error! : await TruncateAsync(target.Value.Table, target.Value.Schema, ct).ConfigureAwait(false);
     }
 
+    /// <summary>The server's version text (for example <c>8.4.3</c>, <c>18.0</c>, <c>16.0.4135.4</c>, <c>3.46.1</c>).</summary>
+    public async ValueTask<Result<string>> ServerVersionAsync(CancellationToken ct = default)
+    {
+        var version = await _db.SqlScalarAsync<string>(SqlText.Raw(_db.Provider.ServerVersionSql), ct).ConfigureAwait(false);
+        return version.IsFailure ? version.Error! : version.Value ?? "";
+    }
+
     /// <summary>The quoted (and schema-qualified) table of <typeparamref name="T"/>, for provider-specific statements.</summary>
     public Result<string> QuotedTable<T>()
     {

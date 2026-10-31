@@ -71,6 +71,18 @@ public abstract class QueryConformance(ProviderFixture fixture) : ConformanceSui
         Assert.Equal(20m, (await q.AverageAsync(p => p.Price)).ValueOrThrow());
         Assert.Equal(0, (await q.Where(p => p.Price > 1000m).SumAsync(p => p.Stock)).ValueOrThrow());
         Assert.Null((await q.Where(p => p.Price > 1000m).MaxAsync(p => p.Price)).ValueOrThrow());
+        Assert.Null((await q.Where(p => p.Price > 1000m).MinAsync(p => p.Stock)).ValueOrThrow());
+        Assert.Null((await q.Where(p => p.Price > 1000m).AverageAsync(p => p.Price)).ValueOrThrow());
+    }
+
+    [SkippableFact]
+    public async Task Set_based_updates_refuse_key_columns()
+    {
+        RequireProvider();
+        await SeedAsync();
+        var result = await Db.Query<Product>().Where(p => p.Stock > 0).UpdateAsync(p => new Product { Id = 999 });
+        Assert.Equal(DataErrors.ValidationCode, result.Error!.Code);
+        Assert.DoesNotContain(999L, (await Db.Query<Product>().ToListAsync()).ValueOrThrow().Select(p => p.Id));
     }
 
     [SkippableFact]

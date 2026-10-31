@@ -72,6 +72,9 @@ public sealed class MySqlDataProvider : DataProvider
     public override CL.Data.Routing.ReplicaProbe ReplicaProbe { get; } = new MySqlReplicaProbe();
 
     /// <inheritdoc />
+    public override string ServerVersionSql => "SELECT VERSION()";
+
+    /// <inheritdoc />
     public override CL.Data.Bulk.BulkCopier BulkCopier { get; } = new MySqlBulkCopier();
 
     /// <inheritdoc />

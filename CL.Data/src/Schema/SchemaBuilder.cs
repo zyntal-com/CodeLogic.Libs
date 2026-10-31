@@ -28,6 +28,7 @@ public static class SchemaBuilder
         {
             PreviousName = c.PreviousName,
             Comment = c.Comment,
+            Json = c.DataType == DataType.Json,
             Collation = c.Hint<MySqlColumnAttribute>()?.Collation ?? c.Hint<PostgresColumnAttribute>()?.Collation
                         ?? c.Hint<SqlServerColumnAttribute>()?.Collation ?? c.Hint<SqliteColumnAttribute>()?.Collation,
         }).ToArray();

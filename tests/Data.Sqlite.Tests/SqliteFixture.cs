@@ -111,3 +111,6 @@ public sealed class SqliteTelemetryTests(SqliteFixture fixture) : TelemetryConfo
 
 [Collection("sqlite")]
 public sealed class SqliteBulkTests(SqliteFixture fixture) : BulkConformance(fixture);
+
+[Collection("sqlite")]
+public sealed class SqliteServerTests(SqliteFixture fixture) : ServerConformance(fixture);

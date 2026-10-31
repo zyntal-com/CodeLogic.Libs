@@ -16,6 +16,9 @@ public sealed record ColumnSchema(string Name, string StoreType, bool Nullable, 
 
     /// <summary>Former name (desired schemas only): the column is renamed instead of added.</summary>
     public string? PreviousName { get; init; }
+
+    /// <summary>True for a JSON column stored as text; providers may add a validity check (SQL Server: <c>ISJSON</c>). Not compared by the diff.</summary>
+    public bool Json { get; init; }
 }
 
 /// <summary>An index.</summary>

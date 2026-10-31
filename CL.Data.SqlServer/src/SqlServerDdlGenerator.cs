@@ -21,6 +21,10 @@ public sealed class SqlServerDdlGenerator(SqlDialect dialect) : DdlGenerator(dia
     /// <inheritdoc />
     protected override string AddColumnKeyword => "ADD";
 
+    /// <summary>JSON columns (<c>nvarchar(max)</c>) get <c>CHECK (ISJSON(col) = 1)</c>, so invalid JSON is rejected like on the 4.x library.</summary>
+    protected override string ColumnDefinition(ColumnSchema column, TableSchema? table) =>
+        column.Json ? $"{base.ColumnDefinition(column, table)} CHECK (ISJSON({Q(column.Name)}) = 1)" : base.ColumnDefinition(column, table);
+
     /// <inheritdoc />
     protected override string ImplicitDefault(ColumnSchema column) =>
         column.StoreType.StartsWith("bool", StringComparison.Ordinal) ? "0" : base.ImplicitDefault(column);

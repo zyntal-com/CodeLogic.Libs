@@ -174,6 +174,9 @@ public abstract class DataProvider
     /// <summary>Statement that checks a connection works (health checks).</summary>
     public virtual string PingSql => "SELECT 1";
 
+    /// <summary>Query returning the server version as text (<c>DataAdmin.ServerVersionAsync</c>).</summary>
+    public virtual string ServerVersionSql => "SELECT version()";
+
     /// <summary>
     /// Normalizes a native type for comparison between the entity model and the database (lower case, single spaces,
     /// provider aliases such as <c>character varying</c> → <c>varchar</c>).

@@ -63,6 +63,9 @@ public sealed class SqliteDataProvider : DataProvider
     public override CL.Data.Schema.SchemaIntrospector Introspector { get; } = new SqliteSchemaIntrospector();
 
     /// <inheritdoc />
+    public override string ServerVersionSql => "SELECT sqlite_version()";
+
+    /// <inheritdoc />
     public override CL.Data.Bulk.BulkCopier BulkCopier { get; } = new SqliteBulkCopier();
 
     /// <inheritdoc />

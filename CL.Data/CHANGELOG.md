@@ -329,3 +329,9 @@
   - `db.SqlServer`: `UpdateStatisticsAsync<T>(fullScan)`.
   - `DataAdmin.QuotedTable<T>()` is now public for provider-specific statements.
   - Maintenance runs as a read, so cached results stay valid.
+- **Parity sweep (WP-B0):** `PARITY.md` now maps every 4.x feature to CL.Data, each marked done (with the suite that covers it), dropped on purpose or partial. The gaps the sweep found are closed:
+  - `DataLibrary` registers and uses the `DataStrings` localization.
+  - SQL Server JSON columns get `CHECK (ISJSON(col) = 1)`.
+  - `db.Admin.ServerVersionAsync()` is new.
+  - `db.WithConnectionAsync(...)` gives raw driver access and joins a transaction view.
+  - New tests cover aggregates over empty sets and key-column safety in set-based updates.

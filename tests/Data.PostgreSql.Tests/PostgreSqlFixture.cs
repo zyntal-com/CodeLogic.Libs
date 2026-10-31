@@ -70,3 +70,4 @@ public sealed class PostgreSqlCollection : ICollectionFixture<PostgreSqlFixture>
 [Collection("postgresql")] public sealed class PostgreSqlReplicaTests(PostgreSqlFixture f) : ReplicaConformance(f);
 [Collection("postgresql")] public sealed class PostgreSqlTelemetryTests(PostgreSqlFixture f) : TelemetryConformance(f);
 [Collection("postgresql")] public sealed class PostgreSqlBulkTests(PostgreSqlFixture f) : BulkConformance(f);
+[Collection("postgresql")] public sealed class PostgreSqlServerTests(PostgreSqlFixture f) : ServerConformance(f);

@@ -71,3 +71,4 @@ public sealed class MySqlCollection : ICollectionFixture<MySqlFixture>;
 [Collection("mysql")] public sealed class MySqlReplicaTests(MySqlFixture f) : ReplicaConformance(f);
 [Collection("mysql")] public sealed class MySqlTelemetryTests(MySqlFixture f) : TelemetryConformance(f);
 [Collection("mysql")] public sealed class MySqlBulkTests(MySqlFixture f) : BulkConformance(f);
+[Collection("mysql")] public sealed class MySqlServerTests(MySqlFixture f) : ServerConformance(f);

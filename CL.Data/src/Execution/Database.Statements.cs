@@ -38,6 +38,33 @@ public sealed partial class Database
     /// <summary>A query over <typeparamref name="T"/>.</summary>
     public QueryBuilder<T> Query<T>() => new(this);
 
+    /// <summary>
+    /// Runs <paramref name="work"/> with a raw driver connection: the transaction's connection inside a transaction view,
+    /// otherwise a pooled connection of the primary, closed afterwards. An escape hatch for driver features CL.Data does not
+    /// wrap; nothing runs through the command pipeline, and the result cache is not invalidated
+    /// (call <c>Options.Cache?.Invalidate</c> after writing). Exceptions become CL.Data errors.
+    /// </summary>
+    public async ValueTask<Result<T>> WithConnectionAsync<T>(Func<DbConnection, DbTransaction?, CancellationToken, ValueTask<T>> work,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(work);
+        DbConnection? owned = null;
+        try
+        {
+            if (_transaction is { } tx) return await work(tx.Handles.Connection, tx.Handles.Transaction, ct).ConfigureAwait(false);
+            owned = await Primary.DataSource.OpenConnectionAsync(ct).ConfigureAwait(false);
+            return await work(owned, null, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            return Executor.Map(ex, ct);
+        }
+        finally
+        {
+            if (owned is not null) await owned.DisposeAsync().ConfigureAwait(false);
+        }
+    }
+
     /// <summary>Bulk inserts for <typeparamref name="T"/> through the provider's native bulk path.</summary>
     public CL.Data.Bulk.DataBulk<T> Bulk<T>() => new(this);
 
