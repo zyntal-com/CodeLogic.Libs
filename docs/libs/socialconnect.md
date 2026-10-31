@@ -303,28 +303,40 @@ public sealed class SteamGame
 
 `SteamAuthenticationService` validates a Steam session ticket — typically used by a game server to confirm a connecting client's identity. It requires `Steam.AuthEnabled = true` and a configured `Steam.AppId`.
 
-`AuthenticateAsync(ticket, appId?)` validates the ticket; the optional `appId` overrides `Steam.AppId` for that call.
+`AuthenticateAsync(ticket, appId?)` validates the hex-encoded ticket; the optional `appId` overrides `Steam.AppId` for that call. It returns `Result<SteamTicketIdentity>`: success always means Steam accepted the ticket.
 
 ```csharp
 if (social.HasSteamAuth)
 {
-    Result<SteamAuthResult> r = await social.Auth.AuthenticateAsync(sessionTicket);
-    if (r.IsSuccess && r.Value.IsAuthenticated)
-        Console.WriteLine($"Verified {r.Value.SteamId}");
+    Result<SteamTicketIdentity> r = await social.Auth.AuthenticateAsync(sessionTicket);
+    if (r.IsSuccess)
+        Console.WriteLine($"Verified {r.Value.SteamId}{(r.Value.VacBanned ? " (VAC banned)" : "")}");
+    else if (r.Error is UnauthorizedError)
+        Console.WriteLine("Ticket rejected");
 }
 ```
+
+| Failure | Error kind | Code |
+|---------|------------|------|
+| Ticket empty or not hex | `ValidationError` | `social.steam.invalid_ticket` |
+| No App ID (argument or `Steam.AppId`) | `ValidationError` | `social.steam.no_appid` |
+| Steam rejected the ticket (invalid, expired, forged, other app) | `UnauthorizedError` | `social.steam.auth_failed` (`Details` = Steam error code when given) |
+| No answer within `TimeoutSeconds` | `TimeoutError` | `social.steam.timeout` |
+| Steam unreachable or answered 5xx | `UnavailableError` | `social.steam.network_error` |
+| Steam answered 4xx (e.g. bad API key) | `InternalError` | `social.steam.request_rejected` (`Details` = HTTP status) |
+| Unreadable answer / anything else | `InternalError` | `social.steam.parse_error` / `social.steam.error` |
 
 Each call publishes a `SteamAuthenticatedEvent`.
 
 ```csharp
-public sealed class SteamAuthResult
+public sealed record SteamTicketIdentity(
+    string SteamId,
+    string OwnerSteamId,     // license owner; differs from SteamId under Family Sharing
+    string AppId,            // the App ID the ticket was validated against
+    bool VacBanned,
+    bool PublisherBanned)
 {
-    public string SteamId { get; }
-    public bool IsAuthenticated { get; }
-    public string? OwnerSteamId { get; }
-    public string? ErrorDescription { get; }
-    public int VacBanned { get; }        // 0 / 1
-    public int PublisherBanned { get; }  // 0 / 1
+    public bool IsFamilyShared { get; }
 }
 ```
 

@@ -52,7 +52,7 @@ await CodeLogic.StartAsync();
 - **Generators** — `IdGenerator` (GUID, sequential, timestamp, NanoID, URL-safe, sortable) and `PasswordGenerator` (passwords, passphrases, PINs, strength estimation).
 - **Data & JSON** — `JsonHelper` serialize/deserialize, file I/O, validation, merge, property extraction.
 - **Conversion** — `TypeConverter` safe `Result`-based conversion to int/long/double/bool/decimal/DateTime/Guid/enum.
-- **Compression** — `CompressionHelper` GZip, Brotli, and LZ4 for bytes, plus GZip-to-Base64 string helpers.
+- **Compression** — `CompressionHelper` GZip, Brotli, Zstandard, and LZ4 for bytes, plus GZip-to-Base64 string helpers.
 - **Strings** — `StringHelper` (truncate, slug, case conversion, HTML strip) and `StringValidator` (email/URL/phone/IP/GUID checks).
 - **Time** — `DateTimeHelper` Unix timestamps, ISO 8601, age, business days, boundaries, relative strings.
 - **Web** — `HtmlHelper`, `HttpClientHelper`, `HttpHeaderHelper`, `UrlHelper` for HTML sanitization, typed HTTP requests, header/IP/UA parsing, and URL building.

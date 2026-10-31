@@ -206,7 +206,7 @@ if (TypeConverter.TryConvert<long>("1000", out long? value)) { /* ... */ }
 
 ## Compression — CompressionHelper
 
-`CL.Common.Compression.CompressionHelper` offers three byte-array codecs — GZip, Brotli, and LZ4 — plus a string convenience pair that GZip-compresses and Base64-encodes in one step. Everything returns `Result`.
+`CL.Common.Compression.CompressionHelper` offers four byte-array codecs — GZip, Brotli, Zstandard, and LZ4 — plus a string convenience pair that GZip-compresses and Base64-encodes in one step. Everything returns `Result`.
 
 ```csharp
 using CL.Common.Compression;
@@ -214,6 +214,7 @@ using CL.Common.Compression;
 // Byte arrays
 Result<byte[]> gz   = CompressionHelper.CompressGzip(payloadBytes);
 Result<byte[]> br   = CompressionHelper.CompressBrotli(payloadBytes);
+Result<byte[]> zst  = CompressionHelper.CompressZstandard(payloadBytes);
 Result<byte[]> lz4  = CompressionHelper.CompressLz4(payloadBytes);
 Result<byte[]> back = CompressionHelper.DecompressLz4(lz4.Value!);
 
@@ -226,11 +227,12 @@ Result<string> text = CompressionHelper.DecompressString(blob.Value!);
 |--------|---------|---------|
 | `CompressGzip(data)` / `DecompressGzip(data)` | `Result<byte[]>` | GZip codec. |
 | `CompressBrotli(data)` / `DecompressBrotli(data)` | `Result<byte[]>` | Brotli codec. |
+| `CompressZstandard(data)` / `DecompressZstandard(data)` | `Result<byte[]>` | Zstandard codec (built-in `System.IO.Compression.ZstandardStream`, .NET 11). Reads any standard zstd frame. |
 | `CompressLz4(data)` / `DecompressLz4(data)` | `Result<byte[]>` | LZ4 codec (via K4os). |
 | `CompressString(text)` | `Result<string>` | GZip + Base64 in one step. |
 | `DecompressString(text)` | `Result<string>` | Reverse of `CompressString`. |
 
-> Pick the codec for the job: Brotli tends to compress smallest, GZip is the safe interop default, and LZ4 is the fastest for hot paths where size matters less than throughput.
+> Pick the codec for the job: Brotli tends to compress smallest, GZip is the safe interop default, Zstandard compresses almost as well as Brotli at much higher speed (a good default for new formats), and LZ4 is the fastest for hot paths where size matters less than throughput.
 
 ## See also
 

@@ -9,8 +9,22 @@ All notable changes to **CodeLogic.Common** are documented here. Versions follow
 
 - Targets **.NET 11** (`net11.0`) and requires **CodeLogic 5.0** (`[5.0.0, 6.0.0)`). On .NET 10, stay on
   4.9.x. CodeLogic 5 makes `Result<T>` / `Result` C# 15 unions and `Error` a closed record with
-  kind subtypes (`NotFoundError`, `ValidationError`, ...). This library's API is unchanged, and
-  its results can now be matched exhaustively with `switch`.
+  kind subtypes (`NotFoundError`, `ValidationError`, ...). Results can now be matched
+  exhaustively with `switch`.
+- `NetworkPing.PingAsync` returns `Result<PingResponse>` instead of `Result<PingResult>`. The old
+  `PingResult(bool Success, long RoundTripMs, string Host)` reported "no reply" as a *successful* result
+  with `Success = false`; now success always means the host replied, and
+  `PingResponse(string Host, string Address, long RoundTripMs)` adds the answering address. No reply is a
+  failure: `TimeoutError` `networking.ping_timeout`, `UnavailableError` `networking.ping_unreachable`
+  (unreachable host/network or unresolvable name; `Details` carries the `IPStatus`), otherwise
+  `InternalError` `networking.ping_failed`.
+
+### Added
+
+- `CompressionHelper.CompressZstandard` / `DecompressZstandard` → `Result<byte[]>`: Zstandard via the
+  .NET 11 built-in `System.IO.Compression.ZstandardStream` (no extra package). Same shape and error
+  handling as the Brotli pair; failures are `compression.zstandard_compress_failed` /
+  `compression.zstandard_decompress_failed`.
 
 ## 2026-10-27 (4.9.104)
 

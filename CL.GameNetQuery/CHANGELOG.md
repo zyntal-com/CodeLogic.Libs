@@ -9,8 +9,26 @@ All notable changes to **CodeLogic.GameNetQuery** are documented here. Versions 
 
 - Targets **.NET 11** (`net11.0`) and requires **CodeLogic 5.0** (`[5.0.0, 6.0.0)`). On .NET 10, stay on
   4.9.x. CodeLogic 5 makes `Result<T>` / `Result` C# 15 unions and `Error` a closed record with
-  kind subtypes (`NotFoundError`, `ValidationError`, ...). This library's API is unchanged, and
-  its results can now be matched exhaustively with `switch`.
+  kind subtypes (`NotFoundError`, `ValidationError`, ...).
+- **`QueryResult` removed.** The class (`Success`, `Info?`, `Players`, `Error` string, `DurationMs`,
+  `Ok`/`Fail`) is replaced by CodeLogic `Result<ServerQuery>`, where
+  `ServerQuery(ServerInfo Info, IReadOnlyList<PlayerInfo> Players, long DurationMs)` is the success value
+  and failures are `Error` kinds with `gamenetquery.*` codes.
+
+### Added
+
+- `ValveUdpQuery.QueryAsync(ip, port, includePlayers = true, timeoutMs = 3000, cancellationToken)` →
+  `Task<Result<ServerQuery>>`: A2S_INFO plus (optionally) A2S_PLAYER with the elapsed time. Failures:
+  `ValidationError` `gamenetquery.invalid_address` / `gamenetquery.invalid_timeout`, `TimeoutError`
+  `gamenetquery.timeout`, `UnavailableError` `gamenetquery.unreachable`, `InternalError`
+  `gamenetquery.malformed_response` / `gamenetquery.query_failed`.
+
+### Fixed
+
+- A2S_INFO answers the server's `S2C_CHALLENGE` (sent by Source servers since 2020) instead of parsing
+  the challenge packet as server info, and replies are checked for the expected A2S header. Applies to
+  `GetServerInfoAsync` / `GetPlayerListAsync` too (a wrong packet now gives `null` / empty, not garbage).
+  The UDP socket now matches the address family, so IPv6 addresses work.
 
 ## 2026-10-24
 

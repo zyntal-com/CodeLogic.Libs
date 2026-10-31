@@ -110,7 +110,7 @@ Every helper class, grouped by area, with the page that documents it in depth.
 | `Generators.PasswordGenerator` | static | Random/strong passwords, passphrases, PINs, strength estimation (`PasswordStrength`). |
 | `Data.JsonHelper` | static | Serialize/deserialize, file I/O, validation, merge, property extraction. |
 | `Conversion.TypeConverter` | static | Safe `Result`-based conversion to int/long/double/bool/decimal/DateTime/Guid/enum. |
-| `Compression.CompressionHelper` | static | GZip, Brotli, and LZ4 for bytes, plus GZip-to-Base64 string helpers. |
+| `Compression.CompressionHelper` | static | GZip, Brotli, Zstandard, and LZ4 for bytes, plus GZip-to-Base64 string helpers. |
 
 ### Utilities — see [Utilities](utilities.md)
 
@@ -123,7 +123,7 @@ Every helper class, grouped by area, with the page that documents it in depth.
 | `Web.HttpClientHelper` | static | Typed `Result`-based GET/POST/PUT/DELETE over an `HttpClient`. |
 | `Web.HttpHeaderHelper` | static | Locale, client IP, bot/mobile detection, header extraction. |
 | `Web.UrlHelper` | static | Encode/decode, validate, combine, append/parse query, domain/path. |
-| `Networking.NetworkPing` | static | ICMP ping returning a `PingResult`. |
+| `Networking.NetworkPing` | static | ICMP ping returning a `PingResponse` (no reply is a `TimeoutError` / `UnavailableError`). |
 | `Networking.NetworkDns` | static | DNS lookup returning resolved addresses. |
 | `Networking.SubnetCalculator` | static | IPv4 subnet math returning a `SubnetInfo`. |
 | `Networking.TraceRoute` | static | Walks the route to a host, returning `HopInfo` records. |

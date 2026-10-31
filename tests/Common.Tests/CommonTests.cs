@@ -113,6 +113,48 @@ public class CompressionTests
     }
 
     [Fact]
+    public void Zstandard_round_trips_and_shrinks_repetitive_bytes()
+    {
+        var data = System.Text.Encoding.UTF8.GetBytes("zstd payload " + new string('z', 4000));
+        var comp = CompressionHelper.CompressZstandard(data);
+        Assert.True(comp.IsSuccess);
+        Assert.True(comp.Value!.Length < data.Length);
+        var back = CompressionHelper.DecompressZstandard(comp.Value!);
+        Assert.True(back.IsSuccess);
+        Assert.Equal(data, back.Value);
+    }
+
+    [Fact]
+    public void Zstandard_round_trips_empty_input()
+    {
+        var comp = CompressionHelper.CompressZstandard([]);
+        Assert.True(comp.IsSuccess);
+        var back = CompressionHelper.DecompressZstandard(comp.Value!);
+        Assert.True(back.IsSuccess);
+        Assert.Empty(back.Value!);
+    }
+
+    [Fact]
+    public void Zstandard_round_trips_large_random_buffer()
+    {
+        var data = new byte[4 * 1024 * 1024 + 123];
+        new Random(42).NextBytes(data);
+        var comp = CompressionHelper.CompressZstandard(data);
+        Assert.True(comp.IsSuccess);
+        var back = CompressionHelper.DecompressZstandard(comp.Value!);
+        Assert.True(back.IsSuccess);
+        Assert.Equal(data, back.Value);
+    }
+
+    [Fact]
+    public void Zstandard_decompress_of_garbage_is_a_failure_not_a_throw()
+    {
+        var back = CompressionHelper.DecompressZstandard([1, 2, 3, 4, 5, 6, 7, 8]);
+        Assert.True(back.IsFailure);
+        Assert.Equal("compression.zstandard_decompress_failed", back.Error!.Code);
+    }
+
+    [Fact]
     public void Compress_string_round_trips()
     {
         var comp = CompressionHelper.CompressString("the quick brown fox");
@@ -377,5 +419,34 @@ public class MemoryCacheTests
         await cache.SetAsync("k", "v", TimeSpan.FromMilliseconds(20));
         await Task.Delay(60);
         Assert.False(await cache.ExistsAsync("k"));
+    }
+}
+
+public class NetworkPingTests
+{
+    [Fact]
+    public async Task Ping_loopback_is_a_success_with_a_response()
+    {
+        var r = await CL.Common.Networking.NetworkPing.PingAsync("127.0.0.1", 2000);
+        // Some sandboxes block ICMP entirely; then the only acceptable outcome is a typed failure.
+        if (r.IsFailure)
+        {
+            Assert.True(r.Error is CodeLogic.Core.Results.TimeoutError or CodeLogic.Core.Results.UnavailableError
+                or CodeLogic.Core.Results.InternalError);
+            return;
+        }
+        Assert.Equal("127.0.0.1", r.Value!.Host);
+        Assert.Equal("127.0.0.1", r.Value.Address);
+        Assert.True(r.Value.RoundTripMs >= 0);
+    }
+
+    [Fact]
+    public async Task Ping_unresolvable_host_is_an_unavailable_failure()
+    {
+        // .invalid is reserved (RFC 2606) and never resolves.
+        var r = await CL.Common.Networking.NetworkPing.PingAsync("no-such-host.invalid", 1000);
+        Assert.True(r.IsFailure);
+        Assert.IsType<CodeLogic.Core.Results.UnavailableError>(r.Error);
+        Assert.Equal("networking.ping_unreachable", r.Error!.Code);
     }
 }

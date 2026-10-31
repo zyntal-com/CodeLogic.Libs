@@ -273,3 +273,159 @@ public class GameNetQueryLibraryTests
         Assert.Equal("CL.GameNetQuery", lib.Manifest.Name);
     }
 }
+
+/// <summary>
+/// <see cref="ValveUdpQuery.QueryAsync"/> against a fake A2S server on loopback, so the
+/// <c>Result&lt;ServerQuery&gt;</c> shape and every error kind are tested offline.
+/// </summary>
+public class ValveUdpQueryResultTests
+{
+    private static readonly byte[] Header = [0xFF, 0xFF, 0xFF, 0xFF];
+
+    private static byte[] InfoResponse()
+    {
+        var b = new List<byte>(Header) { 0x49, 17 };
+        foreach (var s in new[] { "Fake Server", "de_inferno", "cstrike", "Counter-Strike" })
+        {
+            b.AddRange(Encoding.UTF8.GetBytes(s));
+            b.Add(0);
+        }
+        b.AddRange(BitConverter.GetBytes((short)240));
+        b.AddRange([3, 24, 1]); // players, max, bots
+        return [.. b];
+    }
+
+    private static byte[] PlayerResponse()
+    {
+        var b = new List<byte>(Header) { 0x44, 1, 0 };
+        b.AddRange(Encoding.UTF8.GetBytes("Alice"));
+        b.Add(0);
+        b.AddRange(BitConverter.GetBytes(42));
+        b.AddRange(BitConverter.GetBytes(120.5f));
+        return [.. b];
+    }
+
+    private static byte[] Challenge(int value) => [.. Header, 0x41, .. BitConverter.GetBytes(value)];
+
+    /// <summary>Starts a loopback UDP server that answers each request with <paramref name="reply"/> (null = stay silent).</summary>
+    private static (System.Net.Sockets.UdpClient Server, ushort Port) FakeServer(Func<byte[], byte[]?> reply)
+    {
+        var server = new System.Net.Sockets.UdpClient(new System.Net.IPEndPoint(System.Net.IPAddress.Loopback, 0));
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                while (true)
+                {
+                    var req = await server.ReceiveAsync();
+                    var answer = reply(req.Buffer);
+                    if (answer is not null)
+                        await server.SendAsync(answer, answer.Length, req.RemoteEndPoint);
+                }
+            }
+            catch (ObjectDisposedException) { }
+            catch (System.Net.Sockets.SocketException) { }
+        });
+        return (server, (ushort)((System.Net.IPEndPoint)server.Client.LocalEndPoint!).Port);
+    }
+
+    private static byte[]? A2S(byte[] req, bool infoChallenge) => req[4] switch
+    {
+        0x54 when infoChallenge && req.Length == 25 => Challenge(0x1234), // first A2S_INFO, no challenge yet
+        0x54 => InfoResponse(),
+        0x55 when BitConverter.ToInt32(req, 5) == -1 => Challenge(0x5678),
+        0x55 => PlayerResponse(),
+        _ => null,
+    };
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Query_returns_info_players_and_duration(bool infoChallenge)
+    {
+        var (server, port) = FakeServer(req => A2S(req, infoChallenge));
+        using var _ = server;
+
+        var r = await ValveUdpQuery.QueryAsync("127.0.0.1", port, timeoutMs: 2000);
+
+        Assert.True(r.IsSuccess, r.IsFailure ? r.Error!.ToString() : null);
+        Assert.Equal("Fake Server", r.Value!.Info.Hostname);
+        Assert.Equal("de_inferno", r.Value.Info.Map);
+        Assert.Equal(24, r.Value.Info.MaxPlayers);
+        var player = Assert.Single(r.Value.Players);
+        Assert.Equal("Alice", player.Name);
+        Assert.Equal(42, player.Score);
+        Assert.True(r.Value.DurationMs >= 0);
+    }
+
+    [Fact]
+    public async Task Query_without_players_skips_the_player_round_trip()
+    {
+        var seen = new List<byte>();
+        var (server, port) = FakeServer(req => { lock (seen) seen.Add(req[4]); return A2S(req, false); });
+        using var _ = server;
+
+        var r = await ValveUdpQuery.QueryAsync("127.0.0.1", port, includePlayers: false, timeoutMs: 2000);
+
+        Assert.True(r.IsSuccess);
+        Assert.Empty(r.Value!.Players);
+        lock (seen) Assert.DoesNotContain((byte)0x55, seen);
+    }
+
+    [Fact]
+    public async Task Silent_server_is_a_timeout_error()
+    {
+        var (server, port) = FakeServer(_ => null);
+        using var _ = server;
+
+        var r = await ValveUdpQuery.QueryAsync("127.0.0.1", port, timeoutMs: 200);
+
+        Assert.IsType<CodeLogic.Core.Results.TimeoutError>(r.Error);
+        Assert.Equal("gamenetquery.timeout", r.Error!.Code);
+    }
+
+    [Fact]
+    public async Task Garbage_answer_is_a_malformed_response()
+    {
+        var (server, port) = FakeServer(_ => Encoding.ASCII.GetBytes("hello, not a2s"));
+        using var _ = server;
+
+        var r = await ValveUdpQuery.QueryAsync("127.0.0.1", port, timeoutMs: 2000);
+
+        Assert.IsType<CodeLogic.Core.Results.InternalError>(r.Error);
+        Assert.Equal("gamenetquery.malformed_response", r.Error!.Code);
+    }
+
+    [Theory]
+    [InlineData("not-an-ip", 1000, "gamenetquery.invalid_address")]
+    [InlineData("127.0.0.1", 0, "gamenetquery.invalid_timeout")]
+    public async Task Bad_input_is_a_validation_error(string ip, int timeoutMs, string code)
+    {
+        var r = await ValveUdpQuery.QueryAsync(ip, 27015, timeoutMs: timeoutMs);
+        Assert.IsType<CodeLogic.Core.Results.ValidationError>(r.Error);
+        Assert.Equal(code, r.Error!.Code);
+    }
+
+    [Fact]
+    public async Task Closed_port_is_unavailable_or_timeout()
+    {
+        // Grab a free port, then close it. Windows reports ICMP port-unreachable as a socket
+        // error (UnavailableError); other platforms just never answer (TimeoutError).
+        var (server, port) = FakeServer(_ => null);
+        server.Dispose();
+
+        var r = await ValveUdpQuery.QueryAsync("127.0.0.1", port, timeoutMs: 300);
+
+        Assert.True(r.Error is CodeLogic.Core.Results.UnavailableError or CodeLogic.Core.Results.TimeoutError,
+            r.Error?.ToString());
+    }
+
+    [Fact]
+    public async Task Legacy_helpers_still_return_null_and_empty_on_failure()
+    {
+        var (server, port) = FakeServer(_ => null);
+        using var _ = server;
+        Assert.Null(await ValveUdpQuery.GetServerInfoAsync("127.0.0.1", port, 200));
+        Assert.Empty(await ValveUdpQuery.GetPlayerListAsync("127.0.0.1", port, 200));
+    }
+}
