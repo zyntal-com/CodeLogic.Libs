@@ -100,8 +100,11 @@ public class GeoIpConfig
         RequiresRestart = true, Group = "GeoIP", Order = 21)]
     public string DatabasePath { get; set; } = string.Empty;
 
-    /// <summary>Whether to automatically download/update the database on startup.</summary>
-    [ConfigField(Label = "Auto Update", Description = "Download latest GeoIP database on startup.",
+    /// <summary>
+    /// Refresh the database on startup when credentials are set. A missing database is downloaded regardless; a failed
+    /// refresh keeps the existing one.
+    /// </summary>
+    [ConfigField(Label = "Auto Update", Description = "Refresh the GeoIP database on startup (a missing database is always downloaded).",
         Group = "GeoIP", Order = 22)]
     public bool AutoUpdate { get; set; } = false;
 

@@ -278,6 +278,41 @@ public sealed class GeoIpDownloadTests : IDisposable
         Assert.Equal([Path.Combine(_dir, "geoip")], Directory.GetFileSystemEntries(_dir));
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task AutoUpdate_refreshes_an_existing_database_on_startup_only_when_enabled(bool autoUpdate)
+    {
+        var archive = TarGz(("GeoLite2-City_20261031/GeoLite2-City.mmdb", FakeMmdb("v2")));
+        var handler = new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(archive) });
+        var config = Config();
+        config.AutoUpdate = autoUpdate;
+        using var service = new GeoIpService(config, null, _dir, handler);
+        Directory.CreateDirectory(Path.GetDirectoryName(service.DatabasePath)!);
+        await File.WriteAllBytesAsync(service.DatabasePath, FakeMmdb("v1"));
+
+        await service.EnsureDatabaseAsync();
+
+        Assert.Equal(autoUpdate ? 1 : 0, handler.Requests.Count);
+        Assert.Equal(FakeMmdb(autoUpdate ? "v2" : "v1"), await File.ReadAllBytesAsync(service.DatabasePath));
+    }
+
+    [Fact]
+    public async Task A_failed_auto_update_keeps_the_existing_database()
+    {
+        var handler = new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.InternalServerError));
+        var config = Config();
+        config.AutoUpdate = true;
+        using var service = new GeoIpService(config, null, _dir, handler);
+        Directory.CreateDirectory(Path.GetDirectoryName(service.DatabasePath)!);
+        await File.WriteAllBytesAsync(service.DatabasePath, FakeMmdb("v1"));
+
+        await service.EnsureDatabaseAsync();                               // no exception: startup continues
+
+        Assert.Single(handler.Requests);
+        Assert.Equal(FakeMmdb("v1"), await File.ReadAllBytesAsync(service.DatabasePath));
+    }
+
     [Fact]
     public async Task Invalid_archive_leaves_the_existing_database_untouched()
     {

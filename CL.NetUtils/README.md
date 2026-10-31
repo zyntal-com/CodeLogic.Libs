@@ -95,7 +95,7 @@ Auto-generated on first run as `config.netutils.json` (section `netutils`). Keys
 | `Dnsbl.DetailedLogging` | `false` | Log each zone query. |
 | `GeoIp.Enabled` | `true` | Enable the GeoIP service. |
 | `GeoIp.DatabasePath` | `""` | Explicit `.mmdb` path; blank auto-resolves to `{dataDir}/geoip/{DatabaseType}.mmdb`. |
-| `GeoIp.AutoUpdate` | `false` | Download/refresh the database on startup. |
+| `GeoIp.AutoUpdate` | `false` | Refresh the database on startup when credentials are set (a missing database is always downloaded; a failed refresh keeps the old one). |
 | `GeoIp.AccountId` | `0` | MaxMind account id (required for download). |
 | `GeoIp.LicenseKey` | `""` | MaxMind license key (secret; required for download). |
 | `GeoIp.DownloadUrl` | MaxMind GeoLite2-City | Download endpoint (`tar.gz` or `zip`). Must be `https` on a host in `TrustedDownloadHosts`, because the credentials are sent to it. |

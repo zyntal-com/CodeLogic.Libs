@@ -56,8 +56,37 @@ public class GeoIpService : IDisposable
     public bool CanDownload => _config.AccountId != 0 && !string.IsNullOrWhiteSpace(_config.LicenseKey);
 
     /// <summary>
-    /// Ensures the database file exists (downloading it when needed and permitted),
-    /// then opens the <see cref="DatabaseReader"/>.
+    /// Makes sure a database file is in place: downloads it when missing, and refreshes it when
+    /// <see cref="GeoIpConfig.AutoUpdate"/> is on and credentials are set. A failed refresh keeps the existing
+    /// database (it is only replaced by a verified download); a missing database that cannot be obtained throws.
+    /// </summary>
+    internal async Task EnsureDatabaseAsync(CancellationToken cancellationToken = default)
+    {
+        if (!File.Exists(_databasePath))
+        {
+            _logger?.Info("GeoIP database not found, downloading...");
+            await DownloadDatabaseAsync(cancellationToken).ConfigureAwait(false);
+        }
+        else if (_config.AutoUpdate && CanDownload)
+        {
+            _logger?.Info("GeoIP auto-update: refreshing the database...");
+            try
+            {
+                await DownloadDatabaseAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger?.Warning($"GeoIP auto-update failed; keeping the existing database: {ex.Message}");
+            }
+        }
+
+        if (!File.Exists(_databasePath))
+            throw new InvalidOperationException($"Failed to obtain GeoIP database at {_databasePath}");
+    }
+
+    /// <summary>
+    /// Ensures the database file exists (downloading it when missing, refreshing it when
+    /// <see cref="GeoIpConfig.AutoUpdate"/> is on), then opens the <see cref="DatabaseReader"/>.
     /// </summary>
     /// <param name="cancellationToken">Optional cancellation token.</param>
     /// <exception cref="InvalidOperationException">
@@ -65,14 +94,7 @@ public class GeoIpService : IDisposable
     /// </exception>
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
-        if (!File.Exists(_databasePath))
-        {
-            _logger?.Info("GeoIP database not found, downloading...");
-            await DownloadDatabaseAsync(cancellationToken).ConfigureAwait(false);
-        }
-
-        if (!File.Exists(_databasePath))
-            throw new InvalidOperationException($"Failed to obtain GeoIP database at {_databasePath}");
+        await EnsureDatabaseAsync(cancellationToken).ConfigureAwait(false);
 
         lock (_lock)
         {

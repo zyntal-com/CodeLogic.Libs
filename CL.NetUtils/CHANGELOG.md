@@ -32,6 +32,7 @@ All notable changes to **CodeLogic.NetUtils** are documented here. Versions foll
 
 ### Fixed
 
+- **`GeoIp.AutoUpdate` now works:** before, nothing read it. On startup it refreshes an existing database when credentials are set; a failed refresh is logged and the existing database stays in use. A missing database is downloaded regardless.
 - **`Dnsbl.ParallelQueries` is honoured.** Zones were always queried one at a time. Now the zones of a
   list are queried concurrently by default, and with `ParallelQueries = false` one at a time, stopping at
   the first listing. DNS lookups use the asynchronous resolver, so the per-zone timeout is enforced.

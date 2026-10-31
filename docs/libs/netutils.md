@@ -154,7 +154,7 @@ On startup the library calls `GeoIpService.InitializeAsync`, which loads (or dow
 - `GeoIp.DatabasePath` if set, otherwise
 - `{dataDir}/geoip/{DatabaseType}.mmdb` (default `GeoLite2-City.mmdb`).
 
-When `GeoIp.AutoUpdate` is `true`, `DownloadDatabaseAsync` runs during initialization. It is a **no-op** if `AccountId` is `0` or `LicenseKey` is empty. Otherwise it downloads the archive from `DownloadUrl` using HTTP Basic Auth (`AccountId` : `LicenseKey`) and installs the `.mmdb` at the resolved path.
+During initialization a missing database is always downloaded. When `GeoIp.AutoUpdate` is `true`, an existing database is also refreshed; a failed refresh is logged and the existing database stays in use. Downloads are a **no-op** if `AccountId` is `0` or `LicenseKey` is empty. Otherwise it downloads the archive from `DownloadUrl` using HTTP Basic Auth (`AccountId` : `LicenseKey`) and installs the `.mmdb` at the resolved path.
 
 - **Trusted URL only.** The credentials go to `DownloadUrl`, so it must be an `https` URL whose host is listed in `TrustedDownloadHosts` (default: `download.maxmind.com` only). Anything else is refused before a request is sent, and also fails configuration validation. Add a host only for a mirror you trust with the license key.
 - **Selective, atomic install.** The archive (`tar.gz` or `zip`) is unpacked in a private temporary directory next to the database. Only the `.mmdb` entry (preferring `{DatabaseType}.mmdb`) is extracted, by content only, so licence files and entry paths never reach the data directory. The file must carry the MaxMind metadata marker; then it replaces the database in one rename, and an open reader is switched to it. A failed or invalid download leaves the existing database untouched.
@@ -240,7 +240,7 @@ The library writes `config.netutils.json` (section `netutils`) with defaults on 
 | `Dnsbl.DetailedLogging` | `bool` | `false` | Log each individual zone query. |
 | `GeoIp.Enabled` | `bool` | `true` | Enable the GeoIP service. |
 | `GeoIp.DatabasePath` | `string` | `""` | Explicit `.mmdb` path; blank auto-resolves to `{dataDir}/geoip/{DatabaseType}.mmdb`. |
-| `GeoIp.AutoUpdate` | `bool` | `false` | Download/refresh the database on startup. |
+| `GeoIp.AutoUpdate` | `bool` | `false` | Refresh the database on startup when credentials are set (a missing database is always downloaded; a failed refresh keeps the old one). |
 | `GeoIp.AccountId` | `int` | `0` | MaxMind account id; required for download. |
 | `GeoIp.LicenseKey` | `string` | `""` | MaxMind license key (secret); required for download. |
 | `GeoIp.DownloadUrl` | `string` | MaxMind GeoLite2-City | Download endpoint returning a `tar.gz` or `zip`. Must be `https` on a host in `TrustedDownloadHosts`. |
