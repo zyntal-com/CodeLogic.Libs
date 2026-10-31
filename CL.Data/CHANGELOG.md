@@ -339,3 +339,6 @@
   - **Now honored:** `CacheEnabled` per connection (opts out of the shared cache, or opts in when the cache is off for everyone else), `CreateDatabaseIfMissing` (at startup and on reload), and `data.cache.PublishEvents` (`CacheHitEvent` / `CacheMissEvent`).
   - **Parameter limit:** queries over the provider's parameter limit fail with `data.parameter_limit` before they are sent.
   - **Removed** (they never did anything): `MaxInClauseValues` and `data.cache.TimeQuantizeSeconds`.
+- **Documentation (WP-B1):** eight pages under `docs/libs/data/`: overview, providers, queries and writes, caching, replicas and resilience, schema and migrations, telemetry, and performance.
+  - Added the docfx table of contents and index cards, plus real READMEs for the core and each provider.
+  - The docs build passes with 0 warnings. The generator's analyzer-release files are no longer included twice.

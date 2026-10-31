@@ -1,6 +1,16 @@
 # CodeLogic.Data.SqlServer
 
-> **Status: in development (5.0 preview).**
+> **Status: 5.0 preview.**
 
-The SqlServer provider for [CodeLogic.Data](../CL.Data/README.md). Install it next to CodeLogic.Data and set
-"Provider": "sqlserver" on a connection in the data configuration section.
+The SQL Server and Azure SQL provider for [CodeLogic.Data](../CL.Data/README.md), built on Microsoft.Data.SqlClient.
+
+```bash
+dotnet add package CodeLogic.Data.SqlServer
+```
+
+- **With the CodeLogic runtime:** load `SqlServerDataLibrary` next to `DataLibrary`, and set `"provider": "sqlserver"` on a connection in `config.data.json`.
+- **Without it:** pass `SqlServerDataProvider.Instance` to `Database.Create`.
+
+SQL, integrated and Entra ID authentication; bulk copy uses `SqlBulkCopy`; JSON columns get an `ISJSON` check; replicas use `ApplicationIntent=ReadOnly` and report lag from `sys.dm_hadr_database_replica_states`; `multiSubnetFailover` and `failoverPartner` for failover. Extras: `db.SqlServer.UpdateStatisticsAsync<T>()`.
+
+Documentation: [Providers](../docs/libs/data/providers.md).

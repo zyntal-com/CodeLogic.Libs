@@ -22,7 +22,7 @@
 | Package | Version | Description |
 |---------|---------|-------------|
 | [CodeLogic.Common](CL.Common/) | [![NuGet](https://img.shields.io/nuget/v/CodeLogic.Common?label=)](https://www.nuget.org/packages/CodeLogic.Common) | Utility toolkit — encryption, hashing, ID/password generation, JSON, cron, networking |
-| [CodeLogic.Data](CL.Data/) | [![NuGet](https://img.shields.io/nuget/v/CodeLogic.Data?label=)](https://www.nuget.org/packages/CodeLogic.Data) | Database framework (preview): typed LINQ queries, repositories, upserts, joins, grouping, cursor paging, transactions, batches; providers `CodeLogic.Data.MySql`, `CodeLogic.Data.PostgreSql`, `CodeLogic.Data.SqlServer` and `CodeLogic.Data.Sqlite` |
+| [CodeLogic.Data](CL.Data/) | [![NuGet](https://img.shields.io/nuget/v/CodeLogic.Data?label=)](https://www.nuget.org/packages/CodeLogic.Data) | Database framework (preview): typed LINQ, repositories, joins, schema sync and migrations, unified caching, read replicas, resilience, OpenTelemetry, bulk copy; providers `CodeLogic.Data.MySql`, `CodeLogic.Data.PostgreSql`, `CodeLogic.Data.SqlServer` and `CodeLogic.Data.Sqlite` |
 | [CodeLogic.Mail](CL.Mail/) | [![NuGet](https://img.shields.io/nuget/v/CodeLogic.Mail?label=)](https://www.nuget.org/packages/CodeLogic.Mail) | SMTP send, IMAP read + IDLE, and a lightweight template engine |
 | [CodeLogic.Storage](CL.Storage/) | [![NuGet](https://img.shields.io/nuget/v/CodeLogic.Storage?label=)](https://www.nuget.org/packages/CodeLogic.Storage) | Safe mounted local, S3, FTP/SFTP, WebDAV, Azure, GCS, and Swift storage, with verified and resumable transfers, a durable transfer queue, three-way sync, and change watching |
 | [CodeLogic.Imaging](CL.Imaging/) | [![NuGet](https://img.shields.io/nuget/v/CodeLogic.Imaging?label=)](https://www.nuget.org/packages/CodeLogic.Imaging) | Safe image loading, fluent editing pipeline (resize, crop, smart crop, colour, filters, watermarks, text), EXIF metadata, palettes, BlurHash, perceptual hashes, responsive variants |
@@ -95,8 +95,9 @@ var users = await db.Query<UserRecord>()
     .ToPagedListAsync(page: 1, pageSize: 20);
 ```
 
-CL.Data also works without the CodeLogic runtime, as above; its CodeLogic library (with configuration
-files and health checks) arrives with the 5.0 previews.
+CL.Data also works without the CodeLogic runtime, as above. With the runtime, load `CL.Data.Hosting.DataLibrary` and a
+provider library; connections then come from `config.data.json`, with live reload and health checks
+([docs](docs/libs/data/index.md)).
 
 ## How libraries work
 

@@ -6,6 +6,11 @@ your application or from other libraries after `StartAsync()`.
 
 <div class="cl-group">Databases</div>
 <div class="lib-grid">
+  <a class="lib-card" href="data/index.md">
+    <div class="lib-name">CL.Data</div>
+    <div class="lib-pkg">CodeLogic.Data · .MySql · .PostgreSql · .SqlServer · .Sqlite</div>
+    <p class="lib-desc">One database framework for MySQL, PostgreSQL, SQL Server and SQLite: typed LINQ, repositories, joins, schema sync and migrations, unified caching, read replicas, resilience, OpenTelemetry and bulk copy.</p>
+  </a>
 </div>
 
 <div class="cl-group">Communication</div>

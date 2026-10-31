@@ -2,6 +2,24 @@
   href: index.md
 
 - name: Databases
+- name: CL.Data
+  items:
+    - name: Overview
+      href: data/index.md
+    - name: Providers
+      href: data/providers.md
+    - name: Queries & Writes
+      href: data/queries.md
+    - name: Caching
+      href: data/caching.md
+    - name: Replicas & Resilience
+      href: data/replicas.md
+    - name: Schema & Migrations
+      href: data/schema-migrations.md
+    - name: Telemetry
+      href: data/telemetry.md
+    - name: Performance
+      href: data/performance.md
 
 - name: Communication
 - name: CL.Mail
