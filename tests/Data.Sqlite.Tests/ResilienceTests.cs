@@ -12,82 +12,16 @@ namespace Data.Sqlite.Tests;
 /// <summary>Retries and the circuit breaker, driven by a SQLite provider with injected faults.</summary>
 public sealed class ResilienceTests : IAsyncLifetime
 {
-    /// <summary>A failure the faulty classifier reports as transient.</summary>
-    private sealed class FaultException(string message) : DbException(message);
-
-    /// <summary>The real SQLite data source, failing the next <see cref="OpenFaults"/> connection opens.</summary>
-    private sealed class FaultySource(DbDataSource inner) : DbDataSource
-    {
-        public int OpenFaults;
-        public int Opens;
-
-        public override string ConnectionString => inner.ConnectionString;
-        protected override DbConnection CreateDbConnection() => inner.CreateConnection();
-
-        protected override async ValueTask<DbConnection> OpenDbConnectionAsync(CancellationToken cancellationToken = default)
-        {
-            Interlocked.Increment(ref Opens);
-            if (Interlocked.Decrement(ref OpenFaults) >= 0) throw new FaultException("cl_fault_open: server unreachable");
-            return await inner.OpenConnectionAsync(cancellationToken);
-        }
-
-        protected override void Dispose(bool disposing)
-        {
-            if (disposing) inner.Dispose();
-            base.Dispose(disposing);
-        }
-    }
-
-    /// <summary>SQLite's classifier plus the injected faults: unreachable (open), deadlock and an unknown transient error.</summary>
-    private sealed class FaultyClassifier : IErrorClassifier
-    {
-        public ErrorClassification Classify(Exception exception)
-        {
-            var message = exception.Message;
-            if (message.Contains("cl_fault_open", StringComparison.Ordinal))
-                return new(DataErrors.Unavailable("unreachable", message), true);
-            if (message.Contains("cl_fault_deadlock", StringComparison.Ordinal))
-                return new(DataErrors.Deadlock(message), true);
-            if (message.Contains("cl_fault_transient", StringComparison.Ordinal))
-                return new(DataErrors.ProviderError("connection reset", message), true);
-            return SqliteDataProvider.Instance.Errors.Classify(exception);
-        }
-    }
-
-    private sealed class FaultyProvider : DataProvider
-    {
-        private static readonly SqliteDataProvider Inner = SqliteDataProvider.Instance;
-        public FaultySource? Source;
-
-        public override string Name => "sqlite";
-        public override ProviderCapabilities Capabilities => Inner.Capabilities;
-        public override SqlDialect Dialect => Inner.Dialect;
-        public override ITypeMapper Types => Inner.Types;
-        public override IErrorClassifier Errors { get; } = new FaultyClassifier();
-        public override CL.Data.Schema.DdlGenerator Ddl => Inner.Ddl;
-        public override CL.Data.Schema.SchemaIntrospector? Introspector => Inner.Introspector;
-        public override object? ReadLastInsertId(DbCommand command) => Inner.ReadLastInsertId(command);
-        public override Result<string> BuildConnectionString(DataConnectionConfig config, NodeEndpoint node) => Inner.BuildConnectionString(config, node);
-
-        public override DbDataSource CreateDataSource(DataConnectionConfig config, NodeEndpoint node, string connectionString) =>
-            Source = new FaultySource(Inner.CreateDataSource(config, node, connectionString));
-    }
-
-    private sealed class Clock : TimeProvider
-    {
-        public DateTimeOffset Now { get; set; } = new(2026, 10, 31, 12, 0, 0, TimeSpan.Zero);
-        public override DateTimeOffset GetUtcNow() => Now;
-    }
-
     private readonly string _file = Path.Combine(Path.GetTempPath(), $"cl-data-res-{Guid.NewGuid():N}.db");
     private readonly List<Database> _created = [];
 
-    private (Database Db, FaultySource Source) Create(int retries = 2, int breakerThreshold = 0, Clock? clock = null)
+    private (Database Db, FaultySource Source) Create(int retries = 2, int breakerThreshold = 0, ManualClock? clock = null)
     {
         var provider = new FaultyProvider();
         var db = Database.Create("res", provider, new DataConnectionConfig
         {
-            Provider = "sqlite",
+            Provider = "faulty",
+            Host = "localhost",
             Database = _file,
             RetryCount = retries,
             RetryBaseDelayMs = 0,
@@ -95,7 +29,7 @@ public sealed class ResilienceTests : IAsyncLifetime
             CircuitBreakSeconds = 30,
         }, new DatabaseOptions { Time = clock ?? (TimeProvider)TimeProvider.System }).ValueOrThrow();
         _created.Add(db);
-        return (db, provider.Source!);
+        return (db, provider.Source);
     }
 
     public async Task InitializeAsync()
@@ -184,7 +118,7 @@ public sealed class ResilienceTests : IAsyncLifetime
     [Fact]
     public async Task The_breaker_opens_after_node_failures_and_recovers_after_the_break()
     {
-        var clock = new Clock();
+        var clock = new ManualClock();
         var (db, source) = Create(retries: 0, breakerThreshold: 2, clock: clock);
         source.OpenFaults = int.MaxValue;
         Assert.Equal(DataErrors.UnavailableCode, (await Insert(db, "x")).Error!.Code);

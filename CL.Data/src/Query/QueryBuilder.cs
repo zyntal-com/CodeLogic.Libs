@@ -101,6 +101,9 @@ public sealed class QueryBuilder<T>
     /// <summary>Also returns soft-deleted rows.</summary>
     public QueryBuilder<T> IncludeDeleted() => With(_state with { IncludeDeleted = true });
 
+    /// <summary>Routes this query's reads by <paramref name="preference"/> (for example <c>ReadPreference.Primary</c> for fresh data).</summary>
+    public QueryBuilder<T> ReadFrom(CL.Data.Routing.ReadPreference preference) => new(_db.ReadFrom(preference), _state);
+
     /// <summary>
     /// Serves this query from the result cache (<c>DatabaseOptions.Cache</c>) when possible. Writes through CL.Data to any
     /// table the query reads drop the cached result. Projections, groups and joins built from this query are cached too.

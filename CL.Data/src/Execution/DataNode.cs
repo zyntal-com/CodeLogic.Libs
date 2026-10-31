@@ -30,6 +30,12 @@ public sealed class DataNode : IAsyncDisposable
     /// </summary>
     public CL.Common.Resilience.CircuitBreaker? Breaker { get; internal set; }
 
+    /// <summary>
+    /// Replication lag in milliseconds (replicas); null when unknown. Set by the replica probe; hosts with their own
+    /// monitoring may set it too. Routing skips replicas lagging more than <c>MaxReplicaLagMs</c>.
+    /// </summary>
+    public long? LagMs { get; set; }
+
     /// <summary>True unless the node's circuit is open.</summary>
     public bool IsHealthy => Breaker is null || Breaker.State != CL.Common.Resilience.CircuitState.Open;
 

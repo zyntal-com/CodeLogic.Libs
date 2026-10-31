@@ -63,6 +63,8 @@ public sealed partial class Database : IAsyncDisposable
         List<ICommandMiddleware> middleware = [];
         if (options.Interceptors.Count > 0) middleware.Add(new InterceptorMiddleware(options.Interceptors));
         middleware.AddRange(options.Middleware);
+        _routing = new CL.Data.Routing.RoutingState();
+        if (replicas.Count > 0) middleware.Add(new CL.Data.Routing.RoutingMiddleware(_routing, options.Time));
         if (Resilience(config, options.Time) is { } resilience) middleware.Add(resilience);
         _pipeline = new CommandPipeline(middleware);
         if (config.CircuitBreakerThreshold > 0)
@@ -99,6 +101,8 @@ public sealed partial class Database : IAsyncDisposable
         Replicas = parent.Replicas;
         _executor = parent._executor;
         _pipeline = parent._pipeline;
+        _routing = parent._routing;
+        _readFrom = parent._readFrom;
         _transaction = transaction;
     }
 
@@ -118,11 +122,28 @@ public sealed partial class Database : IAsyncDisposable
         Replicas = parent.Replicas;
         _executor = parent._executor;
         _pipeline = parent._pipeline;
+        _routing = parent._routing;
+        _readFrom = parent._readFrom;
         _transaction = parent._transaction;
         _isView = true;
     }
 
+    /// <summary>A view of <paramref name="parent"/> whose reads use <paramref name="preference"/>.</summary>
+    private Database(Database parent, CL.Data.Routing.ReadPreference preference) : this(parent, parent.Options) => _readFrom = preference;
+
     private readonly bool _isView;
+    private readonly CL.Data.Routing.RoutingState _routing;
+    private readonly CL.Data.Routing.ReadPreference? _readFrom;
+
+    /// <summary>
+    /// This database with reads routed by <paramref name="preference"/> instead of the connection's <c>ReadPreference</c>
+    /// (for example <c>db.ReadFrom(ReadPreference.Primary)</c> for reads that must see the latest data). A cheap view that
+    /// shares the connection pools; writes and transactions always use the primary.
+    /// </summary>
+    public Database ReadFrom(CL.Data.Routing.ReadPreference preference) => new(this, preference);
+
+    /// <summary>The read preference set by <see cref="ReadFrom"/>, or null for the connection setting.</summary>
+    public CL.Data.Routing.ReadPreference? ReadPreferenceOverride => _readFrom;
 
     /// <summary>
     /// This database scoped to <paramref name="tenant"/>: <c>[TenantKey]</c> entities are filtered and stamped with it. A cheap

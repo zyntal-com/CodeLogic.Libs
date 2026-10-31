@@ -280,3 +280,9 @@
   - **Transactions:** nothing retries inside a user transaction.
   - **Errors:** after the last attempt the original `data.*` error is returned unchanged.
   - **Circuit breaker:** each node (`DataNode.Breaker`, `IsHealthy`) has one, and it counts only node failures (unreachable, connection lost). While it is open, commands fail fast with `data.circuit_open` until a trial call succeeds.
+- **Read routing (WP-91):** on connections with replicas, reads go to a healthy replica, chosen at random by weight.
+  - **Skipped replicas:** those whose circuit is open, and those lagging beyond `MaxReplicaLagMs` (`DataNode.LagMs`).
+  - **Always the primary:** writes and transactions.
+  - **Read preference:** set per connection (`ReadPreference`), per view (`db.ReadFrom(preference)`) or per query (`QueryBuilder.ReadFrom`).
+  - **Reads-your-writes:** for `StickyAfterWriteMs` after a write, reads stay on the primary.
+  - **No usable replica:** `PreferReplica` falls back to the primary and `ReplicaOnly` fails with `data.no_healthy_node`. A read whose replica turns out to be down runs again on the primary.
