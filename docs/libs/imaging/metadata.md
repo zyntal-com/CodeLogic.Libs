@@ -44,7 +44,8 @@ Encoding writes only pixels unless asked otherwise:
 
 - **EXIF** is dropped when `ImagingSettings.StripMetadata` is true (the default). `ImageEncodeOptions.KeepMetadata =
   true` writes the source EXIF back as JPEG APP1, PNG `eXIf` or WebP `EXIF` (converting the WebP to the extended
-  format); after `AutoOrient()` its orientation tag is reset to 1. Other tags are not rewritten.
+  format); after `AutoOrient()` its orientation tag is reset to 1. Other tags are not rewritten. The GPS position is
+  kept too, unless `RemoveGps = true`, which zeroes the GPS values and empties the GPS IFD while keeping every other tag.
 - **ICC profile**: by default pixels are converted to sRGB and no profile is written. `KeepIccProfile = true` keeps
   the pixels in the source colour space and writes the original profile back byte for byte (JPEG APP2 chunks, PNG
   `iCCP`, WebP `ICCP`).

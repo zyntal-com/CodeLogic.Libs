@@ -83,6 +83,30 @@ internal sealed class ExifReader
     /// Returns false when the block has no orientation tag.
     /// </summary>
     public static bool TrySetOrientation(byte[] tiff, ImageOrientation orientation)
+        => TrySetOrientationCore(tiff, orientation);
+
+    /// <summary>
+    /// Removes the GPS position in place: every GPS IFD value is zeroed and the IFD is emptied (entry count 0), so no
+    /// coordinates remain in the block. Returns false when the block has no GPS IFD.
+    /// </summary>
+    public static bool TryRemoveGps(byte[] tiff)
+    {
+        var reader = Parse(tiff);
+        if (reader is null || !reader._ifd0.TryGetValue(0x8825, out var pointer) || reader.Uint(pointer) is not { } offset) return false;
+        var at = (int)offset;
+        if (at < 8 || at + 2 > tiff.Length) return false;
+        foreach (var entry in reader._gps.Values)
+        {
+            var length = (int)Math.Min(entry.Count * (uint)TypeSize(entry.Type), (uint)(tiff.Length - entry.ValueOffset));
+            Array.Clear(tiff, entry.ValueOffset, length);
+        }
+        var count = reader.U16(at);
+        var end = Math.Min(tiff.Length, at + 2 + count * 12);
+        Array.Clear(tiff, at, end - at);   // count 0 and no entries
+        return true;
+    }
+
+    private static bool TrySetOrientationCore(byte[] tiff, ImageOrientation orientation)
     {
         var reader = Parse(tiff);
         if (reader is null || !reader._ifd0.TryGetValue(TagOrientation, out var entry) || entry.Type != 3) return false;

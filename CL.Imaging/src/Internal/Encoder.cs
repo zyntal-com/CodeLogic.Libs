@@ -84,6 +84,7 @@ internal static class Encoder
             {
                 exifToWrite = (byte[])exif!.Clone();
                 if (resetOrientation) ExifReader.TrySetOrientation(exifToWrite, ImageOrientation.Normal);
+                if (options.RemoveGps) ExifReader.TryRemoveGps(exifToWrite);
             }
             using var withMetadata = new PooledMemoryStream(checked((int)output.Length + (exifToWrite?.Length ?? 0) + (writeIcc ? icc!.Length + 1024 : 0) + 64));
             MetadataWriter.Write(output.WrittenSpan, format, exifToWrite, writeIcc ? icc : null, !IsOpaque(source), withMetadata);

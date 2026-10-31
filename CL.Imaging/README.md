@@ -87,7 +87,7 @@ string dataUri = ImageTools.ToDataUri(doc, ImageFormat.Png).Value!;
   managed TIFF/EXIF reader for JPEG APP1, PNG `eXIf` and WebP `EXIF` chunks; malformed EXIF yields fewer fields, never
   a failure.
 - **Metadata on encode.** By default EXIF is dropped (`ImagingSettings.StripMetadata`). `KeepMetadata = true` writes
-  the original EXIF back (orientation reset to 1 after `AutoOrient`); `KeepIccProfile = true` writes the original ICC
+  the original EXIF back (orientation reset to 1 after `AutoOrient`), GPS included unless `RemoveGps = true`; `KeepIccProfile = true` writes the original ICC
   profile back byte for byte and keeps the pixels in that colour space. Without it, pixels are converted to sRGB.
 - **Analysis** (`CL.Imaging.Analysis`): `ImageAnalysis.AverageColor`, `DominantColor`, `Palette(n)` (median cut +
   k-means, deterministic), `HasAlpha`, `IsMostlyTransparent`; `BlurHash.Encode/Decode`; `PerceptualHash.DHash/PHash`
