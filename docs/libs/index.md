@@ -21,11 +21,6 @@ your application or from other libraries after `StartAsync()`.
     <div class="lib-pkg">CodeLogic.PostgreSQL</div>
     <p class="lib-desc">PostgreSQL — multi-database, repository + query builder, table sync, backups.</p>
   </a>
-  <a class="lib-card" href="sqlite/index.md">
-    <div class="lib-name">CL.SQLite</div>
-    <div class="lib-pkg">CodeLogic.SQLite</div>
-    <p class="lib-desc">SQLite — custom pool, WAL, repository + query builder, migration runner.</p>
-  </a>
 </div>
 
 <div class="cl-group">Communication</div>
@@ -152,9 +147,9 @@ var status = await mysql.HealthCheckAsync();
 
 ### The database libraries
 
-`CL.MySQL2`, `CL.MSSQL`, `CL.PostgreSQL`, and `CL.SQLite` share the same shape —
-`GetRepository<T>()` for CRUD and a fluent query builder (`Query<T>()` on MySQL2, MSSQL and
-PostgreSQL, `GetQueryBuilder<T>()` on SQLite) that translates LINQ-style expressions to SQL,
-plus attribute-driven table sync.
+`CL.MySQL2`, `CL.MSSQL` and `CL.PostgreSQL` share the same shape: `GetRepository<T>()` for CRUD and a
+fluent query builder (`Query<T>()`) that translates LINQ-style expressions to SQL, plus attribute-driven
+table sync. In CodeLogic 5 they are being replaced by **CL.Data** (`CodeLogic.Data` plus one provider
+package per database); SQLite is already served by `CodeLogic.Data.Sqlite`.
 
 See the [API Reference](../api/index.md) for the full generated type and member listing.

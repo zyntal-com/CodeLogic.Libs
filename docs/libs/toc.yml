@@ -34,12 +34,6 @@
       href: postgresql/schema-migrations.md
     - name: Performance & Caching
       href: postgresql/performance.md
-- name: CL.SQLite
-  items:
-    - name: Overview
-      href: sqlite/index.md
-    - name: Query Builder
-      href: sqlite/queries.md
 
 - name: Communication
 - name: CL.Mail

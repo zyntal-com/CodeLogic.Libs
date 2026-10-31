@@ -52,11 +52,6 @@ var mysql = Libraries.Get<CL.MySQL2.MySQL2Library>();
     <div class="lib-pkg">CodeLogic.PostgreSQL</div>
     <p class="lib-desc">PostgreSQL with multi-database support, the <code>Repository&lt;T&gt;</code> + query-builder pattern, table sync, and backups.</p>
   </a>
-  <a class="lib-card" href="libs/sqlite/index.md">
-    <div class="lib-name">CL.SQLite</div>
-    <div class="lib-pkg">CodeLogic.SQLite</div>
-    <p class="lib-desc">SQLite with a custom connection pool, WAL, repository + query builder, and a migration runner.</p>
-  </a>
 </div>
 
 <div class="cl-group">Communication</div>

@@ -12,7 +12,6 @@
             "CL.MSSQL/CL.MSSQL.csproj",
             "CL.NetUtils/CL.NetUtils.csproj",
             "CL.PostgreSQL/CL.PostgreSQL.csproj",
-            "CL.SQLite/CL.SQLite.csproj",
             "CL.SocialConnect/CL.SocialConnect.csproj",
             "CL.Storage/CL.Storage.csproj",
             "CL.SystemStats/CL.SystemStats.csproj",

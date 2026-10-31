@@ -14,7 +14,6 @@ on:
       - 'CL.MSSQL/**'
       - 'CL.NetUtils/**'
       - 'CL.PostgreSQL/**'
-      - 'CL.SQLite/**'
       - 'CL.SocialConnect/**'
       - 'CL.Storage/**'
       - 'CL.SystemStats/**'
@@ -61,7 +60,7 @@ jobs:
       - name: Build all projects (generates XML docs)
         shell: bash
         run: |
-          for proj in CL.Common CL.GameNetQuery CL.GitHelper CL.Imaging CL.Mail CL.MySQL2 CL.MSSQL CL.NetUtils CL.PostgreSQL CL.SQLite CL.SocialConnect CL.Storage CL.SystemStats CL.TwoFactorAuth; do
+          for proj in CL.Common CL.GameNetQuery CL.GitHelper CL.Imaging CL.Mail CL.MySQL2 CL.MSSQL CL.NetUtils CL.PostgreSQL CL.SocialConnect CL.Storage CL.SystemStats CL.TwoFactorAuth; do
             dotnet build $proj/$proj.csproj --configuration Release
           done
 
