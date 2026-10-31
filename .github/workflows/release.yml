@@ -218,9 +218,11 @@ jobs:
 
           # NuGet normalizes PackageReference ranges to use the restored version as
           # the lower bound. For libs to keep accepting older CodeLogic versions,
-          # rewrite each nupkg's .nuspec to use the literal range "[5.0.0-0, 6.0.0)".
-          # 5.0 is the floor: the libraries use the net11 union Result/Error API; "-0" admits 5.0 previews.
-          $targetRange = '[5.0.0-0, 6.0.0)'
+          # rewrite each nupkg's .nuspec to use the literal range "[5.0.0-preview, 6.0.0)".
+          # 5.0 is the floor: the libraries use the net11 union Result/Error API. The "-preview" floor admits every
+          # 5.0.N-preview (they sort above 5.0.0-preview) and every stable 5.x. nuget.org rejects a purely numeric
+          # prerelease label such as "5.0.0-0" (400 "invalid Version"), so never use one here.
+          $targetRange = '[5.0.0-preview, 6.0.0)'
           foreach ($nupkg in Get-ChildItem artifacts -Filter '*.nupkg') {
             $tmp = "$env:RUNNER_TEMP/nupkg-$([Guid]::NewGuid())"
             New-Item -ItemType Directory -Force -Path $tmp | Out-Null
@@ -286,6 +288,11 @@ jobs:
             notes=$(printf '%s' "$nuspec" | sed -n 's|.*<releaseNotes>\(.*\)</releaseNotes>.*|\1|p' | wc -c)
             if [ "$notes" -gt 35000 ]; then
               echo "::error::$(basename "$pkg"): releaseNotes is $notes chars, nuget.org caps at 35000"
+              fail=1
+            fi
+            # nuget.org rejects dependency versions with a purely numeric prerelease label (e.g. 5.0.0-0).
+            if printf '%s' "$nuspec" | grep -Eq 'version="[^"]*[0-9]-[0-9]+[],) "]'; then
+              echo "::error::$(basename "$pkg"): a dependency version has a numeric-only prerelease label, which nuget.org rejects"
               fail=1
             fi
             if ! printf '%s' "$nuspec" | grep -q '<id>'; then
