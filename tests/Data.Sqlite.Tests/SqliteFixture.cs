@@ -73,3 +73,6 @@ public sealed class SqliteJoinTests(SqliteFixture fixture) : JoinConformance(fix
 
 [Collection("sqlite")]
 public sealed class SqliteGroupingTests(SqliteFixture fixture) : GroupingConformance(fixture);
+
+[Collection("sqlite")]
+public sealed class SqliteTransactionTests(SqliteFixture fixture) : TransactionConformance(fixture);

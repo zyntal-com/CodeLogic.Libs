@@ -88,6 +88,15 @@ public sealed class QueryBuilder<T>
         return With(_state with { Subqueries = [.. _state.Subqueries, new SubqueryFilter(key, typeof(TInner), innerKey, innerFilter, true)], Correlated = true });
     }
 
+    /// <summary>
+    /// Locks the selected rows until the transaction ends (<c>FOR UPDATE</c>; table hints on SQL Server; SQLite
+    /// transactions already hold the write lock). Needs a transaction.
+    /// </summary>
+    public QueryBuilder<T> ForUpdate(LockWait wait = LockWait.Wait) => With(_state with { Lock = new LockClause(LockMode.Update, wait) });
+
+    /// <summary>Takes a shared lock on the selected rows until the transaction ends. Needs a transaction.</summary>
+    public QueryBuilder<T> ForShare(LockWait wait = LockWait.Wait) => With(_state with { Lock = new LockClause(LockMode.Share, wait) });
+
     /// <summary>Also returns soft-deleted rows.</summary>
     public QueryBuilder<T> IncludeDeleted() => With(_state with { IncludeDeleted = true });
 
@@ -442,15 +451,80 @@ public sealed class QueryBuilder<T>
         var accessor = EntityAccessorRegistry.Get<T>();
         if (accessor.IsFailure) return accessor.Error!;
         var map = accessor.Value!.Map;
-        if (setter.Body is not MemberInitExpression init || init.Bindings.Count == 0)
-            return DataErrors.TranslationFailed("UpdateAsync needs a member initializer: x => new T { Prop = value, ... }.", setter.ToString());
 
         var where = BuildWhere(map, alias: null);
         if (where.IsFailure) return where.Error!;
+        var set = BuildSet(map, setter);
+        if (set.IsFailure) return set.Error!;
+
+        var names = map.GetNames(_db.NamingPolicy);
+        var statement = new UpdateStatement(WritePlanner.TableOf(map, names, _db.WriteContext), set.Value!) { Where = where.Value };
+        var command = new WriteCommand(statement, WriteKind.Update, names.Table, 0, [DataTags.Table(names.Table)]);
+        return await _db.ExecuteWritesAsync([command], Array.Empty<T>(), accessor.Value!, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Locks the matching rows, updates them with <paramref name="setter"/> and returns them as updated, atomically. With
+    /// <c>Take</c>, <c>OrderBy</c> and <c>ForUpdate(LockWait.SkipLocked)</c> this claims work from a queue:
+    /// <c>q.Where(j =&gt; j.State == Pending).OrderBy(j =&gt; j.Id).Take(1).ForUpdate(LockWait.SkipLocked).UpdateAndGetAsync(j =&gt; new Job { State = Running })</c>.
+    /// Runs in the current transaction, or in its own.
+    /// </summary>
+    public async ValueTask<Result<List<T>>> UpdateAndGetAsync(Expression<Func<T, T>> setter, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(setter);
+        if (_db.Transaction is null)
+            return await _db.InTransactionAsync((tx, token) => new QueryBuilder<T>(tx.Db, _state).UpdateAndGetAsync(setter, token), ct: ct)
+                .ConfigureAwait(false);
+
+        var accessor = EntityAccessorRegistry.Get<T>();
+        if (accessor.IsFailure) return accessor.Error!;
+        var map = accessor.Value!.Map;
+        if (map.Key.IsEmpty) return DataErrors.NoPrimaryKey(map.ClrType.Name);
+        var set = BuildSet(map, setter);
+        if (set.IsFailure) return set.Error!;
+
+        // 1. Lock and read the keys of the rows to update.
+        var locked = With(_state with { Lock = _state.Lock ?? new LockClause(LockMode.Update) }).BuildSelect();
+        if (locked.IsFailure) return locked.Error!;
+        var (select, _, table) = locked.Value!;
+        var names = map.GetNames(_db.NamingPolicy);
+        var alias = select.From.Alias;
+        var keyColumns = map.Key.Columns;
+        var keys = await _db.QueryProjectedAsync(
+            select with { Projection = keyColumns.Select((c, i) => new ProjectionItem(new ColumnExpr(names.Of(c), alias), "k" + i)).ToArray() },
+            reader => EntityKey.Of(keyColumns.Select((c, i) => ValueConversion.FromDb(reader.GetValue(i), c.ValueType)).ToArray()),
+            table, [DataTags.Table(table)], ct).ConfigureAwait(false);
+        if (keys.IsFailure) return keys.Error!;
+        if (keys.Value!.Count == 0) return Result<List<T>>.Success([]);
+
+        // 2. Update exactly those rows; 3. return them (RETURNING, or a re-read on the same transaction).
+        SqlExpr byKeys = keyColumns.Count == 1
+            ? new InListExpr(new ColumnExpr(names.Of(keyColumns[0])),
+                keys.Value.Select(k => (SqlExpr)new ParameterExpr(SqlParameterValue.ForColumn(k[0], keyColumns[0]))).ToArray())
+            : keys.Value.Select(k => WritePlanner.KeyPredicate(map, names, k)).Aggregate((l, r) => new BinaryExpr(SqlBinaryOperator.Or, l, r));
+        var update = new UpdateStatement(WritePlanner.TableOf(map, names, _db.WriteContext), set.Value!) { Where = byKeys };
+
+        if (_db.Provider.Capabilities.Returning)
+            return await _db.QueryAsync(update with { Returning = map.Columns.Select(names.Of).ToArray() }, accessor.Value, table,
+                [DataTags.Table(table)], ct).ConfigureAwait(false);
+
+        var command = new WriteCommand(update, WriteKind.Update, names.Table, 0, [DataTags.Table(names.Table)]);
+        var updated = await _db.ExecuteWritesAsync([command], Array.Empty<T>(), accessor.Value!, ct).ConfigureAwait(false);
+        if (updated.IsFailure) return updated.Error!;
+        var reread = ReadPlanner.Select(_db, map, byKeys, includeDeleted: true);
+        if (reread.IsFailure) return reread.Error!;
+        return await _db.QueryAsync(reread.Value!, accessor.Value, table, [DataTags.Table(table)], ct).ConfigureAwait(false);
+    }
+
+    /// <summary>The SET list of a member-initializer setter, plus audit columns and the concurrency token.</summary>
+    private Result<List<SetItem>> BuildSet(EntityMap map, Expression<Func<T, T>> setter)
+    {
+        if (setter.Body is not MemberInitExpression init || init.Bindings.Count == 0)
+            return DataErrors.TranslationFailed("The setter must be a member initializer: x => new T { Prop = value, ... }.", setter.ToString());
 
         var ctx = _db.WriteContext;
         var names = map.GetNames(ctx.Policy);
-        var scope = Scope(map, setter.Parameters[0], alias: null);
+        var scope = new TranslationScope(_db.Provider.Dialect, _db.NamingPolicy).Bind(setter.Parameters[0], map, null);
         List<SetItem> set = [];
         foreach (var binding in init.Bindings)
         {
@@ -470,10 +544,7 @@ public sealed class QueryBuilder<T>
             set.Add(new SetItem(names.Of(updatedBy), new ParameterExpr(SqlParameterValue.ForColumn(ctx.User, updatedBy))));
         if (map.ConcurrencyToken is { } token && token.ValueType != typeof(byte[]) && set.All(s => s.Column != names.Of(token)))
             set.Add(new SetItem(names.Of(token), new BinaryExpr(SqlBinaryOperator.Add, new ColumnExpr(names.Of(token)), new LiteralExpr(1))));
-
-        var statement = new UpdateStatement(WritePlanner.TableOf(map, names, ctx), set) { Where = where.Value };
-        var command = new WriteCommand(statement, WriteKind.Update, names.Table, 0, [DataTags.Table(names.Table)]);
-        return await _db.ExecuteWritesAsync([command], Array.Empty<T>(), accessor.Value!, ct).ConfigureAwait(false);
+        return set;
     }
 
     // ── Planning ────────────────────────────────────────────────────────────
@@ -521,6 +592,15 @@ public sealed class QueryBuilder<T>
                 order.Add(new OrderItem(key.Value!, sort.Descending));
             }
             statement = statement with { OrderBy = order };
+        }
+
+        if (_state.Lock is { } lockClause && !projectKeyOnly)
+        {
+            if (_db.Transaction is null)
+                return DataErrors.Validation("Locking reads (ForUpdate/ForShare) need a transaction.");
+            if (lockClause.Wait == LockWait.SkipLocked && !_db.Provider.Capabilities.SkipLocked && _db.Provider.Capabilities.RowLocks)
+                return DataErrors.Unsupported($"Provider '{_db.Provider.Name}' cannot skip locked rows.");
+            statement = statement with { Lock = lockClause };
         }
 
         if (!ignorePaging && (_state.Take is not null || _state.Skip is not null))
@@ -630,6 +710,7 @@ public sealed class QueryBuilder<T>
         public int? Skip { get; init; }
         public bool IncludeDeleted { get; init; }
         public bool Correlated { get; init; }
+        public LockClause? Lock { get; init; }
     }
 }
 

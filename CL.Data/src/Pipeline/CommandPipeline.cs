@@ -48,7 +48,7 @@ public sealed class CommandContext
     public bool IsWrite { get; init; }
 
     /// <summary>True when the command runs inside a user transaction (no retries, no cache, primary only).</summary>
-    public bool InTransaction { get; init; }
+    public bool InTransaction { get; internal set; }
 
     /// <summary>Cache tags the command reads (queries) or invalidates (writes).</summary>
     public IReadOnlyList<string> Tags { get; init; } = [];

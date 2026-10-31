@@ -136,3 +136,10 @@
   - Group lambdas receive `IDataGroup<TKey, T>`: `Key`, `Count`, `Count(predicate)`, `LongCount`, `CountDistinct`,
     `Sum`, `Average`, `Min`, `Max`, `Any`.
   - Sums of NULLs are zero, and integer averages are not truncated (SQL Server).
+- **Transactions:** `BeginTransactionAsync` returns a `DataTransaction` whose `Db`, `Repository` and `Query` run
+  inside it; disposing without commit rolls back. Also savepoints.
+  - `InTransactionAsync` commits on success, rolls back on failure or exception, and retries after deadlocks and lock
+    timeouts. Nested calls join the outer transaction.
+- **Locking reads:** `ForUpdate`/`ForShare` with `LockWait.NoWait`/`SkipLocked` need a transaction.
+- **`UpdateAndGetAsync`:** locks the matching keys, updates them and returns the updated rows (RETURNING where
+  available). With `OrderBy`/`Take`/`SkipLocked` it is a safe job-queue claim.

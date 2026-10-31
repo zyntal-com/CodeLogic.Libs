@@ -37,6 +37,82 @@ public sealed partial class Database
     /// <summary>A query over <typeparamref name="T"/>.</summary>
     public QueryBuilder<T> Query<T>() => new(this);
 
+    // ── Transactions ────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Starts a transaction on the primary. Run work through <see cref="DataTransaction.Db"/> (or its
+    /// <c>Repository</c>/<c>Query</c>), then commit; disposing without committing rolls back.
+    /// </summary>
+    public ValueTask<Result<DataTransaction>> BeginTransactionAsync(System.Data.IsolationLevel? isolation = null, CancellationToken ct = default)
+    {
+        if (_transaction is not null)
+            return ValueTask.FromResult<Result<DataTransaction>>(
+                DataErrors.Validation("This database is already inside a transaction; use savepoints for nested work."));
+        return DataTransaction.BeginAsync(this, isolation, ct);
+    }
+
+    /// <summary>
+    /// Runs <paramref name="work"/> in a transaction: commits when it succeeds, rolls back when it fails or throws, and
+    /// retries the whole unit (up to <paramref name="maxAttempts"/>) after a deadlock or lock timeout. Inside an existing
+    /// transaction the work joins it instead.
+    /// </summary>
+    public async ValueTask<Result<TResult>> InTransactionAsync<TResult>(Func<DataTransaction, CancellationToken, ValueTask<Result<TResult>>> work,
+        System.Data.IsolationLevel? isolation = null, int maxAttempts = 3, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(work);
+        if (_transaction is not null) return await work(_transaction, ct).ConfigureAwait(false);
+
+        for (var attempt = 1; ; attempt++)
+        {
+            var begun = await DataTransaction.BeginAsync(this, isolation, ct).ConfigureAwait(false);
+            if (begun.IsFailure) return begun.Error!;
+
+            await using var transaction = begun.Value!;
+            Result<TResult> result;
+            try
+            {
+                result = await work(transaction, ct).ConfigureAwait(false);
+            }
+            catch
+            {
+                await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+                throw;
+            }
+
+            Error? failure;
+            if (result.IsSuccess)
+            {
+                var committed = await transaction.CommitAsync(ct).ConfigureAwait(false);
+                if (committed.IsSuccess) return result;
+                failure = committed.Error!;
+            }
+            else
+            {
+                await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+                failure = result.Error!;
+            }
+
+            if (attempt >= maxAttempts || !IsRetryable(failure)) return failure;
+            await Task.Delay(TimeSpan.FromMilliseconds(Math.Max(1, Config.RetryBaseDelayMs) * attempt), Options.Time, ct).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>Runs <paramref name="work"/> in a transaction (see the generic overload).</summary>
+    public async ValueTask<Result> InTransactionAsync(Func<DataTransaction, CancellationToken, ValueTask<Result>> work,
+        System.Data.IsolationLevel? isolation = null, int maxAttempts = 3, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(work);
+        var result = await InTransactionAsync<bool>(async (tx, token) =>
+        {
+            var inner = await work(tx, token).ConfigureAwait(false);
+            return inner.IsSuccess ? Result<bool>.Success(true) : inner.Error!;
+        }, isolation, maxAttempts, ct).ConfigureAwait(false);
+        return result.ToResult();
+    }
+
+    private static bool IsRetryable(Error error) =>
+        error.Code is DataErrors.DeadlockCode or DataErrors.LockTimeoutCode;
+
     // ── Statements ──────────────────────────────────────────────────────────
 
     /// <summary>Renders <paramref name="statement"/>, or <c>data.unsupported</c> when the dialect cannot express it.</summary>
@@ -53,16 +129,18 @@ public sealed partial class Database
     }
 
     /// <summary>Runs a SELECT and materializes every row.</summary>
-    internal async ValueTask<Result<List<T>>> QueryAsync<T>(SelectStatement statement, IEntityAccessor<T>? accessor, string? table,
+    internal async ValueTask<Result<List<T>>> QueryAsync<T>(SqlStatement statement, IEntityAccessor<T>? accessor, string? table,
         IReadOnlyList<string> tags, CancellationToken ct)
     {
         var rendered = Render(statement);
         if (rendered.IsFailure) return rendered.Error!;
+        var isWrite = statement is not SelectStatement;
         var context = new CommandContext(this, new CommandSpec(rendered.Value!.Text, rendered.Value.Parameters), CommandKind.Query, ct)
         {
-            Operation = "select",
+            Operation = isWrite ? "update" : "select",
             Table = table,
             Tags = tags,
+            IsWrite = isWrite,
         };
         return await RunAsync(context, (Accessor: accessor, Policy: NamingPolicy),
             static async (cmd, state, token) =>
@@ -194,8 +272,16 @@ public sealed partial class Database
             int[] ordinals;
             try
             {
-                connection = await Primary.DataSource.OpenConnectionAsync(ct).ConfigureAwait(false);
-                command = connection.CreateCommand();
+                if (_transaction is { } tx)
+                {
+                    command = tx.Handles.Connection.CreateCommand();
+                    command.Transaction = tx.Handles.Transaction;
+                }
+                else
+                {
+                    connection = await Primary.DataSource.OpenConnectionAsync(ct).ConfigureAwait(false);
+                    command = connection.CreateCommand();
+                }
                 command.CommandText = rendered.Value!.Text;
                 command.CommandTimeout = Config.CommandTimeoutSeconds;
                 for (var i = 0; i < rendered.Value.Parameters.Count; i++)

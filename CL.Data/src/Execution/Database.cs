@@ -39,6 +39,7 @@ public sealed partial class Database : IAsyncDisposable
 {
     private readonly CommandExecutor _executor;
     private readonly CommandPipeline _pipeline;
+    private readonly DataTransaction? _transaction;
 
     private Database(string name, DataProvider provider, DataConnectionConfig config, DatabaseOptions options,
         DataNode primary, IReadOnlyList<DataNode> replicas)
@@ -55,6 +56,25 @@ public sealed partial class Database : IAsyncDisposable
         middleware.AddRange(options.Middleware);
         _pipeline = new CommandPipeline(middleware);
     }
+
+    /// <summary>A view of <paramref name="parent"/> whose commands all run in <paramref name="transaction"/>.</summary>
+    private Database(Database parent, DataTransaction transaction)
+    {
+        Name = parent.Name;
+        Provider = parent.Provider;
+        Config = parent.Config;
+        Options = parent.Options;
+        Primary = parent.Primary;
+        Replicas = parent.Replicas;
+        _executor = parent._executor;
+        _pipeline = parent._pipeline;
+        _transaction = transaction;
+    }
+
+    /// <summary>The transaction this view is bound to, or null for the connection itself.</summary>
+    public DataTransaction? Transaction => _transaction;
+
+    internal Database BoundTo(DataTransaction transaction) => new(this, transaction);
 
     /// <summary>Connection name.</summary>
     public string Name { get; }
@@ -90,13 +110,16 @@ public sealed partial class Database : IAsyncDisposable
         Func<DbCommand, TState, CancellationToken, ValueTask<TResult>> body, Func<TResult, long>? rows = null,
         System.Data.IsolationLevel? transaction = null)
     {
+        if (_transaction is not null) context.InTransaction = true;
         return _pipeline.ExecuteAsync(context, async ctx =>
         {
             var started = Stopwatch.GetTimestamp();
             var node = ctx.Node ?? Primary;
-            var result = transaction is { } isolation
-                ? await ExecuteInTransactionAsync(node, ctx, state, body, isolation).ConfigureAwait(false)
-                : await _executor.ExecuteAsync(node, ctx.Spec, state, body, null, null, ctx.CancellationToken).ConfigureAwait(false);
+            var result = _transaction is { } tx
+                ? await tx.ExecuteAsync(ctx.Spec, state, body, ctx.CancellationToken).ConfigureAwait(false)
+                : transaction is { } isolation
+                    ? await ExecuteInTransactionAsync(node, ctx, state, body, isolation).ConfigureAwait(false)
+                    : await _executor.ExecuteAsync(node, ctx.Spec, state, body, null, null, ctx.CancellationToken).ConfigureAwait(false);
             ctx.Elapsed = Stopwatch.GetElapsedTime(started);
             if (rows is not null && result.IsSuccess) ctx.Rows = rows(result.Value!);
             return result;
@@ -230,6 +253,7 @@ public sealed partial class Database : IAsyncDisposable
     /// <inheritdoc />
     public async ValueTask DisposeAsync()
     {
+        if (_transaction is not null) return;   // a transaction view owns no data sources
         await Primary.DisposeAsync().ConfigureAwait(false);
         foreach (var replica in Replicas) await replica.DisposeAsync().ConfigureAwait(false);
     }
