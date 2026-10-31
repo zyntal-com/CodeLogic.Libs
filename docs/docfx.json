@@ -6,6 +6,7 @@
           "files": [
             "CL.Common/CL.Common.csproj",
             "CL.GitHelper/CL.GitHelper.csproj",
+            "CL.Imaging/CL.Imaging.csproj",
             "CL.Mail/CL.Mail.csproj",
             "CL.MySQL2/CL.MySQL2.csproj",
             "CL.MSSQL/CL.MSSQL.csproj",

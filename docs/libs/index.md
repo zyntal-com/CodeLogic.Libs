@@ -1,6 +1,6 @@
 # Libraries
 
-The CodeLogic Libraries suite is thirteen independent NuGet packages. Each is a CodeLogic
+The CodeLogic Libraries suite is a set of independent NuGet packages. Each is a CodeLogic
 `ILibrary` — load the ones you need, configure them through their JSON files, and use them from
 your application or from other libraries after `StartAsync()`.
 
@@ -88,12 +88,21 @@ your application or from other libraries after `StartAsync()`.
   </a>
 </div>
 
+<div class="cl-group">Media</div>
+<div class="lib-grid">
+  <a class="lib-card" href="imaging/index.md">
+    <div class="lib-name">CL.Imaging</div>
+    <div class="lib-pkg">CodeLogic.Imaging</div>
+    <p class="lib-desc">Safe image loading, a fluent editing pipeline, EXIF metadata, palettes, BlurHash, perceptual hashes, and responsive variants.</p>
+  </a>
+</div>
+
 <div class="cl-group">Utilities</div>
 <div class="lib-grid">
   <a class="lib-card" href="common/index.md">
     <div class="lib-name">CL.Common</div>
     <div class="lib-pkg">CodeLogic.Common</div>
-    <p class="lib-desc">Encryption, hashing, ID/password generation, JSON, cron, networking, imaging.</p>
+    <p class="lib-desc">Encryption, hashing, ID/password generation, JSON, cron, networking.</p>
   </a>
 </div>
 
