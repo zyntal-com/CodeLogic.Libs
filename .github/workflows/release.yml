@@ -5,6 +5,7 @@ on:
     branches:
       - release
       - prerelease
+      - release-4.x
   workflow_dispatch:
     inputs:
       build_all:
