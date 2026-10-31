@@ -23,6 +23,7 @@ public sealed class GitManager : IDisposable
     private readonly SemaphoreSlim _cacheLock = new(1, 1);
     // Repositories added with RegisterRepository rather than the config file; kept across config changes.
     private readonly ConcurrentDictionary<string, byte> _runtimeIds = new(StringComparer.OrdinalIgnoreCase);
+    private readonly TimeProvider _time;
     private Timer? _cleanupTimer;
     private bool _disposed;
 
@@ -34,14 +35,18 @@ public sealed class GitManager : IDisposable
     /// Absolute base directory used to resolve relative <see cref="RepositoryConfiguration.LocalPath"/> values.
     /// </param>
     /// <param name="logger">Optional scoped logger.</param>
-    internal GitManager(GitHelperConfig config, string baseDirectory, ILogger? logger = null)
+    /// <param name="time">Clock for cache idle times (tests); the system clock by default.</param>
+    internal GitManager(GitHelperConfig config, string baseDirectory, ILogger? logger = null, TimeProvider? time = null)
     {
         ArgumentNullException.ThrowIfNull(config);
         _config = Clone(config);
         _baseDirectory = baseDirectory;
         _logger = logger;
+        _time = time ?? TimeProvider.System;
         UpdateCleanupTimer();
     }
+
+    private DateTime UtcNow => _time.GetUtcNow().UtcDateTime;
 
     // ── Repository access ─────────────────────────────────────────────────────
 
@@ -62,7 +67,7 @@ public sealed class GitManager : IDisposable
         // Fast path: entry exists and is valid
         if (_cache.TryGetValue(repositoryId, out var entry) && IsValid(entry))
         {
-            entry.LastAccessed = DateTime.UtcNow;
+            entry.LastAccessed = UtcNow;
             return entry.Repository;
         }
 
@@ -72,16 +77,17 @@ public sealed class GitManager : IDisposable
         {
             if (_cache.TryGetValue(repositoryId, out entry) && IsValid(entry))
             {
-                entry.LastAccessed = DateTime.UtcNow;
+                entry.LastAccessed = UtcNow;
                 return entry.Repository;
             }
 
-            // Evict stale entry if present
+            // Evict a stale entry. Idle time only counts calls to this method, so a caller may still be
+            // running a long clone or fetch on it: dispose it once that operation has finished.
             if (_cache.TryRemove(repositoryId, out var stale))
-                stale.Repository.Dispose();
+                _ = stale.Repository.DisposeWhenIdleAsync();
 
             var repo = CreateRepository(repoConfig);
-            _cache[repositoryId] = new CachedEntry(repo);
+            _cache[repositoryId] = new CachedEntry(repo, UtcNow);
             _logger?.Debug($"Cached new repository instance: {repositoryId}");
             return repo;
         }
@@ -220,14 +226,16 @@ public sealed class GitManager : IDisposable
 
     // ── Cache management ──────────────────────────────────────────────────────
 
-    /// <summary>Removes and disposes a single cached repository.</summary>
+    /// <summary>
+    /// Removes a single cached repository and disposes it once the operation running on it (if any) has finished.
+    /// </summary>
     public async Task EvictFromCacheAsync(string repositoryId)
     {
         await _cacheLock.WaitAsync();
         try
         {
             if (_cache.TryRemove(repositoryId, out var entry))
-                entry.Repository.Dispose();
+                _ = entry.Repository.DisposeWhenIdleAsync();
         }
         finally
         {
@@ -235,14 +243,17 @@ public sealed class GitManager : IDisposable
         }
     }
 
-    /// <summary>Removes and disposes all cached repositories.</summary>
+    /// <summary>
+    /// Removes all cached repositories and disposes each once the operation running on it (if any) has finished.
+    /// </summary>
     public async Task ClearCacheAsync()
     {
         await _cacheLock.WaitAsync();
         try
         {
-            foreach (var e in _cache.Values) e.Repository.Dispose();
-            _cache.Clear();
+            foreach (var id in _cache.Keys.ToList())
+                if (_cache.TryRemove(id, out var e))
+                    _ = e.Repository.DisposeWhenIdleAsync();
             _logger?.Info("Repository cache cleared");
         }
         finally
@@ -259,8 +270,8 @@ public sealed class GitManager : IDisposable
         Entries = _cache.Select(kvp => new CacheEntryStats
         {
             RepositoryId = kvp.Key,
-            Age = DateTime.UtcNow - kvp.Value.CreatedAt,
-            TimeSinceLastAccess = DateTime.UtcNow - kvp.Value.LastAccessed,
+            Age = UtcNow - kvp.Value.CreatedAt,
+            TimeSinceLastAccess = UtcNow - kvp.Value.LastAccessed,
             IsExpired = !IsValid(kvp.Value)
         }).ToList()
     };
@@ -433,17 +444,18 @@ public sealed class GitManager : IDisposable
         // Evict on IDLE time, not absolute age: a recently-accessed entry is presumed
         // in use, so the cleanup timer won't dispose a repository out from under an
         // active caller. Only genuinely idle entries expire.
-        return (DateTime.UtcNow - entry.LastAccessed).TotalMinutes < _config.CacheTimeoutMinutes;
+        return (UtcNow - entry.LastAccessed).TotalMinutes < _config.CacheTimeoutMinutes;
     }
 
-    private void CleanupExpiredEntries()
+    internal void CleanupExpiredEntries()
     {
         if (_disposed) return;
         var expired = _cache.Where(kvp => !IsValid(kvp.Value)).Select(kvp => kvp.Key).ToList();
         foreach (var id in expired)
         {
+            // Idle means no GetRepositoryAsync call, not no running operation: wait for one to finish.
             if (_cache.TryRemove(id, out var e))
-                e.Repository.Dispose();
+                _ = e.Repository.DisposeWhenIdleAsync();
         }
 
         if (expired.Count > 0)
@@ -468,10 +480,15 @@ public sealed class GitManager : IDisposable
     private sealed class CachedEntry
     {
         public GitRepository Repository { get; }
-        public DateTime CreatedAt { get; } = DateTime.UtcNow;
-        public DateTime LastAccessed { get; set; } = DateTime.UtcNow;
+        public DateTime CreatedAt { get; }
+        public DateTime LastAccessed { get; set; }
 
-        public CachedEntry(GitRepository repo) => Repository = repo;
+        public CachedEntry(GitRepository repo, DateTime now)
+        {
+            Repository = repo;
+            CreatedAt = now;
+            LastAccessed = now;
+        }
     }
 }
 
