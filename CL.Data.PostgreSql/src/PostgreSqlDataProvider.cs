@@ -285,6 +285,7 @@ public sealed class PostgreSqlDataLibrary : ILibrary
         Description = "PostgreSQL provider for CL.Data (Npgsql).",
         Author = "Zyntal.com",
         Tags = ["database", "postgresql", "cl.data"],
+        Dependencies = [LibraryDependency.Required("CL.Data")],
     };
 
     /// <inheritdoc />

@@ -267,6 +267,7 @@ public sealed class MySqlDataLibrary : ILibrary
         Description = "MySQL / MariaDB provider for CL.Data (MySqlConnector).",
         Author = "Zyntal.com",
         Tags = ["database", "mysql", "cl.data"],
+        Dependencies = [LibraryDependency.Required("CL.Data")],
     };
 
     /// <inheritdoc />

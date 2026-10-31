@@ -289,6 +289,7 @@ public sealed class SqlServerDataLibrary : ILibrary
         Description = "SQL Server / Azure SQL provider for CL.Data (Microsoft.Data.SqlClient).",
         Author = "Zyntal.com",
         Tags = ["database", "sqlserver", "mssql", "cl.data"],
+        Dependencies = [LibraryDependency.Required("CL.Data")],
     };
 
     /// <inheritdoc />

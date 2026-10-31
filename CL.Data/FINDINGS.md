@@ -69,6 +69,13 @@ the current numbers) and for time relative to Dapper or raw ADO.NET in the same 
   - EXPLAIN runs in the background on its own connection, for reads outside transactions only, and never executes the statement. The event arrives after the query has returned.
   - Pool metrics are left to the drivers' own meters.
 - **N+1 detection** keys on the exact parameterized SQL text, in a one-second window, and reports once per window. Its memory is bounded: the window table is cleared above 10,000 shapes.
+- **Hosting (`DataLibrary`):**
+  - A connection that can't be created (missing provider, invalid settings) doesn't stop startup. It's logged, health reports Degraded, and `Db(name)` returns that error.
+  - Health is Unhealthy only when a primary can't be reached.
+  - A `data` change touches only the connections that were added, changed or removed. Removed pools close after `min(CommandTimeoutSeconds, 30)` seconds, so in-flight commands can finish.
+  - A `data.cache` change rebuilds the cache and every database.
+  - Provider libraries declare `Required("CL.Data")`. CodeLogic runs every Configure before any Initialize, which the hosting tests confirm, so providers register in time.
+  - The CodeLogic event bus dispatches on an event's static type, so `DataLibrary` forwards each CL.Data event under its concrete type through an exhaustive switch over the closed `DataEvent` hierarchy.
 - **Native AOT:** CL.Data and the SQLite, MySQL and PostgreSQL providers publish with 0 trim or AOT warnings. Microsoft.Data.SqlClient brings 57 warnings of its own (upstream).
 
 ## Deferred, with reasons
@@ -77,7 +84,7 @@ the current numbers) and for time relative to Dapper or raw ADO.NET in the same 
 |---|---|---|
 | `ICacheStore` (L2 distributed cache interface) | It would ship with nothing implementing it. | With the Redis adapter (5.1). |
 | Cache bus over CodeLogic events | `InProcessCacheBus` already covers in-process linking. | Add if hosts ask for it. |
-| `data.cache` config section, wiring the bus and probes on start | Belongs to hosting. | WP-A2 (DataLibrary). |
+| ~~`data.cache` config section, wiring the bus and probes on start~~ | Done in WP-A2: `DataLibrary` wires the cache, bus, probes, warm-query refresh and pool warm-up. | |
 | SQL Server live replica test | An availability group can't run in a local container. | Probe parsing is covered by canned results; a real AG test only if CI infrastructure allows. |
 | `benchmarks/MySql2.Baseline` | It's the 4.9 comparison, needed until bulk copy beats the 100-row insert. | Decide after WP-A1. |
 

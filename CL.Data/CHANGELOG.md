@@ -317,3 +317,9 @@
 - **Performance budgets (WP-A4):** `benchmarks/budgets.json` sets limits per benchmark: allocations per operation, and time as a ratio to the category's Dapper or ADO.NET baseline.
   - `Data.Benchmarks --check-budgets` runs a short BenchmarkDotNet pass and exits 1 when a benchmark is over budget.
   - It runs in the CI job `data-perf` (MySQL, not required yet).
+- **Hosting (WP-A2):** `DataLibrary` (`ILibrary`, `IConfigReloadable`) owns the `data` and `data.cache` config sections and provides `Db(name)`.
+  - **Start:** it warms each node's pool up to `MinPoolSize` and starts replica probes, warm-query refresh and the cache invalidation bus (`None`, `Events` through the new `EventBusCacheBus`, or `Database`), all on one `DataScheduler`.
+  - **Events:** CL.Data events are forwarded to the CodeLogic event bus under their concrete types, and slow queries, N+1 patterns, drift and circuit changes are logged.
+  - **Live reload:** applied per connection.
+  - **Health:** checked per node, with `NodeHealthChangedEvent` published on each change.
+  - **Provider libraries:** they now declare `Dependencies = [Required("CL.Data")]`.

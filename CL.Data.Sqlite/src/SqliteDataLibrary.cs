@@ -18,6 +18,7 @@ public sealed class SqliteDataLibrary : ILibrary
         Description = "SQLite provider for CL.Data (Microsoft.Data.Sqlite).",
         Author = "Zyntal.com",
         Tags = ["database", "sqlite", "cl.data"],
+        Dependencies = [LibraryDependency.Required("CL.Data")],
     };
 
     /// <inheritdoc />
