@@ -1,16 +1,19 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <!-- Native AOT smoke test for CL.Data: `dotnet publish -c Release -p:PublishAot=true` must
-       produce no trim/AOT warnings from CL.Data or its providers. -->
+  <!-- Native AOT smoke test for CL.Data: `dotnet publish -c Release` (PublishAot is on) must produce no
+       trim/AOT warnings from CL.Data or its providers, and the published app must exit 0. -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <PublishAot>true</PublishAot>
     <TrimmerSingleWarn>false</TrimmerSingleWarn>
+    <InvariantGlobalization>true</InvariantGlobalization>
   </PropertyGroup>
+  <!-- In-repo stand-in for what the CodeLogic.Data package imports (reflection mapping off under AOT). -->
+  <Import Project="../../CL.Data/build/CodeLogic.Data.targets" />
   <ItemGroup>
-    <ProjectReference Include="..\..\CL.Data.Sqlite\CL.Data.Sqlite.csproj" />
-    <ProjectReference Include="..\..\CL.Data\generator\CL.Data.Generator\CL.Data.Generator.csproj"
+    <ProjectReference Include="../../CL.Data.Sqlite/CL.Data.Sqlite.csproj" />
+    <ProjectReference Include="../../CL.Data/generator/CL.Data.Generator/CL.Data.Generator.csproj"
                       ReferenceOutputAssembly="false" OutputItemType="Analyzer" />
   </ItemGroup>
 </Project>

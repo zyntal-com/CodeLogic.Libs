@@ -227,3 +227,5 @@
   - **CLD010** SET NULL on a non-nullable column
   - **CLD011** table maps no columns
   - **CLD001** (warning): the type cannot use generated mapping, so it falls back to reflection, which Native AOT doesn't support.
+- **Native AOT:** the `samples/Data.AotSmoke` app does CRUD, LINQ queries (expression trees run interpreted), plan-cached repeats, transactions, schema sync and raw SQL on SQLite as a 6.6 MB native executable. The publish has no trim/AOT warnings from CL.Data, CL.Common or CodeLogic, and CI (`data-aot`) publishes and runs it.
+  - **MySqlConnector and Npgsql:** add no warnings either.

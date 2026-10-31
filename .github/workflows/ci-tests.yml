@@ -140,6 +140,32 @@ jobs:
   # skipped on the windows job above. GitHub's Windows runners cannot start the Linux containers, so this job
   # runs the mutual-TLS tests against rclone's WebDAV server with the same requirements as the webdav-mtls
   # container: TLS 1.3 only and a client certificate issued by fixtures/mtls/client-ca.crt.
+  # Native AOT: publish the CL.Data smoke app (CRUD on SQLite through generated accessors) and run it.
+  # The publish must not warn about CL.Data, CL.Common or CodeLogic; the app must exit 0.
+  data-aot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Setup .NET 11
+        uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+      - name: Native toolchain
+        run: sudo apt-get update && sudo apt-get install -y clang zlib1g-dev
+      - name: Publish (Native AOT)
+        shell: bash
+        run: |
+          set -o pipefail
+          dotnet publish samples/Data.AotSmoke -c Release -p:CodeLogicFromNuGet=true -o aot-out 2>&1 | tee publish.log
+          # Strip the project path ("[.../CodeLogic.Libs/...]") before looking for our own code in warnings.
+          if grep -E "warning (IL|AOT)" publish.log | sed 's/ \[.*//' | grep -E "CL\.Data|CL\.Common|CodeLogic\."; then
+            echo "::error::Trim/AOT warnings from CL.Data, CL.Common or CodeLogic"; exit 1
+          fi
+      - name: Run
+        run: ./aot-out/Data.AotSmoke
+
   storage-windows-tls:
     runs-on: windows-latest
     timeout-minutes: 20
