@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using CodeLogic.Core.Results;
 
@@ -14,7 +15,7 @@ public static class ReflectionHelper
     /// <summary>
     /// Creates an instance of <typeparamref name="T"/> using its parameterless constructor.
     /// </summary>
-    public static Result<T> CreateInstance<T>() where T : class
+    public static Result<T> CreateInstance<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>() where T : class
     {
         try
         {
@@ -25,7 +26,7 @@ public static class ReflectionHelper
     }
 
     /// <summary>Creates an instance of the given type with optional constructor arguments.</summary>
-    public static Result<object> CreateInstance(Type type, params object?[] args)
+    public static Result<object> CreateInstance([DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] Type type, params object?[] args)
     {
         try
         {
@@ -39,6 +40,7 @@ public static class ReflectionHelper
     // ── Property access ───────────────────────────────────────────────────────
 
     /// <summary>Gets a property value by name using reflection.</summary>
+    [RequiresUnreferencedCode("Looks members up on the runtime type of the object; trimming may remove them.")]
     public static Result<object?> GetPropertyValue(object obj, string propertyName)
     {
         var prop = obj.GetType().GetProperty(propertyName,
@@ -50,6 +52,7 @@ public static class ReflectionHelper
     }
 
     /// <summary>Sets a property value by name using reflection.</summary>
+    [RequiresUnreferencedCode("Looks members up on the runtime type of the object; trimming may remove them.")]
     public static Result SetPropertyValue(object obj, string propertyName, object? value)
     {
         var prop = obj.GetType().GetProperty(propertyName,
@@ -63,7 +66,7 @@ public static class ReflectionHelper
     }
 
     /// <summary>Returns all public instance properties of <typeparamref name="T"/> as a name → value dictionary.</summary>
-    public static Dictionary<string, object?> ToDictionary<T>(T obj) where T : class
+    public static Dictionary<string, object?> ToDictionary<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)] T>(T obj) where T : class
     {
         var result = new Dictionary<string, object?>();
         foreach (var prop in typeof(T).GetProperties(BindingFlags.Public | BindingFlags.Instance))
@@ -77,6 +80,7 @@ public static class ReflectionHelper
     // ── Method invocation ─────────────────────────────────────────────────────
 
     /// <summary>Invokes a public instance method by name with optional arguments.</summary>
+    [RequiresUnreferencedCode("Looks members up on the runtime type of the object; trimming may remove them.")]
     public static Result<object?> InvokeMethod(object obj, string methodName, params object?[] args)
     {
         var method = obj.GetType().GetMethod(methodName,
@@ -97,7 +101,7 @@ public static class ReflectionHelper
         typeof(TInterface).IsAssignableFrom(type) && type != typeof(TInterface);
 
     /// <summary>Returns true if <paramref name="type"/> has a parameterless public constructor.</summary>
-    public static bool HasDefaultConstructor(Type type) =>
+    public static bool HasDefaultConstructor([DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] Type type) =>
         type.GetConstructor(Type.EmptyTypes) != null;
 
     /// <summary>Returns the display name of a nullable type (e.g. "int?" instead of "Nullable`1").</summary>
