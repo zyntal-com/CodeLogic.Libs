@@ -3,9 +3,9 @@
 [![NuGet](https://img.shields.io/nuget/v/CodeLogic.Mail)](https://www.nuget.org/packages/CodeLogic.Mail)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/zyntal-com/CodeLogic.Libs/blob/main/LICENSE)
 
-> SMTP sending and IMAP reading for [CodeLogic 4](https://github.com/zyntal-com/CodeLogic) — with a built-in template engine, attachments, and RFC 2177 IDLE push notifications.
+> SMTP sending and IMAP reading for [CodeLogic 5](https://github.com/zyntal-com/CodeLogic) — with a built-in template engine, attachments, and RFC 2177 IDLE push notifications.
 
-Compose messages with a fluent `MailBuilder`, send them over SMTP, render variable-substitution templates (conditionals, loops, and layouts), and read mailboxes over IMAP — including live IDLE push. Built on [MailKit](https://www.nuget.org/packages/MailKit) and [MimeKit](https://www.nuget.org/packages/MimeKit). Every fallible operation returns a `MailResult` / `MailResult<T>` carrying a categorised `MailError` instead of throwing on protocol, auth, or timeout errors.
+Compose messages with a fluent `MailBuilder`, send them over SMTP, render variable-substitution templates (conditionals, loops, and layouts), and read mailboxes over IMAP — including live IDLE push. Built on [MailKit](https://www.nuget.org/packages/MailKit) and [MimeKit](https://www.nuget.org/packages/MimeKit). Every fallible operation returns a CodeLogic `Result` / `Result<T>` whose `Error` has a stable `mail.*` code (see `MailErrorCodes`) instead of throwing on protocol, auth, or timeout errors.
 
 ## Install
 
@@ -33,9 +33,11 @@ var message = mail.CreateMessage()
     .TextBody("Hello — welcome aboard.")
     .Build();
 
-MailResult result = await mail.Smtp.SendAsync(message);
-if (!result.IsSuccess)
-    Console.WriteLine($"Send failed ({result.Error}): {result.ErrorMessage}");
+Result<MailSendReceipt> result = await mail.Smtp.SendAsync(message);
+if (result.IsFailure)
+    Console.WriteLine($"Send failed ({result.Error!.Code}): {result.Error.Message}");
+else
+    Console.WriteLine($"Sent, Message-ID {result.Value!.MessageId}");
 ```
 
 ## Features
@@ -46,7 +48,7 @@ if (!result.IsSuccess)
 - **Templated send** — `SendTemplatedAsync` renders a template by id and sends it in one call.
 - **IMAP reading** — list folders, fetch and page messages, fetch by UID with attachments, search, move/copy/delete, and add/remove flags.
 - **IMAP IDLE** — RFC 2177 push notifications via `StartIdleAsync` and the `NewMailReceived` event.
-- **Result-based errors** — `MailResult` / `MailResult<T>` carry `IsSuccess`, a categorised `MailError`, an `ErrorMessage`, and a `MessageId`.
+- **Result-based errors** — operations return CodeLogic `Result` / `Result<T>`; sends return `Result<MailSendReceipt>` (Message-ID + send time). Failures are `Error` kinds (`ValidationError`, `NotFoundError`, `UnauthorizedError`, `TimeoutError`, `UnavailableError`, `InternalError`) with a `MailErrorCodes` code. Upgrading from 4.x: see the [changelog](CHANGELOG.md).
 
 ## Configuration
 
@@ -110,7 +112,7 @@ Full guide: **[CL.Mail documentation](https://zyntal-com.github.io/CodeLogic.Lib
 
 ## Requirements
 
-- [CodeLogic 4.9+](https://github.com/zyntal-com/CodeLogic) · .NET 10
+- [CodeLogic 5.0+](https://github.com/zyntal-com/CodeLogic) · .NET 11
 - MailKit 4.x · MimeKit 4.x
 
 ## License

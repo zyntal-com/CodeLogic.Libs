@@ -193,24 +193,36 @@ bool   secure = UrlHelper.IsHttps(url);
 ```csharp
 using CL.Common.Networking;
 
-Result<PingResult>     ping = await NetworkPing.PingAsync("example.com");
+Result<PingResponse>   ping = await NetworkPing.PingAsync("example.com");
 Result<string[]>       ips  = await NetworkDns.LookupAsync("example.com");
 Result<SubnetInfo>     net  = SubnetCalculator.Calculate("192.168.1.10", "255.255.255.0");
 Result<List<HopInfo>>  hops = await TraceRoute.TraceAsync("example.com");
 
 if (ping.IsSuccess)
-    Console.WriteLine($"{ping.Value.Host}: {ping.Value.RoundTripMs} ms");
+    Console.WriteLine($"{ping.Value.Address}: {ping.Value.RoundTripMs} ms");
+else if (ping.Error is TimeoutError)
+    Console.WriteLine("no reply in time");
+else
+    Console.WriteLine($"{ping.Error.Code}: {ping.Error.Message}");
 ```
+
+A ping that gets no reply is a failed result, never a successful one:
+
+| Outcome | Error kind | Code |
+|---------|------------|------|
+| No reply within `timeout` | `TimeoutError` | `networking.ping_timeout` |
+| Host/network unreachable, other non-success `IPStatus`, or the name does not resolve | `UnavailableError` | `networking.ping_unreachable` (`Details` = the `IPStatus` or exception type) |
+| Anything else | `InternalError` | `networking.ping_failed` |
 
 | Member | Returns | Purpose |
 |--------|---------|---------|
-| `NetworkPing.PingAsync(host, timeout = 3000)` | `Task<Result<PingResult>>` | ICMP ping. |
+| `NetworkPing.PingAsync(host, timeout = 3000)` | `Task<Result<PingResponse>>` | ICMP ping; success means the host replied. |
 | `NetworkDns.LookupAsync(hostname)` | `Task<Result<string[]>>` | Resolve a host to addresses. |
 | `SubnetCalculator.Calculate(ip, subnetMask)` | `Result<SubnetInfo>` | IPv4 subnet math. |
 | `TraceRoute.TraceAsync(host, maxHops = 30)` | `Task<Result<List<HopInfo>>>` | Walk the route to a host. |
 
 ```csharp
-public record PingResult(bool Success, long RoundTripMs, string Host);
+public sealed record PingResponse(string Host, string Address, long RoundTripMs);
 public record SubnetInfo(string NetworkAddress, string BroadcastAddress, string SubnetMask, int UsableHosts);
 public record HopInfo(int Hop, string Address, long Ms);
 ```

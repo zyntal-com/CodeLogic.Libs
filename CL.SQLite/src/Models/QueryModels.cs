@@ -3,7 +3,7 @@ namespace CL.SQLite.Models;
 public record SQLiteQuery
 {
     public required string QueryString { get; init; }
-    public Dictionary<string, object?> Parameters { get; init; } = new();
+    public Dictionary<string, object?> Parameters { get; init; } = [];
 }
 
 public record TableSyncResult

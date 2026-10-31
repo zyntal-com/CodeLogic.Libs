@@ -8,8 +8,8 @@ namespace CL.SQLite.Services;
 internal sealed class SQLiteParameterSink
 {
     private readonly string _prefix;
-    private readonly Dictionary<string, object?> _parameters = new();
-    private readonly Dictionary<object, string> _byValue = new();
+    private readonly Dictionary<string, object?> _parameters = [];
+    private readonly Dictionary<object, string> _byValue = [];
 
     /// <summary>
     /// Initializes a new sink whose parameter names are <paramref name="prefix"/> followed by

@@ -182,7 +182,7 @@ internal static class SQLiteExpressionVisitor
             // Reading the collection from Arguments[0] in both cases fed the instance form
             // the item expression, i.e. a lambda parameter, which the compiler rejects.
             var isStatic = expr.Arguments.Count > 1;
-            var collection = GetValue(isStatic ? expr.Arguments[0] : expr.Object!);
+            var collection = GetValue(UnwrapSpanConversion(isStatic ? expr.Arguments[0] : expr.Object!));
             var col = GetQuotedColumn(isStatic ? expr.Arguments[1] : expr.Arguments[0]);
             if (collection is System.Collections.IEnumerable items)
             {
@@ -202,6 +202,33 @@ internal static class SQLiteExpressionVisitor
 
     // ── Helpers ──────────────────────────────────────────────────────────────
 
+    // C# 14+ ("first-class spans") binds array.Contains(x) to MemoryExtensions.Contains(ReadOnlySpan<T>, T),
+    // so the collection arrives wrapped in an implicit array -> span conversion. A span can't be boxed, so
+    // evaluating that expression through reflection throws NotSupportedException. Read the array instead.
+    private static Expression UnwrapSpanConversion(Expression expr)
+    {
+        while (true)
+        {
+            switch (expr)
+            {
+                case MethodCallExpression { Method.Name: "op_Implicit", Arguments.Count: 1 } call when IsSpanType(call.Type):
+                    expr = call.Arguments[0];
+                    continue;
+                case UnaryExpression { NodeType: ExpressionType.Convert } convert when IsSpanType(convert.Type):
+                    expr = convert.Operand;
+                    continue;
+                case NewExpression { Arguments.Count: 1 } ctor when IsSpanType(ctor.Type):
+                    expr = ctor.Arguments[0];
+                    continue;
+                default:
+                    return expr;
+            }
+        }
+    }
+
+    private static bool IsSpanType(Type type) =>
+        type.IsGenericType
+        && (type.GetGenericTypeDefinition() == typeof(ReadOnlySpan<>) || type.GetGenericTypeDefinition() == typeof(Span<>));
     private static string GetMemberName(Expression expr)
     {
         if (expr is UnaryExpression uni && uni.NodeType == ExpressionType.Convert)

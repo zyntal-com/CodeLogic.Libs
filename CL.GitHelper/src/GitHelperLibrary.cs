@@ -1,4 +1,5 @@
 using CL.GitHelper.Models;
+using CodeLogic.Core.Results;
 using CL.GitHelper.Services;
 using CodeLogic.Core.Configuration;
 using CodeLogic.Framework.Libraries;
@@ -152,7 +153,7 @@ public sealed class GitHelperLibrary : ILibrary, IConfigReloadable
                 {
                     var result = await (await manager.GetRepositoryAsync(id)).FetchAsync();
                     if (result.IsSuccess) context.Logger.Info($"  Auto-fetch OK: {id}");
-                    else context.Logger.Warning($"  Auto-fetch failed for '{id}': {result.ErrorMessage}");
+                    else context.Logger.Warning($"  Auto-fetch failed for '{id}': {result.Error!.Message}");
                 }
                 catch (Exception ex)
                 {
@@ -194,7 +195,7 @@ public sealed class GitHelperLibrary : ILibrary, IConfigReloadable
                     if (result.IsSuccess)
                         context.Logger.Info($"  Auto-fetch OK: {id}");
                     else
-                        context.Logger.Warning($"  Auto-fetch failed for '{id}': {result.ErrorMessage}");
+                        context.Logger.Warning($"  Auto-fetch failed for '{id}': {result.Error!.Message}");
                 }
                 catch (Exception ex)
                 {
@@ -299,7 +300,8 @@ public sealed class GitHelperLibrary : ILibrary, IConfigReloadable
     /// </summary>
     /// <param name="options">Fetch options applied to every repository.</param>
     /// <param name="maxConcurrency">Maximum parallel fetches. 0 = use configuration default.</param>
-    public Task<Dictionary<string, GitResult<bool>>> FetchAllAsync(
+    /// <returns>Repository ID → that repository's fetch result (diagnostics or error).</returns>
+    public Task<Dictionary<string, Result<GitDiagnostics>>> FetchAllAsync(
         FetchOptions? options = null,
         int maxConcurrency = 0)
     {
@@ -313,7 +315,8 @@ public sealed class GitHelperLibrary : ILibrary, IConfigReloadable
     /// Returns working-tree status for all configured repositories.
     /// </summary>
     /// <param name="maxConcurrency">Maximum parallel status checks. 0 = use configuration default.</param>
-    public Task<Dictionary<string, GitResult<RepositoryStatus>>> GetAllStatusAsync(int maxConcurrency = 0)
+    /// <returns>Repository ID → that repository's status result.</returns>
+    public Task<Dictionary<string, Result<RepositoryStatus>>> GetAllStatusAsync(int maxConcurrency = 0)
     {
         if (_manager is null)
             throw new InvalidOperationException($"{Manifest.Name} has not been initialized.");
@@ -345,7 +348,7 @@ public sealed class GitHelperLibrary : ILibrary, IConfigReloadable
                 else
                 {
                     _context!.Logger.Warning(
-                        $"  '{id}': not yet cloned or inaccessible — {info.ErrorMessage}");
+                        $"  '{id}': not yet cloned or inaccessible — {info.Error!.Message}");
                 }
             }
             catch (Exception ex)

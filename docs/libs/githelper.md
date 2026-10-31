@@ -2,7 +2,7 @@
 
 > Programmatic Git repository management — clone, fetch, pull, push, commit, branch, and reset across a pool of configured repositories.
 
-`CL.GitHelper` brings Git operations into a CodeLogic 4 application as a managed, async service. It wraps [LibGit2Sharp](https://www.nuget.org/packages/LibGit2Sharp) and exposes a `GitHelperLibrary` surface that hands out `GitRepository` objects keyed by id. Every operation returns a `GitResult<T>` instead of throwing, and each result carries `GitDiagnostics` — timing, object counts, and bytes transferred — so you can log or measure what happened.
+`CL.GitHelper` brings Git operations into a CodeLogic application as a managed, async service. It wraps [LibGit2Sharp](https://www.nuget.org/packages/LibGit2Sharp) and exposes a `GitHelperLibrary` surface that hands out `GitRepository` objects keyed by id. Every operation returns a CodeLogic `Result<T>` (or plain `Result`) instead of throwing; a failure carries a typed `Error` with a stable `git.*` code. Fetch, pull and push return `GitDiagnostics` — timing, object counts, and bytes transferred — as their success value, so you can log or measure what happened.
 
 | | |
 |---|---|
@@ -19,6 +19,8 @@ dotnet add package CodeLogic.GitHelper
 
 ```csharp
 using CL.GitHelper;
+using CL.GitHelper.Errors;       // GitErrors code constants
+using CodeLogic.Core.Results;    // Result<T>, Result, Error kinds
 
 await Libraries.LoadAsync<GitHelperLibrary>();   // register before ConfigureAsync()
 await CodeLogic.ConfigureAsync();
@@ -42,7 +44,7 @@ GitRepository repo = await git.GetRepositoryAsync("Default");
 The single most useful method on a repository. `EnsureUpToDateAsync` is **idempotent**: if the local directory has no repository yet it clones it, and if it does it fetches and hard-resets the working tree to the remote tip. Call it on every startup and you always end up with a clean working copy matching the remote — no branching logic of your own required. To protect uncommitted work it will not hard-reset a dirty tree unless you pass `discardLocalChanges: true` (see the note below).
 
 ```csharp
-GitResult<RepositoryInfo> result = await repo.EnsureUpToDateAsync();
+Result<RepositoryInfo> result = await repo.EnsureUpToDateAsync();
 if (result.IsSuccess)
 {
     RepositoryInfo info = result.Value!;
@@ -50,7 +52,7 @@ if (result.IsSuccess)
 }
 else
 {
-    Console.WriteLine($"Sync failed: {result.ErrorMessage}");
+    Console.WriteLine($"Sync failed: {result.Error!.Code}: {result.Error.Message}");
 }
 ```
 
@@ -60,7 +62,7 @@ The branch defaults to the repository's configured `DefaultBranch`; pass an expl
 await repo.EnsureUpToDateAsync(branchName: "develop", remoteName: "origin");
 ```
 
-> **`EnsureUpToDateAsync` hard-resets the working tree.** To prevent accidental data loss it **refuses to run against a dirty working tree** unless you call it with `discardLocalChanges: true`; only then does it discard local uncommitted changes and reset to the remote tip. Use it for read-only/deploy working copies, not for trees you edit by hand.
+> **`EnsureUpToDateAsync` hard-resets the working tree.** To prevent accidental data loss it **refuses to run against a dirty working tree** (returning a `ConflictError` with code `git.uncommitted_changes`) unless you call it with `discardLocalChanges: true`; only then does it discard local uncommitted changes and reset to the remote tip. Use it for read-only/deploy working copies, not for trees you edit by hand.
 
 ## Clone, fetch, pull, push
 
@@ -71,14 +73,16 @@ When you need finer control than `EnsureUpToDateAsync`, the individual remote op
 await repo.CloneAsync(new GitCloneOptions { BranchName = "main" });
 
 // Fetch — bring down remote refs without touching the working tree
-await repo.FetchAsync(new GitFetchOptions { Prune = true, FetchTags = true });
+Result<GitDiagnostics> fetch = await repo.FetchAsync(new GitFetchOptions { Prune = true, FetchTags = true });
 
 // Pull — fetch + integrate using the chosen strategy
-await repo.PullAsync(new GitPullOptions { Strategy = MergeStrategy.Merge });
+Result<GitDiagnostics> pull = await repo.PullAsync(new GitPullOptions { Strategy = MergeStrategy.Merge });
 
 // Push — defaults push the current branch to origin
-await repo.PushAsync(new GitPushOptions { Force = false, PushTags = true });
+Result<GitDiagnostics> push = await repo.PushAsync(new GitPushOptions { Force = false, PushTags = true });
 ```
+
+`CloneAsync` returns `Result<RepositoryInfo>`; fetch, pull and push return `Result<GitDiagnostics>` — see [Results and errors](#results-and-errors).
 
 ### Options models
 
@@ -96,7 +100,7 @@ await repo.PushAsync(new GitPushOptions { Force = false, PushTags = true });
 `CommitAsync` takes a `GitCommitOptions`. Supply `FilesToStage` to stage specific paths first, or leave it null to commit what is already staged.
 
 ```csharp
-GitResult<CommitInfo> commit = await repo.CommitAsync(new GitCommitOptions
+Result<CommitInfo> commit = await repo.CommitAsync(new GitCommitOptions
 {
     Message      = "Update configuration",
     AuthorName   = "Build Bot",
@@ -108,14 +112,14 @@ if (commit.IsSuccess)
     Console.WriteLine($"Committed {commit.Value!.ShortSha} — {commit.Value.ShortMessage}");
 ```
 
-`GitCommitOptions` fields: `Message` (`""`), `AuthorName?`, `AuthorEmail?`, `FilesToStage?`. When the author fields are omitted, the repository's configured identity is used.
+`GitCommitOptions` fields: `Message` (`""`), `AuthorName?`, `AuthorEmail?`, `FilesToStage?`. When the author fields are omitted, the repository's configured identity is used. An empty `Message` returns a `ValidationError` (`git.empty_commit_message`); a commit with no changes returns `git.nothing_to_commit`.
 
 ## Status
 
 `GetStatusAsync` returns a `RepositoryStatus` describing the working tree.
 
 ```csharp
-GitResult<RepositoryStatus> status = await repo.GetStatusAsync();
+Result<RepositoryStatus> status = await repo.GetStatusAsync();
 if (status.IsSuccess && status.Value!.IsDirty)
 {
     foreach (FileStatusEntry entry in status.Value.ModifiedFiles)
@@ -130,11 +134,13 @@ if (status.IsSuccess && status.Value!.IsDirty)
 ## Branches
 
 ```csharp
-GitResult<List<BranchInfo>> branches = await repo.ListBranchesAsync(includeRemote: true);
+Result<List<BranchInfo>> branches = await repo.ListBranchesAsync(includeRemote: true);
 foreach (BranchInfo b in branches.Value!)
     Console.WriteLine($"{(b.IsCurrent ? "*" : " ")} {b.FriendlyName}  (ahead {b.AheadBy}, behind {b.BehindBy})");
 
-await repo.CheckoutBranchAsync("develop");
+Result checkout = await repo.CheckoutBranchAsync("develop");
+if (checkout.Error is NotFoundError)
+    Console.WriteLine("No such branch");   // code git.branch_not_found
 ```
 
 **`BranchInfo`** — `Name`, `FriendlyName`, `IsCurrent`, `IsRemote`, `IsTracking`, `TrackedBranchName?`, `TipSha`, `AheadBy?`, `BehindBy?`.
@@ -144,14 +150,16 @@ await repo.CheckoutBranchAsync("develop");
 `ResetHardAsync` discards working-tree and index changes and moves `HEAD` to the tip of the given branch on the remote. With no arguments it targets the currently tracked upstream.
 
 ```csharp
-await repo.ResetHardAsync();                       // tracked upstream
+Result reset = await repo.ResetHardAsync();        // tracked upstream
 await repo.ResetHardAsync("main", "origin");       // explicit branch + remote
 ```
+
+An unresolvable target returns a `NotFoundError` with code `git.branch_not_found`.
 
 ## Commit log
 
 ```csharp
-GitResult<List<CommitInfo>> log = await repo.GetCommitLogAsync(maxCount: 10);
+Result<List<CommitInfo>> log = await repo.GetCommitLogAsync(maxCount: 10);
 foreach (CommitInfo c in log.Value!)
     Console.WriteLine($"{c.ShortSha} {c.AuthorName}  {c.ShortMessage}");
 ```
@@ -179,33 +187,45 @@ Credentials are configured **per repository** on the repository entry, and only 
 
 > **SSH is not supported — use HTTPS + a PAT.** The bundled LibGit2Sharp managed binary has no SSH transport, so SSH cannot work. The `SshKeyPath` and `SshPassphrase` fields exist in `RepositoryConfiguration` but configuring an SSH key only logs a warning, and an SSH clone URL (`git@…` / `ssh://…`) **fails fast** with an explanatory error rather than silently doing nothing. Always use an `https://` URL with a Personal Access Token.
 
-## GitResult&lt;T&gt; and GitDiagnostics
+## Results and errors
 
-No public method on `GitRepository` or the library throws for an operational failure — failures are returned in the result. Always check `IsSuccess` before reading `Value`.
+No public method on `GitRepository` or the library throws for an operational failure — failures are returned as CodeLogic results (`CodeLogic.Core.Results`). Check `IsSuccess` before reading `Value`, or `switch` on the result.
+
+| Method | Returns |
+|--------|---------|
+| `CloneAsync`, `EnsureUpToDateAsync`, `GetRepositoryInfoAsync` | `Result<RepositoryInfo>` |
+| `FetchAsync`, `PullAsync`, `PushAsync` | `Result<GitDiagnostics>` |
+| `CommitAsync` | `Result<CommitInfo>` |
+| `GetStatusAsync` | `Result<RepositoryStatus>` |
+| `ListBranchesAsync` | `Result<List<BranchInfo>>` |
+| `GetCommitLogAsync` | `Result<List<CommitInfo>>` |
+| `CheckoutBranchAsync`, `ResetHardAsync` | `Result` |
+| `FetchAllAsync` | `Dictionary<string, Result<GitDiagnostics>>` |
+| `GetAllStatusAsync` | `Dictionary<string, Result<RepositoryStatus>>` |
+
+A failure's `Error` has a kind (its subtype) and a stable `Code`; the codes are constants on `CL.GitHelper.Errors.GitErrors`. `Message` is the human-readable text. When the failure came from a caught exception, the library logs the exception and `Details` holds its type name (e.g. `NotFoundException`).
+
+| Kind | Codes |
+|------|-------|
+| `NotFoundError` | `git.repository_not_found` (not cloned yet), `git.remote_not_found`, `git.branch_not_found` (checkout or reset target), `git.not_found` (e.g. a file to stage) |
+| `ValidationError` | `git.empty_commit_message`, `git.nothing_to_commit`, `git.ssh_not_supported` |
+| `UnauthorizedError` | `git.authentication_failed` |
+| `ConflictError` | `git.directory_not_empty` (clone target), `git.uncommitted_changes` (`EnsureUpToDateAsync`), `git.checkout_conflict`, `git.non_fast_forward` |
+| `UnavailableError` | `git.cancelled` |
+| `InternalError` | `git.clone_failed`, `git.fetch_failed`, `git.pull_failed`, `git.push_failed`, `git.commit_failed`, `git.status_failed`, `git.info_failed`, `git.list_branches_failed`, `git.checkout_failed`, `git.reset_failed`, `git.log_failed` |
 
 ```csharp
-public sealed class GitResult<T>
+Result<GitDiagnostics> pull = await repo.PullAsync();
+var line = pull.Error switch
 {
-    public bool IsSuccess { get; }
-    public T? Value { get; }                  // non-null only on success
-    public string? ErrorMessage { get; }
-    public Exception? Exception { get; }
-    public GitDiagnostics Diagnostics { get; }
-}
+    null                => $"Pulled in {pull.Value!.Duration?.TotalSeconds:F2}s",
+    UnauthorizedError   => "Check the repository's PAT",
+    NotFoundError e     => $"Missing: {e.Message} ({e.Code})",
+    var e               => $"Pull failed: {e.Message} ({e.Details})"
+};
 ```
 
-Results are produced with the `GitResult<T>.Ok(value, diagnostics?)` / `GitResult<T>.Fail(error, ex?, diagnostics?)` factories.
-
-**`GitDiagnostics`** — `StartedAt`, `CompletedAt?`, `Duration?`, `ObjectCount`, `BytesTransferred`, `FilesChanged`, `CommitsProcessed`, `Messages` (`List<string>`), `Metrics` (dictionary).
-
-```csharp
-var pull = await repo.PullAsync();
-if (pull.IsSuccess)
-    Console.WriteLine($"Pulled in {pull.Diagnostics.Duration?.TotalSeconds:F2}s, " +
-                      $"{pull.Diagnostics.BytesTransferred} bytes");
-else
-    Console.WriteLine($"Pull failed: {pull.ErrorMessage} ({pull.Exception?.GetType().Name})");
-```
+**`GitDiagnostics`** (the value of fetch, pull and push) — `StartedAt`, `CompletedAt?`, `Duration?`, `ObjectCount`, `BytesTransferred` (filled by fetch), `FilesChanged`, `CommitsProcessed`, `Messages` (`List<string>`; a pull includes its fetch step's messages), `Metrics` (dictionary).
 
 **`RepositoryInfo`** (returned by `CloneAsync`, `EnsureUpToDateAsync`, `GetRepositoryInfoAsync`) — `Id`, `Name`, `LocalPath`, `RemoteUrl`, `CurrentBranch`, `HeadCommitSha`, `IsBare`, `State`, `LocalBranchCount`, `RemoteBranchCount`, `TagCount`, `StashCount`, `IsDirty`, `ModifiedFiles`, `StagedFiles`, `UntrackedFiles`.
 
@@ -217,10 +237,10 @@ else
 GitManager manager = git.GetManager();
 
 // Fetch every configured repository (bounded concurrency; 0 = use MaxConcurrentOperations)
-Dictionary<string, GitResult<bool>> fetched = await git.FetchAllAsync();
+Dictionary<string, Result<GitDiagnostics>> fetched = await git.FetchAllAsync();
 
 // Status of every configured repository
-Dictionary<string, GitResult<RepositoryStatus>> statuses = await git.GetAllStatusAsync();
+Dictionary<string, Result<RepositoryStatus>> statuses = await git.GetAllStatusAsync();
 
 // Per-repository health check (id -> healthy)
 Dictionary<string, bool> health = await manager.HealthCheckAsync();

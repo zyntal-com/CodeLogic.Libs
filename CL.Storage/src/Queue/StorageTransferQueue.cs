@@ -116,9 +116,9 @@ public sealed class StorageTransferQueue : IAsyncDisposable
     private readonly StorageTransferQueueOptions _options;
     private readonly IStorageTransferJobStore _store;
     private readonly Lock _gate = new();
-    private readonly Dictionary<string, Entry> _jobs = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, int> _activeByConnection = new(StringComparer.OrdinalIgnoreCase);
-    private readonly HashSet<string> _removedWhileRefreshing = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Entry> _jobs = [with(StringComparer.Ordinal)];
+    private readonly Dictionary<string, int> _activeByConnection = [with(StringComparer.OrdinalIgnoreCase)];
+    private readonly HashSet<string> _removedWhileRefreshing = [with(StringComparer.Ordinal)];
     private readonly CancellationTokenSource _shutdown = new();
     private readonly List<Task> _attempts = [];
     // Background work (store refreshes, recovery, wake-ups) that DisposeAsync waits for.

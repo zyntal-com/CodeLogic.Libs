@@ -22,7 +22,7 @@ internal sealed record TransferLimits(TokenBucket? Upload, TokenBucket? Download
 /// </summary>
 internal static class StorageTransferPipeline
 {
-    private static readonly ConditionalWeakTable<object, TransferLimits> Limits = new();
+    private static readonly ConditionalWeakTable<object, TransferLimits> Limits = [];
 
     /// <summary>Attaches bandwidth limits to a backend; null or non-positive values mean unlimited.</summary>
     public static void SetLimits(object backend, long? uploadBytesPerSecond, long? downloadBytesPerSecond, TransferLimits? library = null)
@@ -48,7 +48,7 @@ internal static class StorageTransferPipeline
 
     public static TransferLimits LimitsFor(object backend) => Limits.TryGetValue(backend, out var limits) ? limits : TransferLimits.None;
 
-    private static readonly ConditionalWeakTable<object, StrongBox<int>> SessionLimits = new();
+    private static readonly ConditionalWeakTable<object, StrongBox<int>> SessionLimits = [];
 
     /// <summary>Records how many sessions a session-pooled backend (FTP, SFTP) may open at once.</summary>
     public static void SetSessionLimit(object backend, int maxSessions) => SessionLimits.AddOrUpdate(backend, new StrongBox<int>(maxSessions));

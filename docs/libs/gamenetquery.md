@@ -38,11 +38,45 @@ using CL.GameNetQuery.Minecraft;      // MinecraftQueryClient, MinecraftRconClie
 using CL.GameNetQuery.Models;         // ServerInfo, PlayerInfo
 ```
 
-Unlike the framework's `Result`-returning libraries, the query clients return their **model types directly** — `ServerInfo?`, `List<PlayerInfo>`, and raw response strings. Failures surface as `null` / empty collections (UDP queries) or `false` from `ConnectAsync` (RCON), not as `Result` values.
+`ValveUdpQuery.QueryAsync` returns a CodeLogic `Result<ServerQuery>`, so you learn *why* a query failed. The older helpers return their **model types directly** — `ServerInfo?`, `List<PlayerInfo>`, and raw response strings — and surface failures as `null` / empty collections (UDP queries) or `false` from `ConnectAsync` (RCON).
 
 ## Valve A2S (UDP queries)
 
-`ValveUdpQuery` is a static helper. The port is a `ushort` and both methods take an optional `timeoutMs` (default `3000`). `GetServerInfoAsync` returns `null` on failure; `GetPlayerListAsync` returns an empty list on failure — neither throws.
+`ValveUdpQuery` is a static helper. The port is a `ushort` and every method takes an optional `timeoutMs` (default `3000`, per request).
+
+`QueryAsync(ip, port, includePlayers = true, timeoutMs = 3000, cancellationToken)` sends A2S_INFO (answering the server's challenge if it asks for one) and, unless `includePlayers` is `false`, A2S_PLAYER. It returns `Result<ServerQuery>`:
+
+```csharp
+using CL.GameNetQuery.Valve;
+using CL.GameNetQuery.Models;
+using CodeLogic.Core.Results;
+
+Result<ServerQuery> r = await ValveUdpQuery.QueryAsync("192.168.1.100", 27015);
+if (r.IsSuccess)
+{
+    var (info, players, ms) = r.Value;
+    Console.WriteLine($"{info.Hostname} on {info.Map} ({info.PlayerCount}/{info.MaxPlayers}) in {ms} ms");
+}
+else if (r.Error is TimeoutError)
+    Console.WriteLine("Server did not answer");
+```
+
+```csharp
+public sealed record ServerQuery(ServerInfo Info, IReadOnlyList<PlayerInfo> Players, long DurationMs);
+```
+
+| Failure | Error kind | Code |
+|---------|------------|------|
+| `ip` is not an IP address | `ValidationError` | `gamenetquery.invalid_address` |
+| `timeoutMs` ≤ 0 | `ValidationError` | `gamenetquery.invalid_timeout` |
+| No answer within `timeoutMs` | `TimeoutError` | `gamenetquery.timeout` |
+| Socket error (e.g. ICMP port unreachable) | `UnavailableError` | `gamenetquery.unreachable` (`Details` = `SocketError`) |
+| Answer is not a valid A2S response | `InternalError` | `gamenetquery.malformed_response` |
+| Anything else | `InternalError` | `gamenetquery.query_failed` |
+
+Cancelling `cancellationToken` throws `OperationCanceledException` rather than returning a failure.
+
+`GetServerInfoAsync` and `GetPlayerListAsync` do one request each and return `null` / an empty list on failure — neither throws.
 
 ```csharp
 using CL.GameNetQuery.Valve;
@@ -59,6 +93,7 @@ foreach (var p in players)
 
 | Method | Returns | On failure |
 |--------|---------|-----------|
+| `QueryAsync(string ip, ushort port, bool includePlayers = true, int timeoutMs = 3000, CancellationToken ct = default)` | `Task<Result<ServerQuery>>` | an `Error` kind (table above) |
 | `GetServerInfoAsync(string ip, ushort port, int timeoutMs = 3000)` | `Task<ServerInfo?>` | `null` |
 | `GetPlayerListAsync(string ip, ushort port, int timeoutMs = 3000)` | `Task<List<PlayerInfo>>` | empty list |
 
@@ -96,7 +131,7 @@ foreach (var p in players)
 | `State` | `string` | Connection state |
 | `IsBot` | `bool` | Bot flag |
 
-> A `QueryResult` record (with `Success`, `Info?`, `Players`, `Error?`, `DurationMs`) also exists in `CL.GameNetQuery.Models`, but the public query methods above return models directly — `QueryResult` is not part of the everyday API.
+> The 4.x `QueryResult` class (`Success`, `Info?`, `Players`, `Error` string, `DurationMs`, `Ok`/`Fail`) was removed in 5.0. Use `Result<ServerQuery>` from `QueryAsync`.
 
 ## Valve RCON
 

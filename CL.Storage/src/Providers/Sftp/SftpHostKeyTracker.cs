@@ -10,7 +10,7 @@ namespace CL.Storage.Providers.Sftp;
 /// </summary>
 internal static class SftpHostKeyTracker
 {
-    private static readonly ConditionalWeakTable<BaseClient, string> Rejected = new();
+    private static readonly ConditionalWeakTable<BaseClient, string> Rejected = [];
 
     public static void MarkRejected(BaseClient client, string fingerprint) =>
         Rejected.AddOrUpdate(client, fingerprint);

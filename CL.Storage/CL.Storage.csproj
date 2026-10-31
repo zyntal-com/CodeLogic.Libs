@@ -1,11 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
     <RootNamespace>CL.Storage</RootNamespace>
     <AssemblyName>CL.Storage</AssemblyName>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <LangVersion>13</LangVersion>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <PackageId>CodeLogic.Storage</PackageId>
     <PackageTags>storage;filesystem;cloud;s3;ftp;ftps;sftp;webdav;azure;gcs;swift</PackageTags>

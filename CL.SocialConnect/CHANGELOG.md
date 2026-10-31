@@ -3,6 +3,30 @@
 All notable changes to **CodeLogic.SocialConnect** are documented here. Versions follow
 [Semantic Versioning](https://semver.org/).
 
+## 5.0 (unreleased)
+
+### Breaking
+
+- Targets **.NET 11** (`net11.0`) and requires **CodeLogic 5.0** (`[5.0.0, 6.0.0)`). On .NET 10, stay on
+  4.9.x. CodeLogic 5 makes `Result<T>` / `Result` C# 15 unions and `Error` a closed record with
+  kind subtypes (`NotFoundError`, `ValidationError`, ...). Results can now be matched
+  exhaustively with `switch`.
+- `Auth.AuthenticateAsync` returns `Result<SteamTicketIdentity>` instead of `Result<SteamAuthResult>`.
+  The mutable `SteamAuthResult` class (with `IsAuthenticated`, `ErrorDescription` and `0`/`1` ints for
+  bans) is gone: the immutable `SteamTicketIdentity(SteamId, OwnerSteamId, AppId, VacBanned, PublisherBanned)`
+  record (plus `IsFamilyShared`) is only ever a success, and every failure is an `Error` kind —
+  `ValidationError` `social.steam.invalid_ticket` / `social.steam.no_appid`, `UnauthorizedError`
+  `social.steam.auth_failed`, `TimeoutError` `social.steam.timeout`, `UnavailableError`
+  `social.steam.network_error`, `InternalError` `social.steam.request_rejected` / `parse_error` / `error`.
+- A ticket that is not hex is now refused locally with `social.steam.invalid_ticket` (it used to be
+  pasted unescaped into the request URL). A 4xx from Steam (e.g. a bad API key) is now
+  `InternalError` `social.steam.request_rejected` instead of `UnavailableError` `social.steam.network_error`.
+
+### Added
+
+- `SteamAuthenticationService(SteamConfig, HttpMessageHandler, ILogger?, IEventBus?)` constructor for
+  tests and outbound proxies, matching `SteamOpenIdService`.
+
 ## 2026-10-30
 
 ### Fixed

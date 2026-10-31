@@ -6,7 +6,7 @@ using K4os.Compression.LZ4.Streams;
 namespace CL.Common.Compression;
 
 /// <summary>
-/// Provides GZip, Brotli, and LZ4 compression and decompression utilities.
+/// Provides GZip, Brotli, Zstandard, and LZ4 compression and decompression utilities.
 /// All methods return <see cref="Result{T}"/> to signal failures without throwing.
 /// </summary>
 public static class CompressionHelper
@@ -106,6 +106,58 @@ public static class CompressionHelper
         catch (Exception ex)
         {
             return Result<byte[]>.Failure(Error.FromException(ex, "compression.brotli_decompress_failed"));
+        }
+    }
+
+    /// <summary>
+    /// Compresses the given byte array using Zstandard compression
+    /// (the built-in <see cref="ZstandardStream"/> added in .NET 11).
+    /// Zstandard gives ratios close to Brotli at speeds much closer to LZ4.
+    /// </summary>
+    /// <param name="data">The raw bytes to compress. Must not be null.</param>
+    /// <returns>
+    /// A <see cref="Result{T}"/> containing the compressed bytes on success,
+    /// or a failure result with an error description.
+    /// </returns>
+    public static Result<byte[]> CompressZstandard(byte[] data)
+    {
+        ArgumentNullException.ThrowIfNull(data);
+        try
+        {
+            using var output = new MemoryStream();
+            using (var zstd = new ZstandardStream(output, CompressionLevel.Optimal, leaveOpen: true))
+                zstd.Write(data, 0, data.Length);
+            return Result<byte[]>.Success(output.ToArray());
+        }
+        catch (Exception ex)
+        {
+            return Result<byte[]>.Failure(Error.FromException(ex, "compression.zstandard_compress_failed"));
+        }
+    }
+
+    /// <summary>
+    /// Decompresses a Zstandard-compressed byte array (any standard Zstandard frame,
+    /// e.g. one produced by <see cref="CompressZstandard"/> or the <c>zstd</c> CLI).
+    /// </summary>
+    /// <param name="data">The Zstandard-compressed bytes to decompress. Must not be null.</param>
+    /// <returns>
+    /// A <see cref="Result{T}"/> containing the decompressed bytes on success,
+    /// or a failure result if decompression fails.
+    /// </returns>
+    public static Result<byte[]> DecompressZstandard(byte[] data)
+    {
+        ArgumentNullException.ThrowIfNull(data);
+        try
+        {
+            using var input = new MemoryStream(data);
+            using var zstd = new ZstandardStream(input, CompressionMode.Decompress);
+            using var output = new MemoryStream();
+            zstd.CopyTo(output);
+            return Result<byte[]>.Success(output.ToArray());
+        }
+        catch (Exception ex)
+        {
+            return Result<byte[]>.Failure(Error.FromException(ex, "compression.zstandard_decompress_failed"));
         }
     }
 

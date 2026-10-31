@@ -3,7 +3,7 @@
 [![NuGet](https://img.shields.io/nuget/v/CodeLogic.SystemStats)](https://www.nuget.org/packages/CodeLogic.SystemStats)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/zyntal-com/CodeLogic.Libs/blob/main/LICENSE)
 
-> Cross-platform CPU, memory, uptime, and process statistics for [CodeLogic 4](https://github.com/zyntal-com/CodeLogic) — one API over Windows performance counters and Linux `/proc`.
+> Cross-platform CPU, memory, uptime, and process statistics for [CodeLogic 5](https://github.com/zyntal-com/CodeLogic) — one API over Windows performance counters and Linux `/proc`.
 
 Samples live system metrics through platform-specific providers: Windows reads CPU info from the registry, CPU usage from `PerformanceCounter`, and total/available RAM via the `GlobalMemoryStatusEx` P/Invoke; Linux reads `/proc/cpuinfo`, `/proc/stat`, `/proc/meminfo`, and `/proc/uptime`. Every data method returns a `Result<T>`, results are cached for a short window, and breaching CPU/memory thresholds publishes events on the CodeLogic event bus.
 
@@ -83,7 +83,7 @@ Full guide: **[CL.SystemStats documentation](https://zyntal-com.github.io/CodeLo
 
 ## Requirements
 
-- [CodeLogic 4.9+](https://github.com/zyntal-com/CodeLogic) · .NET 10
+- [CodeLogic 5.0+](https://github.com/zyntal-com/CodeLogic) · .NET 11
 - Windows: `System.Diagnostics.PerformanceCounter` 9.x · `System.Management` 9.x
 - Linux: read access to the `/proc` filesystem
 

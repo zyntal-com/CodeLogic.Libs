@@ -2,7 +2,7 @@
 
 > TOTP two-factor authentication with QR-code generation — compatible with Google Authenticator, Authy, and 1Password.
 
-`CL.TwoFactorAuth` adds RFC 6238 time-based one-time passwords to a CodeLogic 4 application. It builds on [Otp.NET](https://www.nuget.org/packages/Otp.NET) for the TOTP algorithm and [QRCoder](https://www.nuget.org/packages/QRCoder) for rendering provisioning QR codes. The library exposes a single `TwoFactorAuthLibrary` surface with two underlying services — an **authenticator** and a **QR-code generator** — plus convenience pass-throughs for the common enrol/verify flow.
+`CL.TwoFactorAuth` adds RFC 6238 time-based one-time passwords to a CodeLogic application. It builds on [Otp.NET](https://www.nuget.org/packages/Otp.NET) for the TOTP algorithm and [QRCoder](https://www.nuget.org/packages/QRCoder) for rendering provisioning QR codes. The library exposes a single `TwoFactorAuthLibrary` surface with two underlying services — an **authenticator** and a **QR-code generator** — plus convenience pass-throughs for the common enrol/verify flow.
 
 | | |
 |---|---|

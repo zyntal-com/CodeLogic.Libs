@@ -184,8 +184,8 @@ internal sealed record StorageTree(Dictionary<string, StorageItem> Items, Storag
 internal sealed class StorageFollowedLinks
 {
     // Links compare ignoring case, which only ever leaves more alone; read paths are exact spellings.
-    private readonly Dictionary<string, bool> _links = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, string> _readPaths = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, bool> _links = [with(StringComparer.OrdinalIgnoreCase)];
+    private readonly Dictionary<string, string> _readPaths = [with(StringComparer.Ordinal)];
 
     /// <summary>Records a followed link.</summary>
     public void Link(string relative, bool toDirectory) => _links[relative] = toDirectory;
@@ -220,9 +220,9 @@ internal sealed class StorageFollowedLinks
 /// </summary>
 internal sealed class StorageExclusions
 {
-    private readonly HashSet<string> _pruned = new(StringComparer.OrdinalIgnoreCase);
-    private readonly HashSet<string> _items = new(StringComparer.OrdinalIgnoreCase);
-    private readonly HashSet<string> _keeping = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _pruned = [with(StringComparer.OrdinalIgnoreCase)];
+    private readonly HashSet<string> _items = [with(StringComparer.OrdinalIgnoreCase)];
+    private readonly HashSet<string> _keeping = [with(StringComparer.OrdinalIgnoreCase)];
 
     /// <summary>Gets how many paths are kept, for the item limit.</summary>
     public int Count => _pruned.Count + _items.Count;

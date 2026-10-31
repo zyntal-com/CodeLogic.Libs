@@ -231,107 +231,14 @@ public sealed record RenderedTemplate
     public string? HtmlBody { get; init; }
 }
 
-// ── Results ───────────────────────────────────────────────────────────────────
+// ── Send receipt ──────────────────────────────────────────────────────────────
 
-/// <summary>Result of a mail operation that returns no payload.</summary>
-public sealed record MailResult
-{
-    /// <summary>Whether the operation succeeded.</summary>
-    public required bool IsSuccess { get; init; }
-
-    /// <summary>Error category (only meaningful when <see cref="IsSuccess"/> is false).</summary>
-    public MailError Error { get; init; } = MailError.None;
-
-    /// <summary>Human-readable error description.</summary>
-    public string? ErrorMessage { get; init; }
-
-    /// <summary>Server-assigned Message-ID returned on a successful send.</summary>
-    public string? MessageId { get; init; }
-
-    /// <summary>UTC time the operation completed.</summary>
-    public DateTime Timestamp { get; init; } = DateTime.UtcNow;
-
-    /// <summary>Creates a successful result, optionally carrying the server's Message-ID.</summary>
-    public static MailResult Success(string? messageId = null) =>
-        new() { IsSuccess = true, MessageId = messageId };
-
-    /// <summary>Creates a failure result with an error category and optional message.</summary>
-    public static MailResult Failure(MailError error, string? message = null) =>
-        new() { IsSuccess = false, Error = error, ErrorMessage = message };
-}
-
-/// <summary>Result of a mail operation that returns a typed payload.</summary>
-/// <typeparam name="T">The payload type.</typeparam>
-public sealed record MailResult<T>
-{
-    /// <summary>Whether the operation succeeded.</summary>
-    public required bool IsSuccess { get; init; }
-
-    /// <summary>The result payload. Non-null only when <see cref="IsSuccess"/> is true.</summary>
-    public T? Value { get; init; }
-
-    /// <summary>Error category.</summary>
-    public MailError Error { get; init; } = MailError.None;
-
-    /// <summary>Human-readable error description.</summary>
-    public string? ErrorMessage { get; init; }
-
-    /// <summary>UTC time the operation completed.</summary>
-    public DateTime Timestamp { get; init; } = DateTime.UtcNow;
-
-    /// <summary>Creates a successful result with a payload.</summary>
-    public static MailResult<T> Success(T value) =>
-        new() { IsSuccess = true, Value = value };
-
-    /// <summary>Creates a failure result.</summary>
-    public static MailResult<T> Failure(MailError error, string? message = null) =>
-        new() { IsSuccess = false, Error = error, ErrorMessage = message };
-}
-
-// ── Error enum ────────────────────────────────────────────────────────────────
-
-/// <summary>Categorised error codes for mail operations.</summary>
-public enum MailError
-{
-    /// <summary>No error.</summary>
-    None,
-    /// <summary>Recipient address is missing or malformed.</summary>
-    InvalidRecipient,
-    /// <summary>Sender address is missing or malformed.</summary>
-    InvalidSender,
-    /// <summary>Subject line is missing.</summary>
-    InvalidSubject,
-    /// <summary>Named template was not found in the template directory.</summary>
-    TemplateNotFound,
-    /// <summary>An error occurred while rendering a template.</summary>
-    TemplateRenderingFailed,
-    /// <summary>SMTP configuration is incomplete or invalid.</summary>
-    SmtpConfigInvalid,
-    /// <summary>SMTP server rejected the authentication credentials.</summary>
-    SmtpAuthenticationFailed,
-    /// <summary>SMTP connection timed out.</summary>
-    SmtpTimeout,
-    /// <summary>SMTP server rejected the message (e.g., bad recipient).</summary>
-    SmtpRejected,
-    /// <summary>General SMTP protocol error.</summary>
-    SmtpError,
-    /// <summary>Attachment file was not found on disk.</summary>
-    AttachmentNotFound,
-    /// <summary>IMAP configuration is incomplete or invalid.</summary>
-    ImapConfigInvalid,
-    /// <summary>IMAP server rejected the authentication credentials.</summary>
-    ImapAuthenticationFailed,
-    /// <summary>IMAP connection timed out.</summary>
-    ImapTimeout,
-    /// <summary>General IMAP protocol error.</summary>
-    ImapError,
-    /// <summary>The requested IMAP folder does not exist.</summary>
-    FolderNotFound,
-    /// <summary>The requested IMAP message was not found by UID.</summary>
-    MessageNotFound,
-    /// <summary>An unexpected error occurred.</summary>
-    Unknown
-}
+/// <summary>
+/// The success value of <c>SmtpService.SendAsync</c> and <c>MailLibrary.SendTemplatedAsync</c>.
+/// </summary>
+/// <param name="MessageId">The Message-ID header of the sent message, or null if none was assigned.</param>
+/// <param name="SentAtUtc">UTC time the SMTP server accepted the message.</param>
+public sealed record MailSendReceipt(string? MessageId, DateTime SentAtUtc);
 
 // ── Search criteria ───────────────────────────────────────────────────────────
 

@@ -1,17 +1,15 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
     <RootNamespace>CL.NetUtils</RootNamespace>
     <AssemblyName>CL.NetUtils</AssemblyName>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <LangVersion>13</LangVersion>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <PackageId>CodeLogic.NetUtils</PackageId>
     <PackageTags>dns;dnsbl;geoip;geolocation</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <Authors>Zyntal.com</Authors>
-    <Description>DNSBL blacklist checking and IP geolocation services for CodeLogic 4 applications</Description>
+    <Description>DNSBL blacklist checking and IP geolocation services for CodeLogic 5 applications</Description>
     <NoWarn>CS1591</NoWarn>
   </PropertyGroup>
   <ItemGroup>

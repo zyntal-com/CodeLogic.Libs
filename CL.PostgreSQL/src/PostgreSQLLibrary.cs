@@ -55,7 +55,7 @@ public sealed class PostgreSQLLibrary : ILibrary, IConfigReloadable
     // than on every poll. Null until the first check.
     private bool? _lastHealthy;
     private RetentionWorker? _retentionWorker;
-    private readonly HashSet<(Type Type, string ConnectionId)> _registeredEntities = new();
+    private readonly HashSet<(Type Type, string ConnectionId)> _registeredEntities = [];
     private readonly ConcurrentDictionary<string, SyncMode> _syncModeOverrides = new(StringComparer.OrdinalIgnoreCase);
     private readonly Lock _registrationLock = new();
 
@@ -841,7 +841,7 @@ public sealed class PostgreSQLLibrary : ILibrary, IConfigReloadable
 
     private static Dictionary<string, PostgreSqlDatabaseConfig> EnabledDatabases(DatabaseConfiguration? config) =>
         config?.Databases.Where(d => d.Value.Enabled).ToDictionary(d => d.Key, d => d.Value)
-        ?? new Dictionary<string, PostgreSqlDatabaseConfig>();
+        ?? [];
 
     private static void ApplyCacheConfiguration(CacheConfiguration cache) =>
         QueryCache.Configure(

@@ -2,7 +2,7 @@
 
 > DNSBL blacklist checking and MaxMind GeoIP geolocation — screen abusive IPs and locate visitors with one library.
 
-`CL.NetUtils` adds two network-reputation tools to a CodeLogic 4 application behind a single `NetUtilsLibrary` surface. The **DNSBL checker** queries blacklist zones (IPv4 and IPv6, with primary and fallback providers) to decide whether an address is listed as a known abuser. The **GeoIP service** resolves an address to a country, city, coordinates, and time zone using a [MaxMind GeoLite2/GeoIP2](https://www.maxmind.com/) `.mmdb` database, which can be supplied on disk or auto-downloaded with your MaxMind credentials.
+`CL.NetUtils` adds two network-reputation tools to a CodeLogic application behind a single `NetUtilsLibrary` surface. The **DNSBL checker** queries blacklist zones (IPv4 and IPv6, with primary and fallback providers) to decide whether an address is listed as a known abuser. The **GeoIP service** resolves an address to a country, city, coordinates, and time zone using a [MaxMind GeoLite2/GeoIP2](https://www.maxmind.com/) `.mmdb` database, which can be supplied on disk or auto-downloaded with your MaxMind credentials.
 
 There is no standalone DNS-lookup service — DNS resolution is an internal detail of the DNSBL checker.
 

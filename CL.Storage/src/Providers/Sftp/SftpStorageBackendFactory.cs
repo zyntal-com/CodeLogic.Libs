@@ -172,7 +172,7 @@ internal sealed class SftpStorageBackendFactory : IStorageBackendFactory, IIsola
 /// <summary>An SSH session to a jump host with a local port forwarded to the SFTP target.</summary>
 internal sealed class SftpJumpTunnel : IDisposable
 {
-    private static readonly ConditionalWeakTable<BaseClient, SftpJumpTunnel> Tunnels = new();
+    private static readonly ConditionalWeakTable<BaseClient, SftpJumpTunnel> Tunnels = [];
     private readonly SshClient _jump;
     private readonly ForwardedPortLocal _forward;
 

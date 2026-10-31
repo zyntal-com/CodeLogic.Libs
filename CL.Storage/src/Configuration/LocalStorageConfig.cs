@@ -8,7 +8,7 @@ public sealed class LocalStorageConfig : ConfigModelBase
 {
     /// <summary>Gets or sets local connections keyed by case-insensitive connection ID.</summary>
     [ConfigField(Label = "Connections", Description = "Named local or mounted filesystem roots.", Group = "Connections", Order = 0)]
-    public Dictionary<string, LocalConnectionConfig> Connections { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    public Dictionary<string, LocalConnectionConfig> Connections { get; set; } = [with(StringComparer.OrdinalIgnoreCase)];
 
     /// <inheritdoc />
     public override ConfigValidationResult Validate()

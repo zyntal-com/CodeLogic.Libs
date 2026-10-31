@@ -766,7 +766,7 @@ public sealed class QueryBuilder<T> where T : class, new()
 
     private (string Clause, Dictionary<string, object?> Params) BuildWhereSql()
     {
-        if (_wheres.Count == 0) return (string.Empty, new());
+        if (_wheres.Count == 0) return (string.Empty, []);
 
         var allParms = new Dictionary<string, object?>();
         var clauses = new List<string>();
@@ -842,7 +842,7 @@ public sealed class QueryBuilder<T> where T : class, new()
                 await using var cmd = BuildCommand(conn, sql, parms);
                 var raw = await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
                 if (raw is null || raw is DBNull) return default!;
-                return (TResult)Convert.ChangeType(raw, typeof(TResult))!;
+                return (TResult)SQLiteValueConverter.FromDbValue(raw, typeof(TResult))!;
             }, _connectionId, ct).ConfigureAwait(false);
 
             sw.Stop();

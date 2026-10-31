@@ -6,19 +6,19 @@ _layout: landing
   <img src="images/logo.svg" alt="CodeLogic Libraries logo" />
   <h1>CodeLogic Libraries</h1>
   <p class="lead">
-    Twelve production-ready .NET 10 libraries for the
-    <a href="https://github.com/zyntal-com/CodeLogic">CodeLogic 4</a> framework.
+    Thirteen production-ready .NET 11 libraries for the
+    <a href="https://github.com/zyntal-com/CodeLogic">CodeLogic 5</a> framework.
     Databases, email, storage, security, monitoring, and more — each a self-contained
     <code>ILibrary</code> that manages its own configuration, lifecycle, and health checks.
   </p>
   <div class="cl-badges">
     <a href="https://www.nuget.org/profiles/zyntal.com"><img src="https://img.shields.io/badge/NuGet-CodeLogic.*-2f86ad" alt="NuGet" /></a>
-    <img src="https://img.shields.io/badge/.NET-10-512bd4" alt=".NET 10" />
+    <img src="https://img.shields.io/badge/.NET-11-512bd4" alt=".NET 11" />
     <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT" />
   </div>
 </div>
 
-Every `CL.*` package plugs directly into the CodeLogic 4 boot sequence. You load it with
+Every `CL.*` package plugs directly into the CodeLogic boot sequence. You load it with
 `Libraries.LoadAsync<T>()`, configure it through an auto-generated JSON file, and the framework
 handles initialization order, dependency wiring, and graceful shutdown.
 

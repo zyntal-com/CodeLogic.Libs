@@ -3,9 +3,9 @@
 [![NuGet](https://img.shields.io/nuget/v/CodeLogic.GitHelper)](https://www.nuget.org/packages/CodeLogic.GitHelper)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/zyntal-com/CodeLogic.Libs/blob/main/LICENSE)
 
-> Programmatic Git repository management for [CodeLogic 4](https://github.com/zyntal-com/CodeLogic) — clone, fetch, pull, push, commit, branch, and reset, all from configured repositories.
+> Programmatic Git repository management for [CodeLogic 5](https://github.com/zyntal-com/CodeLogic) — clone, fetch, pull, push, commit, branch, and reset, all from configured repositories.
 
-A thin, async wrapper over [LibGit2Sharp](https://www.nuget.org/packages/LibGit2Sharp) that manages a pool of named repositories. Every operation returns a `GitResult<T>` instead of throwing, carries rich `GitDiagnostics` (timing and transfer counters), and the standout `EnsureUpToDateAsync` gives you one idempotent call that clones a repository if it's missing or hard-resets it to the remote tip if it already exists.
+A thin, async wrapper over [LibGit2Sharp](https://www.nuget.org/packages/LibGit2Sharp) that manages a pool of named repositories. Every operation returns a CodeLogic `Result<T>` / `Result` instead of throwing, with a typed `Error` (`NotFoundError`, `ValidationError`, ...) and a stable `git.*` code on failure; fetch, pull and push return `GitDiagnostics` (timing and transfer counters) as their value; and the standout `EnsureUpToDateAsync` gives you one idempotent call that clones a repository if it's missing or hard-resets it to the remote tip if it already exists.
 
 ## Install
 
@@ -17,6 +17,8 @@ dotnet add package CodeLogic.GitHelper
 
 ```csharp
 using CL.GitHelper;
+using CL.GitHelper.Errors;
+using CodeLogic.Core.Results;
 
 await Libraries.LoadAsync<GitHelperLibrary>();   // register before ConfigureAsync()
 await CodeLogic.ConfigureAsync();
@@ -26,11 +28,13 @@ var git  = Libraries.Get<GitHelperLibrary>();
 var repo = await git.GetRepositoryAsync("Default");
 
 // One idempotent call: clones if missing, else fetches + hard-resets to the remote tip.
-GitResult<RepositoryInfo> sync = await repo.EnsureUpToDateAsync();
+Result<RepositoryInfo> sync = await repo.EnsureUpToDateAsync();
 if (sync.IsSuccess)
     Console.WriteLine($"On {sync.Value!.CurrentBranch} @ {sync.Value.HeadCommitSha[..7]}");
+else if (sync.Error is ConflictError { Code: GitErrors.UncommittedChangesCode })
+    Console.WriteLine("Local changes present; not resetting.");
 else
-    Console.WriteLine($"Sync failed: {sync.ErrorMessage}");
+    Console.WriteLine($"Sync failed: {sync.Error!.Code}: {sync.Error.Message}");
 ```
 
 ## Features
@@ -42,7 +46,7 @@ else
 - **Reset & history** — `ResetHardAsync` and `GetCommitLogAsync`.
 - **Batch operations** — `FetchAllAsync` and `GetAllStatusAsync` run across every configured repository with bounded concurrency.
 - **Repository caching** — configurable in-memory pool with automatic eviction.
-- **No exceptions** — every operation returns a `GitResult<T>` with `IsSuccess`, `Value`, `ErrorMessage`, `Exception`, and `Diagnostics`.
+- **No exceptions** — every operation returns a CodeLogic `Result<T>` (or `Result` for checkout/reset). Failures carry an `Error` of the matching kind (`NotFoundError`, `ValidationError`, `UnauthorizedError`, `ConflictError`, `InternalError`, ...) with a stable code from `GitErrors` (e.g. `git.remote_not_found`); caught exceptions are logged and their type name is in `Error.Details`.
 
 ## Configuration
 
@@ -103,7 +107,7 @@ Full guide: **[CL.GitHelper documentation](https://zyntal-com.github.io/CodeLogi
 
 ## Requirements
 
-- [CodeLogic 4.9+](https://github.com/zyntal-com/CodeLogic) · .NET 10
+- [CodeLogic 5.0+](https://github.com/zyntal-com/CodeLogic) · .NET 11
 - LibGit2Sharp 0.30.x
 
 ## License

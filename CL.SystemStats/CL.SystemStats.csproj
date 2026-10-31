@@ -1,26 +1,24 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
     <RootNamespace>CL.SystemStats</RootNamespace>
     <AssemblyName>CL.SystemStats</AssemblyName>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <LangVersion>13</LangVersion>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <NoWarn>CS1591</NoWarn>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <Authors>Zyntal.com</Authors>
     <Company>Zyntal.com</Company>
     <Product>CL.SystemStats</Product>
-    <Description>Cross-platform system statistics (CPU, memory, processes, uptime) for CodeLogic 4 — Windows and Linux via /proc</Description>
+    <Description>Cross-platform system statistics (CPU, memory, processes, uptime) for CodeLogic 5 — Windows and Linux via /proc</Description>
     <PackageId>CodeLogic.SystemStats</PackageId>
     <PackageTags>cpu;memory;process;monitoring;cross-platform</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>  <!-- Always restore these so the project compiles on all platforms.
        The Windows provider uses them at runtime; the Linux provider doesn't. -->
   <ItemGroup>
-    <PackageReference Include="System.Diagnostics.PerformanceCounter" Version="10.*" />
-    <PackageReference Include="System.Management" Version="10.*" />
+    <PackageReference Include="System.Diagnostics.PerformanceCounter" Version="11.0.0-rc.3.26522.148" />
+    <PackageReference Include="System.Management" Version="11.0.0-rc.3.26522.148" />
   </ItemGroup>
   <ItemGroup>
     <None Include="README.md" Pack="true" PackagePath="/" />

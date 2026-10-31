@@ -1,12 +1,12 @@
 # Getting Started
 
-This guide shows how to add a `CL.*` library to a CodeLogic 4 application, configure it, and use it.
+This guide shows how to add a `CL.*` library to a CodeLogic application, configure it, and use it.
 Every library follows the same shape, so the steps are identical regardless of which one you pick.
 
 ## Prerequisites
 
-- .NET 10 SDK
-- A [CodeLogic 4](https://github.com/zyntal-com/CodeLogic) application (`CodeLogic` 4.9+)
+- .NET 11 SDK
+- A [CodeLogic 5](https://github.com/zyntal-com/CodeLogic) application (`CodeLogic` 5.0+; on .NET 10 use the 4.9.x packages)
 
 ## 1. Install
 

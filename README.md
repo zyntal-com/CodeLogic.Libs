@@ -6,13 +6,13 @@
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License: MIT"></a>
-  <img src="https://img.shields.io/badge/.NET-10-512bd4" alt=".NET 10">
+  <img src="https://img.shields.io/badge/.NET-11-512bd4" alt=".NET 11">
   <a href="https://zyntal-com.github.io/CodeLogic.Libs/"><img src="https://img.shields.io/badge/docs-zyntal-com.github.io-2f86ad" alt="Documentation"></a>
 </p>
 
 <p align="center">
-  Twelve production-ready .NET 10 library integrations for
-  <a href="https://github.com/zyntal-com/CodeLogic">CodeLogic 4</a>.
+  Thirteen production-ready .NET 11 library integrations for
+  <a href="https://github.com/zyntal-com/CodeLogic">CodeLogic 5</a>.
   Each is a self-contained <code>ILibrary</code> with auto-generated configuration,
   lifecycle management, and health checks.
 </p>
@@ -35,7 +35,7 @@
 | [CodeLogic.GitHelper](CL.GitHelper/) | [![NuGet](https://img.shields.io/nuget/v/CodeLogic.GitHelper?label=)](https://www.nuget.org/packages/CodeLogic.GitHelper) | Git repository automation via LibGit2Sharp |
 | [CodeLogic.TwoFactorAuth](CL.TwoFactorAuth/) | [![NuGet](https://img.shields.io/nuget/v/CodeLogic.TwoFactorAuth?label=)](https://www.nuget.org/packages/CodeLogic.TwoFactorAuth) | TOTP 2FA with QR-code generation |
 
-All packages target **.NET 10** and depend on **CodeLogic 4.9** (range `[4.9.0, 5.0.0)`).
+All packages target **.NET 11** and depend on **CodeLogic 5.0** (range `[5.0.0, 6.0.0)`). On .NET 10, use the 4.9.x packages (CodeLogic `[4.9.0, 5.0.0)`), maintained on the `support/4.x` branch.
 
 Every library and the CodeLogic framework itself share one version line: **`4.9.<patch>`**.
 The `major.minor` is hand-controlled in the repo-root `version.txt`; the patch is the CI run
@@ -123,8 +123,8 @@ Each package also ships a focused `README.md` and `CHANGELOG.md` in its folder.
 
 ## Requirements
 
-- [CodeLogic 4.9+](https://github.com/zyntal-com/CodeLogic)
-- .NET 10 SDK or later
+- [CodeLogic 5.0+](https://github.com/zyntal-com/CodeLogic)
+- .NET 11 SDK or later
 
 ## License
 

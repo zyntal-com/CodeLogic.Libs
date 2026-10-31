@@ -1,6 +1,7 @@
 using CL.Mail.Models;
 using CL.Mail.Services;
 using CodeLogic.Core.Configuration;
+using CodeLogic.Core.Results;
 using CodeLogic.Framework.Libraries;
 
 namespace CL.Mail;
@@ -271,19 +272,23 @@ public sealed class MailLibrary : ILibrary, IConfigReloadable
     /// <param name="variables">Template variable values.</param>
     /// <param name="configure">Callback to configure the mail (From, To, etc.) on the builder.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    public async Task<MailResult> SendTemplatedAsync(
+    /// <returns>
+    /// A <see cref="MailSendReceipt"/> on success; otherwise the first <see cref="Error"/> met while
+    /// loading (<see cref="MailErrorCodes.TemplateNotFound"/>), rendering or sending the message.
+    /// </returns>
+    public async Task<Result<MailSendReceipt>> SendTemplatedAsync(
         string templateId,
         Dictionary<string, object?> variables,
         Action<MailBuilder> configure,
         CancellationToken cancellationToken = default)
     {
         var loadResult = await TemplateProvider.LoadTemplateAsync(templateId, cancellationToken).ConfigureAwait(false);
-        if (!loadResult.IsSuccess)
-            return MailResult.Failure(loadResult.Error, loadResult.ErrorMessage);
+        if (loadResult.IsFailure)
+            return loadResult.Error!;
 
         var renderResult = await TemplateEngine.RenderAsync(loadResult.Value!, variables, cancellationToken).ConfigureAwait(false);
-        if (!renderResult.IsSuccess)
-            return MailResult.Failure(renderResult.Error, renderResult.ErrorMessage);
+        if (renderResult.IsFailure)
+            return renderResult.Error!;
 
         var rendered = renderResult.Value!;
         var builder = new MailBuilder().Subject(rendered.Subject);

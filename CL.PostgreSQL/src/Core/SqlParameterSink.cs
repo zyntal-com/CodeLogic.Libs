@@ -12,8 +12,8 @@ namespace CL.PostgreSQL.Core;
 internal sealed class SqlParameterSink
 {
     private readonly string _prefix;
-    private readonly Dictionary<string, object?> _parameters = new();
-    private readonly Dictionary<(object Value, StorageType StorageType), string> _byValue = new();
+    private readonly Dictionary<string, object?> _parameters = [];
+    private readonly Dictionary<(object Value, StorageType StorageType), string> _byValue = [];
 
     public SqlParameterSink(string prefix = "@ex_")
     {

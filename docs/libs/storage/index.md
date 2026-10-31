@@ -9,7 +9,7 @@
 | **Package** | [`CodeLogic.Storage`](https://www.nuget.org/packages/CodeLogic.Storage) |
 | **Library class** | `CL.Storage.StorageLibrary` |
 | **Config files** | `config.storage.json` · `config.storage.<provider>.json` |
-| **Target** | .NET 10 / CodeLogic 4 |
+| **Target** | .NET 11 / CodeLogic 5 |
 | **Result model** | `Result` and `Result<T>`; connection calls throw `OperationCanceledException` on cancel, while `StorageLibrary.CopyAsync`/`MoveAsync` and an applying sync report it |
 
 This overview covers loading, the mount model, configuration, and the everyday API. The rest lives on

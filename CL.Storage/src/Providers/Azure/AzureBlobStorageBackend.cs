@@ -606,7 +606,7 @@ public sealed class AzureBlobStorageBackend :
             }
             var values = options.Mode == StorageMetadataUpdateMode.Merge
                 ? new Dictionary<string, string>(current.Metadata, StringComparer.Ordinal)
-                : new Dictionary<string, string>(StringComparer.Ordinal);
+                : [with(StringComparer.Ordinal)];
             foreach (var (name, value) in snapshot)
                 values[name] = value;
             var expected = options.ExpectedETag is not null
@@ -874,7 +874,7 @@ public sealed class AzureBlobStorageBackend :
             ETag = blob.Properties.ETag?.ToString().Trim('"'),
             VersionId = blob.VersionId,
             Metadata = blob.Metadata is null
-                ? new Dictionary<string, string>()
+                ? []
                 : new Dictionary<string, string>(blob.Metadata, StringComparer.Ordinal)
         };
     }

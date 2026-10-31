@@ -1,10 +1,12 @@
 using CL.Mail.Models;
 using CodeLogic.Core.Logging;
+using CodeLogic.Core.Results;
 using MailKit;
 using MailKit.Net.Imap;
 using MailKit.Search;
 using MailKit.Security;
 using MimeKit;
+using System.Net.Sockets;
 using MkFlags  = MailKit.MessageFlags;
 using MkFolder = MailKit.MailFolder;
 // Our model types that collide with MailKit names
@@ -54,7 +56,7 @@ public sealed class ImapService : IDisposable
     // ── Connection ────────────────────────────────────────────────────────────
 
     /// <summary>Connects and authenticates to the IMAP server.</summary>
-    public async Task<MailResult> ConnectAsync(CancellationToken cancellationToken = default)
+    public async Task<Result> ConnectAsync(CancellationToken cancellationToken = default)
     {
         try
         {
@@ -62,27 +64,33 @@ public sealed class ImapService : IDisposable
             await _client.ConnectAsync(_config.Host, _config.Port, MapSecurity(_config.SecurityMode), cancellationToken).ConfigureAwait(false);
             await _client.AuthenticateAsync(_config.Username, _config.Password, cancellationToken).ConfigureAwait(false);
             _logger?.Info($"Connected to IMAP {_config.Host}:{_config.Port}");
-            return MailResult.Success();
+            return Result.Success();
         }
         catch (AuthenticationException ex)
         {
             _logger?.Error("IMAP authentication failed", ex);
-            return MailResult.Failure(MailError.ImapAuthenticationFailed, "Authentication failed");
+            return MailErrors.Unauthorized(MailErrorCodes.ImapAuthenticationFailed, "Authentication failed");
         }
         catch (TimeoutException ex)
         {
             _logger?.Error("IMAP connection timed out", ex);
-            return MailResult.Failure(MailError.ImapTimeout, "Connection timed out");
+            return MailErrors.Timeout(MailErrorCodes.ImapTimeout, "Connection timed out");
+        }
+        catch (SocketException ex)
+        {
+            _logger?.Error($"IMAP server {_config.Host}:{_config.Port} unreachable", ex);
+            return MailErrors.Unavailable(MailErrorCodes.ImapConnectionFailed,
+                $"Could not connect to IMAP server {_config.Host}:{_config.Port}", ex);
         }
         catch (Exception ex)
         {
             _logger?.Error("IMAP connection error", ex);
-            return MailResult.Failure(MailError.ImapError, ex.Message);
+            return MailErrors.Internal(MailErrorCodes.ImapError, ex);
         }
     }
 
     /// <summary>Gracefully disconnects from the IMAP server and stops IDLE if running.</summary>
-    public async Task<MailResult> DisconnectAsync(CancellationToken cancellationToken = default)
+    public async Task<Result> DisconnectAsync(CancellationToken cancellationToken = default)
     {
         try
         {
@@ -92,19 +100,19 @@ public sealed class ImapService : IDisposable
                 await _client.DisconnectAsync(true, cancellationToken).ConfigureAwait(false);
                 _logger?.Info("Disconnected from IMAP");
             }
-            return MailResult.Success();
+            return Result.Success();
         }
         catch (Exception ex)
         {
             _logger?.Error("Error disconnecting from IMAP", ex);
-            return MailResult.Failure(MailError.ImapError, ex.Message);
+            return MailErrors.Internal(MailErrorCodes.ImapError, ex);
         }
     }
 
     // ── Folders ───────────────────────────────────────────────────────────────
 
     /// <summary>Lists all selectable folders on the server including INBOX.</summary>
-    public async Task<MailResult<IReadOnlyList<ModelMailFolder>>> ListFoldersAsync(CancellationToken cancellationToken = default)
+    public async Task<Result<IReadOnlyList<ModelMailFolder>>> ListFoldersAsync(CancellationToken cancellationToken = default)
     {
         try
         {
@@ -136,17 +144,17 @@ public sealed class ImapService : IDisposable
                 catch (Exception ex) { _logger?.Warning($"Could not stat folder '{f.FullName}': {ex.Message}"); }
             }
 
-            return MailResult<IReadOnlyList<ModelMailFolder>>.Success(folders.AsReadOnly());
+            return Result<IReadOnlyList<ModelMailFolder>>.Success(folders.AsReadOnly());
         }
         catch (Exception ex)
         {
             _logger?.Error("Error listing folders", ex);
-            return MailResult<IReadOnlyList<ModelMailFolder>>.Failure(MailError.ImapError, ex.Message);
+            return MailErrors.Internal(MailErrorCodes.ImapError, ex);
         }
     }
 
     /// <summary>Creates a new mail folder by name.</summary>
-    public async Task<MailResult> CreateFolderAsync(string name, CancellationToken cancellationToken = default)
+    public async Task<Result> CreateFolderAsync(string name, CancellationToken cancellationToken = default)
     {
         try
         {
@@ -154,51 +162,51 @@ public sealed class ImapService : IDisposable
             var personal = _client!.GetFolder(_client.PersonalNamespaces[0]);
             await personal.CreateAsync(name, true, cancellationToken).ConfigureAwait(false);
             _logger?.Info($"Created folder: {name}");
-            return MailResult.Success();
+            return Result.Success();
         }
         catch (Exception ex)
         {
             _logger?.Error($"Error creating folder '{name}'", ex);
-            return MailResult.Failure(MailError.ImapError, ex.Message);
+            return MailErrors.Internal(MailErrorCodes.ImapError, ex);
         }
     }
 
     /// <summary>Deletes a folder by its full IMAP path.</summary>
-    public async Task<MailResult> DeleteFolderAsync(string fullName, CancellationToken cancellationToken = default)
+    public async Task<Result> DeleteFolderAsync(string fullName, CancellationToken cancellationToken = default)
     {
         try
         {
             await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
             var folder = await GetImapFolderAsync(fullName, FolderAccess.None, cancellationToken).ConfigureAwait(false);
-            if (folder is null) return MailResult.Failure(MailError.FolderNotFound, $"Folder '{fullName}' not found");
+            if (folder is null) return MailErrors.NotFound(MailErrorCodes.FolderNotFound, $"Folder '{fullName}' not found");
             await folder.DeleteAsync(cancellationToken).ConfigureAwait(false);
             _logger?.Info($"Deleted folder: {fullName}");
-            return MailResult.Success();
+            return Result.Success();
         }
         catch (Exception ex)
         {
             _logger?.Error($"Error deleting folder '{fullName}'", ex);
-            return MailResult.Failure(MailError.ImapError, ex.Message);
+            return MailErrors.Internal(MailErrorCodes.ImapError, ex);
         }
     }
 
     /// <summary>Renames a folder.</summary>
-    public async Task<MailResult> RenameFolderAsync(string oldName, string newName, CancellationToken cancellationToken = default)
+    public async Task<Result> RenameFolderAsync(string oldName, string newName, CancellationToken cancellationToken = default)
     {
         try
         {
             await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
             var folder = await GetImapFolderAsync(oldName, FolderAccess.None, cancellationToken).ConfigureAwait(false);
-            if (folder is null) return MailResult.Failure(MailError.FolderNotFound, $"Folder '{oldName}' not found");
-            if (folder.ParentFolder is null) return MailResult.Failure(MailError.ImapError, $"Folder '{oldName}' has no parent folder");
+            if (folder is null) return MailErrors.NotFound(MailErrorCodes.FolderNotFound, $"Folder '{oldName}' not found");
+            if (folder.ParentFolder is null) return MailErrors.Internal(MailErrorCodes.ImapError, $"Folder '{oldName}' has no parent folder");
             await folder.RenameAsync(folder.ParentFolder, newName, cancellationToken).ConfigureAwait(false);
             _logger?.Info($"Renamed folder: {oldName} → {newName}");
-            return MailResult.Success();
+            return Result.Success();
         }
         catch (Exception ex)
         {
             _logger?.Error($"Error renaming folder '{oldName}'", ex);
-            return MailResult.Failure(MailError.ImapError, ex.Message);
+            return MailErrors.Internal(MailErrorCodes.ImapError, ex);
         }
     }
 
@@ -212,7 +220,7 @@ public sealed class ImapService : IDisposable
     /// <param name="count">Number of messages per page.</param>
     /// <param name="includeBody">When true, fetches the full body and attachments.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    public async Task<MailResult<IReadOnlyList<ReceivedMessage>>> FetchMessagesAsync(
+    public async Task<Result<IReadOnlyList<ReceivedMessage>>> FetchMessagesAsync(
         string folder, int offset, int count, bool includeBody = false,
         CancellationToken cancellationToken = default)
     {
@@ -221,11 +229,11 @@ public sealed class ImapService : IDisposable
             await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
             var imapFolder = await GetImapFolderAsync(folder, FolderAccess.ReadOnly, cancellationToken).ConfigureAwait(false);
             if (imapFolder is null)
-                return MailResult<IReadOnlyList<ReceivedMessage>>.Failure(MailError.FolderNotFound, $"Folder '{folder}' not found");
+                return MailErrors.NotFound(MailErrorCodes.FolderNotFound, $"Folder '{folder}' not found");
 
             var total = imapFolder.Count;
             if (total == 0 || offset >= total)
-                return MailResult<IReadOnlyList<ReceivedMessage>>.Success(Array.Empty<ReceivedMessage>());
+                return Result<IReadOnlyList<ReceivedMessage>>.Success(Array.Empty<ReceivedMessage>());
 
             var startIdx = Math.Max(0, total - offset - count);
             var endIdx   = Math.Max(0, total - offset - 1);
@@ -239,17 +247,17 @@ public sealed class ImapService : IDisposable
             foreach (var summary in summaries.Reverse())
                 messages.Add(await ConvertSummaryAsync(imapFolder, summary, includeBody, cancellationToken).ConfigureAwait(false));
 
-            return MailResult<IReadOnlyList<ReceivedMessage>>.Success(messages.AsReadOnly());
+            return Result<IReadOnlyList<ReceivedMessage>>.Success(messages.AsReadOnly());
         }
         catch (Exception ex)
         {
             _logger?.Error($"Error fetching messages from '{folder}'", ex);
-            return MailResult<IReadOnlyList<ReceivedMessage>>.Failure(MailError.ImapError, ex.Message);
+            return MailErrors.Internal(MailErrorCodes.ImapError, ex);
         }
     }
 
     /// <summary>Fetches a single message by UID with full body and attachment content.</summary>
-    public async Task<MailResult<ReceivedMessage>> GetMessageAsync(
+    public async Task<Result<ReceivedMessage>> GetMessageAsync(
         string folder, uint uid, CancellationToken cancellationToken = default)
     {
         try
@@ -257,12 +265,12 @@ public sealed class ImapService : IDisposable
             await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
             var imapFolder = await GetImapFolderAsync(folder, FolderAccess.ReadOnly, cancellationToken).ConfigureAwait(false);
             if (imapFolder is null)
-                return MailResult<ReceivedMessage>.Failure(MailError.FolderNotFound, $"Folder '{folder}' not found");
+                return MailErrors.NotFound(MailErrorCodes.FolderNotFound, $"Folder '{folder}' not found");
 
             var uniqueId = new UniqueId(uid);
             var message = await imapFolder.GetMessageAsync(uniqueId, cancellationToken).ConfigureAwait(false);
             if (message is null)
-                return MailResult<ReceivedMessage>.Failure(MailError.MessageNotFound, $"Message UID {uid} not found");
+                return MailErrors.NotFound(MailErrorCodes.MessageNotFound, $"Message UID {uid} not found");
 
             var summaries = await imapFolder.FetchAsync(
                 new[] { uniqueId }, MessageSummaryItems.UniqueId | MessageSummaryItems.Flags,
@@ -287,7 +295,7 @@ public sealed class ImapService : IDisposable
                 }
             }
 
-            return MailResult<ReceivedMessage>.Success(new ReceivedMessage
+            return new ReceivedMessage
             {
                 MessageId = message.MessageId,
                 Uid = uid,
@@ -302,12 +310,12 @@ public sealed class ImapService : IDisposable
                 Flags = flags,
                 Folder = folder,
                 Attachments = attachments.AsReadOnly()
-            });
+            };
         }
         catch (Exception ex)
         {
             _logger?.Error($"Error getting message UID {uid} from '{folder}'", ex);
-            return MailResult<ReceivedMessage>.Failure(MailError.ImapError, ex.Message);
+            return MailErrors.Internal(MailErrorCodes.ImapError, ex);
         }
     }
 
@@ -317,7 +325,7 @@ public sealed class ImapService : IDisposable
     /// <param name="includeBody">When true, fetches full body for each result.</param>
     /// <param name="maxResults">Maximum number of results to return (newest first).</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    public async Task<MailResult<IReadOnlyList<ReceivedMessage>>> SearchAsync(
+    public async Task<Result<IReadOnlyList<ReceivedMessage>>> SearchAsync(
         string folder, ImapSearchCriteria criteria,
         bool includeBody = false, int maxResults = 50,
         CancellationToken cancellationToken = default)
@@ -327,14 +335,14 @@ public sealed class ImapService : IDisposable
             await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
             var imapFolder = await GetImapFolderAsync(folder, FolderAccess.ReadOnly, cancellationToken).ConfigureAwait(false);
             if (imapFolder is null)
-                return MailResult<IReadOnlyList<ReceivedMessage>>.Failure(MailError.FolderNotFound, $"Folder '{folder}' not found");
+                return MailErrors.NotFound(MailErrorCodes.FolderNotFound, $"Folder '{folder}' not found");
 
             var query = BuildQuery(criteria);
             var uids = await imapFolder.SearchAsync(query, cancellationToken).ConfigureAwait(false);
             var limited = uids.Reverse().Take(maxResults).ToList();
 
             if (limited.Count == 0)
-                return MailResult<IReadOnlyList<ReceivedMessage>>.Success(Array.Empty<ReceivedMessage>());
+                return Result<IReadOnlyList<ReceivedMessage>>.Success(Array.Empty<ReceivedMessage>());
 
             var items = MessageSummaryItems.UniqueId | MessageSummaryItems.Envelope | MessageSummaryItems.Flags;
             if (includeBody) items |= MessageSummaryItems.BodyStructure;
@@ -345,77 +353,77 @@ public sealed class ImapService : IDisposable
             foreach (var summary in summaries.Reverse())
                 messages.Add(await ConvertSummaryAsync(imapFolder, summary, includeBody, cancellationToken).ConfigureAwait(false));
 
-            return MailResult<IReadOnlyList<ReceivedMessage>>.Success(messages.AsReadOnly());
+            return Result<IReadOnlyList<ReceivedMessage>>.Success(messages.AsReadOnly());
         }
         catch (Exception ex)
         {
             _logger?.Error($"Error searching '{folder}'", ex);
-            return MailResult<IReadOnlyList<ReceivedMessage>>.Failure(MailError.ImapError, ex.Message);
+            return MailErrors.Internal(MailErrorCodes.ImapError, ex);
         }
     }
 
     /// <summary>Moves a message from <paramref name="source"/> to <paramref name="destination"/>.</summary>
-    public async Task<MailResult> MoveMessageAsync(string source, uint uid, string destination, CancellationToken cancellationToken = default)
+    public async Task<Result> MoveMessageAsync(string source, uint uid, string destination, CancellationToken cancellationToken = default)
     {
         try
         {
             await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
             var src = await GetImapFolderAsync(source, FolderAccess.ReadWrite, cancellationToken).ConfigureAwait(false);
-            if (src is null) return MailResult.Failure(MailError.FolderNotFound, $"Source '{source}' not found");
+            if (src is null) return MailErrors.NotFound(MailErrorCodes.FolderNotFound, $"Source '{source}' not found");
             var dst = await GetImapFolderAsync(destination, FolderAccess.None, cancellationToken).ConfigureAwait(false);
-            if (dst is null) return MailResult.Failure(MailError.FolderNotFound, $"Destination '{destination}' not found");
+            if (dst is null) return MailErrors.NotFound(MailErrorCodes.FolderNotFound, $"Destination '{destination}' not found");
 
             await src.MoveToAsync(new UniqueId(uid), dst, cancellationToken).ConfigureAwait(false);
             _logger?.Info($"Moved UID {uid} from '{source}' to '{destination}'");
-            return MailResult.Success();
+            return Result.Success();
         }
         catch (Exception ex)
         {
             _logger?.Error($"Error moving message UID {uid}", ex);
-            return MailResult.Failure(MailError.ImapError, ex.Message);
+            return MailErrors.Internal(MailErrorCodes.ImapError, ex);
         }
     }
 
     /// <summary>Copies a message from <paramref name="source"/> to <paramref name="destination"/>.</summary>
-    public async Task<MailResult> CopyMessageAsync(string source, uint uid, string destination, CancellationToken cancellationToken = default)
+    public async Task<Result> CopyMessageAsync(string source, uint uid, string destination, CancellationToken cancellationToken = default)
     {
         try
         {
             await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
             var src = await GetImapFolderAsync(source, FolderAccess.ReadOnly, cancellationToken).ConfigureAwait(false);
-            if (src is null) return MailResult.Failure(MailError.FolderNotFound, $"Source '{source}' not found");
+            if (src is null) return MailErrors.NotFound(MailErrorCodes.FolderNotFound, $"Source '{source}' not found");
             var dst = await GetImapFolderAsync(destination, FolderAccess.None, cancellationToken).ConfigureAwait(false);
-            if (dst is null) return MailResult.Failure(MailError.FolderNotFound, $"Destination '{destination}' not found");
+            if (dst is null) return MailErrors.NotFound(MailErrorCodes.FolderNotFound, $"Destination '{destination}' not found");
 
             await src.CopyToAsync(new UniqueId(uid), dst, cancellationToken).ConfigureAwait(false);
             _logger?.Info($"Copied UID {uid} from '{source}' to '{destination}'");
-            return MailResult.Success();
+            return Result.Success();
         }
         catch (Exception ex)
         {
             _logger?.Error($"Error copying message UID {uid}", ex);
-            return MailResult.Failure(MailError.ImapError, ex.Message);
+            return MailErrors.Internal(MailErrorCodes.ImapError, ex);
         }
     }
 
     /// <summary>Permanently deletes a message by marking it \Deleted and expunging.</summary>
-    public async Task<MailResult> DeleteMessageAsync(string folder, uint uid, CancellationToken cancellationToken = default)
+    public async Task<Result> DeleteMessageAsync(string folder, uint uid, CancellationToken cancellationToken = default)
     {
         try
         {
             await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
             var imapFolder = await GetImapFolderAsync(folder, FolderAccess.ReadWrite, cancellationToken).ConfigureAwait(false);
-            if (imapFolder is null) return MailResult.Failure(MailError.FolderNotFound, $"Folder '{folder}' not found");
+            if (imapFolder is null) return MailErrors.NotFound(MailErrorCodes.FolderNotFound, $"Folder '{folder}' not found");
 
             await imapFolder.AddFlagsAsync(new UniqueId(uid), MkFlags.Deleted, true, cancellationToken).ConfigureAwait(false);
             await imapFolder.ExpungeAsync(cancellationToken).ConfigureAwait(false);
             _logger?.Info($"Deleted UID {uid} from '{folder}'");
-            return MailResult.Success();
+            return Result.Success();
         }
         catch (Exception ex)
         {
             _logger?.Error($"Error deleting message UID {uid}", ex);
-            return MailResult.Failure(MailError.ImapError, ex.Message);
+            return MailErrors.Internal(MailErrorCodes.ImapError, ex);
         }
     }
 
@@ -425,7 +433,7 @@ public sealed class ImapService : IDisposable
     /// <param name="flags">Flags to set or clear.</param>
     /// <param name="add">True to add flags; false to remove them.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    public async Task<MailResult> SetMessageFlagsAsync(
+    public async Task<Result> SetMessageFlagsAsync(
         string folder, uint uid, ModelMsgFlags flags, bool add = true,
         CancellationToken cancellationToken = default)
     {
@@ -433,7 +441,7 @@ public sealed class ImapService : IDisposable
         {
             await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
             var imapFolder = await GetImapFolderAsync(folder, FolderAccess.ReadWrite, cancellationToken).ConfigureAwait(false);
-            if (imapFolder is null) return MailResult.Failure(MailError.FolderNotFound, $"Folder '{folder}' not found");
+            if (imapFolder is null) return MailErrors.NotFound(MailErrorCodes.FolderNotFound, $"Folder '{folder}' not found");
 
             var mkFlags = ToMailKitFlags(flags);
             var uniqueId = new UniqueId(uid);
@@ -442,12 +450,12 @@ public sealed class ImapService : IDisposable
             else     await imapFolder.RemoveFlagsAsync(uniqueId, mkFlags, true, cancellationToken).ConfigureAwait(false);
 
             _logger?.Info($"{(add ? "Added" : "Removed")} flags {flags} on UID {uid} in '{folder}'");
-            return MailResult.Success();
+            return Result.Success();
         }
         catch (Exception ex)
         {
             _logger?.Error($"Error setting flags on UID {uid}", ex);
-            return MailResult.Failure(MailError.ImapError, ex.Message);
+            return MailErrors.Internal(MailErrorCodes.ImapError, ex);
         }
     }
 
@@ -459,10 +467,10 @@ public sealed class ImapService : IDisposable
     /// </summary>
     /// <param name="folder">IMAP folder to monitor (typically "INBOX").</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    public async Task<MailResult> StartIdleAsync(string folder, CancellationToken cancellationToken = default)
+    public async Task<Result> StartIdleAsync(string folder, CancellationToken cancellationToken = default)
     {
         if (_idleTask is not null)
-            return MailResult.Failure(MailError.ImapError, "IDLE already running — call StopIdle() first");
+            return MailErrors.Internal(MailErrorCodes.ImapError, "IDLE already running — call StopIdle() first");
 
         try
         {
@@ -471,12 +479,12 @@ public sealed class ImapService : IDisposable
             if (!_client!.Capabilities.HasFlag(ImapCapabilities.Idle))
             {
                 _logger?.Warning("IMAP server does not support IDLE");
-                return MailResult.Failure(MailError.ImapError, "Server does not support IDLE");
+                return MailErrors.Internal(MailErrorCodes.ImapError, "Server does not support IDLE");
             }
 
             var imapFolder = await GetImapFolderAsync(folder, FolderAccess.ReadOnly, cancellationToken).ConfigureAwait(false);
             if (imapFolder is null)
-                return MailResult.Failure(MailError.FolderNotFound, $"Folder '{folder}' not found");
+                return MailErrors.NotFound(MailErrorCodes.FolderNotFound, $"Folder '{folder}' not found");
 
             _idleCts = new CancellationTokenSource();
             var idleToken = _idleCts.Token;
@@ -519,12 +527,12 @@ public sealed class ImapService : IDisposable
             }, idleToken);
 
             _logger?.Info($"Started IDLE on '{folder}'");
-            return MailResult.Success();
+            return Result.Success();
         }
         catch (Exception ex)
         {
             _logger?.Error("Error starting IDLE", ex);
-            return MailResult.Failure(MailError.ImapError, ex.Message);
+            return MailErrors.Internal(MailErrorCodes.ImapError, ex);
         }
     }
 
@@ -548,7 +556,7 @@ public sealed class ImapService : IDisposable
         _client?.Dispose();
         var result = await ConnectAsync(cancellationToken).ConfigureAwait(false);
         if (!result.IsSuccess)
-            throw new InvalidOperationException($"IMAP reconnect failed: {result.ErrorMessage}");
+            throw new InvalidOperationException($"IMAP reconnect failed: {result.Error!.Code}: {result.Error.Message}");
     }
 
     private async Task<IMailFolder?> GetImapFolderAsync(string name, FolderAccess access, CancellationToken ct)

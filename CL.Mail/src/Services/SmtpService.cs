@@ -1,8 +1,10 @@
 using CL.Mail.Models;
 using CodeLogic.Core.Logging;
+using CodeLogic.Core.Results;
 using MailKit.Net.Smtp;
 using MailKit.Security;
 using MimeKit;
+using System.Net.Sockets;
 
 namespace CL.Mail.Services;
 
@@ -31,15 +33,15 @@ public sealed class SmtpService : IDisposable
     /// <param name="message">The message to send.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>
-    /// A <see cref="MailResult"/> carrying the server-assigned Message-ID on success.
+    /// A <see cref="MailSendReceipt"/> carrying the Message-ID on success; otherwise an
+    /// <see cref="Error"/> whose <see cref="Error.Code"/> is one of <see cref="MailErrorCodes"/>.
     /// </returns>
-    public async Task<MailResult> SendAsync(MailMessage message, CancellationToken cancellationToken = default)
+    public async Task<Result<MailSendReceipt>> SendAsync(MailMessage message, CancellationToken cancellationToken = default)
     {
-        var configCheck = ValidateConfiguration();
-        if (!configCheck.IsSuccess) return configCheck;
+        ArgumentNullException.ThrowIfNull(message);
 
-        var msgCheck = ValidateMessage(message);
-        if (!msgCheck.IsSuccess) return msgCheck;
+        if (ValidateConfiguration() is { } configError) return configError;
+        if (ValidateMessage(message) is { } messageError) return messageError;
 
         try
         {
@@ -56,72 +58,98 @@ public sealed class SmtpService : IDisposable
                 await client.AuthenticateAsync(_config.Username, _config.Password, cancellationToken).ConfigureAwait(false);
 
             await client.SendAsync(mime, cancellationToken).ConfigureAwait(false);
+            var sentAt = DateTime.UtcNow;
             await client.DisconnectAsync(true, cancellationToken).ConfigureAwait(false);
 
             _logger?.Info($"Email sent to {string.Join(", ", message.To)} (id={mime.MessageId})");
-            return MailResult.Success(mime.MessageId);
+            return new MailSendReceipt(mime.MessageId, sentAt);
         }
         catch (SmtpCommandException ex)
         {
+            // The server refused something about this message (sender, recipient, size, content):
+            // a problem with the input, not with the service, so it is a validation error.
             _logger?.Error("SMTP command rejected", ex);
-            return MailResult.Failure(MailError.SmtpRejected, ex.Message);
+            return MailErrors.Validation(MailErrorCodes.SmtpRejected, ex.Message,
+                $"SMTP status {(int)ex.StatusCode} ({ex.StatusCode}), {ex.ErrorCode}");
         }
         catch (SmtpProtocolException ex)
         {
             _logger?.Error("SMTP protocol error", ex);
-            return MailResult.Failure(MailError.SmtpError, ex.Message);
+            return MailErrors.Internal(MailErrorCodes.SmtpError, ex);
         }
         catch (AuthenticationException ex)
         {
             _logger?.Error("SMTP authentication failed", ex);
-            return MailResult.Failure(MailError.SmtpAuthenticationFailed, "Authentication failed");
+            return MailErrors.Unauthorized(MailErrorCodes.SmtpAuthenticationFailed, "Authentication failed");
         }
         catch (OperationCanceledException)
         {
             _logger?.Warning("Email send cancelled");
-            return MailResult.Failure(MailError.Unknown, "Operation cancelled");
+            return MailErrors.Cancelled();
         }
         catch (TimeoutException)
         {
             _logger?.Error("SMTP connection timed out");
-            return MailResult.Failure(MailError.SmtpTimeout, "SMTP timeout");
+            return MailErrors.Timeout(MailErrorCodes.SmtpTimeout, "SMTP timeout");
+        }
+        catch (SocketException ex)
+        {
+            _logger?.Error($"SMTP server {_config.Host}:{_config.Port} unreachable", ex);
+            return MailErrors.Unavailable(MailErrorCodes.SmtpConnectionFailed,
+                $"Could not connect to SMTP server {_config.Host}:{_config.Port}", ex);
         }
         catch (Exception ex)
         {
             _logger?.Error("Unexpected error sending email", ex);
-            return MailResult.Failure(MailError.Unknown, ex.Message);
+            return MailErrors.Internal(MailErrorCodes.Unknown, ex);
         }
     }
 
     // ── Validation ────────────────────────────────────────────────────────────
 
-    private MailResult ValidateConfiguration()
+    private Error? ValidateConfiguration()
     {
         if (string.IsNullOrWhiteSpace(_config.Host))
-            return MailResult.Failure(MailError.SmtpConfigInvalid, "SMTP host not configured");
+            return MailErrors.Validation(MailErrorCodes.SmtpConfigInvalid, "SMTP host not configured");
 
         if (_config.Port is < 1 or > 65535)
-            return MailResult.Failure(MailError.SmtpConfigInvalid, "SMTP port is invalid");
+            return MailErrors.Validation(MailErrorCodes.SmtpConfigInvalid, "SMTP port is invalid");
 
-        return MailResult.Success();
+        return null;
     }
 
-    private static MailResult ValidateMessage(MailMessage message)
+    private static Error? ValidateMessage(MailMessage message)
     {
         if (string.IsNullOrWhiteSpace(message.From))
-            return MailResult.Failure(MailError.InvalidSender, "Sender not specified");
+            return MailErrors.Validation(MailErrorCodes.InvalidSender, "Sender not specified");
+
+        if (!IsValidAddress(message.From))
+            return MailErrors.Validation(MailErrorCodes.InvalidSender, $"Sender address is malformed: '{message.From}'");
 
         if (message.To is null || message.To.Count == 0)
-            return MailResult.Failure(MailError.InvalidRecipient, "No recipients specified");
+            return MailErrors.Validation(MailErrorCodes.InvalidRecipient, "No recipients specified");
+
+        foreach (var address in message.To.Concat(message.Cc).Concat(message.Bcc))
+            if (!IsValidAddress(address))
+                return MailErrors.Validation(MailErrorCodes.InvalidRecipient, $"Recipient address is malformed: '{address}'");
 
         if (string.IsNullOrWhiteSpace(message.Subject))
-            return MailResult.Failure(MailError.InvalidSubject, "Subject not specified");
+            return MailErrors.Validation(MailErrorCodes.InvalidSubject, "Subject not specified");
 
         if (string.IsNullOrWhiteSpace(message.TextBody) && string.IsNullOrWhiteSpace(message.HtmlBody))
-            return MailResult.Failure(MailError.InvalidRecipient, "Message body is empty");
+            return MailErrors.Validation(MailErrorCodes.InvalidBody, "Message body is empty");
 
-        return MailResult.Success();
+        foreach (var path in message.Attachments)
+            if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+                return MailErrors.NotFound(MailErrorCodes.AttachmentNotFound, $"Attachment not found: '{path}'");
+
+        return null;
     }
+
+    private static bool IsValidAddress(string? address) =>
+        !string.IsNullOrWhiteSpace(address)
+        && MailboxAddress.TryParse(address, out var mailbox)
+        && mailbox.Address.Contains('@', StringComparison.Ordinal);
 
     // ── MimeMessage builder ───────────────────────────────────────────────────
 
@@ -150,7 +178,7 @@ public sealed class SmtpService : IDisposable
         if (!string.IsNullOrWhiteSpace(message.HtmlBody)) builder.HtmlBody = message.HtmlBody;
 
         foreach (var path in message.Attachments)
-            if (File.Exists(path)) builder.Attachments.Add(path);
+            builder.Attachments.Add(path);
 
         mime.Body = builder.ToMessageBody();
         return mime;

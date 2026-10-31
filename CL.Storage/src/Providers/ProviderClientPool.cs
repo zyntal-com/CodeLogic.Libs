@@ -79,7 +79,7 @@ internal sealed class ProviderClientPool<TClient> : IAsyncDisposable where TClie
     private readonly TimeSpan _acquireTimeout;
     private readonly TimeSpan _probeAfterIdle;
     private readonly Stack<Idle> _idle = new();
-    private readonly ConditionalWeakTable<TClient, object> _faulted = new();
+    private readonly ConditionalWeakTable<TClient, object> _faulted = [];
     private readonly SemaphoreSlim _slots;
     private readonly Lock _gate = new();
     private readonly TimeProvider _time;

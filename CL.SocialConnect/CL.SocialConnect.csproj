@@ -1,15 +1,13 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <LangVersion>13</LangVersion>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <NoWarn>CS1591</NoWarn>
     <Authors>Zyntal.com</Authors>
     <Company>Zyntal.com</Company>
     <Product>CL.SocialConnect</Product>
-    <Description>Social platform integrations (Discord, Steam) for CodeLogic 4 applications</Description>
+    <Description>Social platform integrations (Discord, Steam) for CodeLogic 5 applications</Description>
     <PackageId>CodeLogic.SocialConnect</PackageId>
     <PackageTags>discord;steam;webhook;social</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>

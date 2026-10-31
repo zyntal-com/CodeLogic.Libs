@@ -16,10 +16,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Setup .NET 10
+      # SDK version comes from global.json (11.0 line; prerelease allowed until GA).
+      - name: Setup .NET 11
         uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: '10.0.x'
+          global-json-file: global.json
 
       # The libraries reference CodeLogic from NuGet (CodeLogicFromNuGet=true), and the
       # test projects reference the libraries by ProjectReference — so no sibling
@@ -73,10 +74,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Setup .NET 10
+      # SDK version comes from global.json (11.0 line; prerelease allowed until GA).
+      - name: Setup .NET 11
         uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: '10.0.x'
+          global-json-file: global.json
 
       - name: Run MySQL2 tests
         run: dotnet test tests/MySQL2.Tests/MySQL2.Tests.csproj --configuration Release -p:CodeLogicFromNuGet=true --logger "console;verbosity=normal"
@@ -107,10 +109,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Setup .NET 10
+      # SDK version comes from global.json (11.0 line; prerelease allowed until GA).
+      - name: Setup .NET 11
         uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: '10.0.x'
+          global-json-file: global.json
 
       - name: Run PostgreSQL tests
         run: dotnet test tests/PostgreSQL.Tests/PostgreSQL.Tests.csproj --configuration Release -p:CodeLogicFromNuGet=true --logger "console;verbosity=normal"
@@ -125,10 +128,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Setup .NET 10
+      # SDK version comes from global.json (11.0 line; prerelease allowed until GA).
+      - name: Setup .NET 11
         uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: '10.0.x'
+          global-json-file: global.json
 
       - name: Start SQL Server 2019
         shell: bash
@@ -162,10 +166,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Setup .NET 10
+      # SDK version comes from global.json (11.0 line; prerelease allowed until GA).
+      - name: Setup .NET 11
         uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: '10.0.x'
+          global-json-file: global.json
 
       # One step, so the server started in the background lives exactly as long as the tests need it.
       - name: Run mutual-TLS tests on Windows (SChannel) against a mutual-TLS WebDAV server
@@ -230,10 +235,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Setup .NET 10
+      # SDK version comes from global.json (11.0 line; prerelease allowed until GA).
+      - name: Setup .NET 11
         uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: '10.0.x'
+          global-json-file: global.json
 
       - name: Start storage servers and emulators
         shell: bash

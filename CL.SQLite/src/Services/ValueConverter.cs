@@ -31,6 +31,18 @@ internal static class SQLiteValueConverter
         return value;
     }
 
+    /// <summary>
+    /// SQLite returns NUMERIC/REAL values as <see cref="double"/>. Since .NET 11 a double → decimal cast is
+    /// exact (123.45 becomes 123.45000000000000284217094304), so go through the shortest round-trip string
+    /// instead: that yields the value that was written (123.45), as .NET 10 and earlier did.
+    /// </summary>
+    internal static decimal ToDecimal(object value) => value switch
+    {
+        double d => decimal.Parse(d.ToString("R", CultureInfo.InvariantCulture), NumberStyles.Float, CultureInfo.InvariantCulture),
+        float f => decimal.Parse(f.ToString("R", CultureInfo.InvariantCulture), NumberStyles.Float, CultureInfo.InvariantCulture),
+        _ => Convert.ToDecimal(value, CultureInfo.InvariantCulture),
+    };
+
     /// <summary>Converts a value read from SQLite to the CLR type of the target property.</summary>
     public static object? FromDbValue(object? value, Type targetType)
     {
@@ -43,7 +55,7 @@ internal static class SQLiteValueConverter
         if (underlying == typeof(long)) return Convert.ToInt64(value);
         if (underlying == typeof(double)) return Convert.ToDouble(value);
         if (underlying == typeof(float)) return Convert.ToSingle(value);
-        if (underlying == typeof(decimal)) return Convert.ToDecimal(value);
+        if (underlying == typeof(decimal)) return ToDecimal(value);
         if (underlying == typeof(DateTime) && value is string dtStr)
             return DateTime.Parse(dtStr);
         if (underlying == typeof(DateTimeOffset) && value is string dtoStr)

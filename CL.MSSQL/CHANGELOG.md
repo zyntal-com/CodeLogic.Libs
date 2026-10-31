@@ -1,5 +1,22 @@
 # Changelog
 
+## 5.0 (unreleased)
+
+### Breaking
+
+- Targets **.NET 11** (`net11.0`) and requires **CodeLogic 5.0** (`[5.0.0, 6.0.0)`). On .NET 10, stay on
+  4.9.x. CodeLogic 5 makes `Result<T>` / `Result` C# 15 unions and `Error` a closed record with
+  kind subtypes (`NotFoundError`, `ValidationError`, ...). This library's API is unchanged, and
+  its results can now be matched exhaustively with `switch`.
+
+### Changed
+
+- `System.Security.Cryptography.Pkcs` 11.0 (RC3 until .NET 11 GA).
+
+### Fixed
+
+- `array.Contains(x.Column)` in a `Where` predicate threw `NotSupportedException` when the caller compiles with C# 14 or later (the default on .NET 10 and 11). C# 14 binds it to `MemoryExtensions.Contains(ReadOnlySpan<T>, T)`, and the translator now reads the array through the span conversion and emits `IN (...)` again.
+
 ## 2026-10-29
 
 ### Added

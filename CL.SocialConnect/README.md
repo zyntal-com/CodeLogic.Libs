@@ -3,7 +3,7 @@
 [![NuGet](https://img.shields.io/nuget/v/CodeLogic.SocialConnect)](https://www.nuget.org/packages/CodeLogic.SocialConnect)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/zyntal-com/CodeLogic.Libs/blob/main/LICENSE)
 
-> Discord webhooks and Steam integration for [CodeLogic 4](https://github.com/zyntal-com/CodeLogic) — send rich Discord notifications, read Steam player profiles, bans, and game libraries, and add "Sign in through Steam" to a website.
+> Discord webhooks and Steam integration for [CodeLogic 5](https://github.com/zyntal-com/CodeLogic) — send rich Discord notifications, read Steam player profiles, bans, and game libraries, and add "Sign in through Steam" to a website.
 
 Four services behind one library: a **Discord webhook** sender (text, rich embeds, full payloads), a **Steam profile** reader (players, bans, owned games — cached), **Steam authentication** for validating game-session tickets, and **Steam sign-in** (OpenID 2.0) for websites. No external NuGet dependencies — built on `System.Net.Http.Json`.
 
@@ -60,7 +60,7 @@ Accessing a disabled service throws `InvalidOperationException`. Guard with `Has
 - **Mention control** — `DiscordAllowedMentions` (with `.None` / `.All`) whitelists which roles/users/`@everyone` may ping; opt-in TTS via `DiscordWebhookMessage.Tts`.
 - **Steam profiles** — `GetPlayerAsync`, `GetPlayerBansAsync`, `GetOwnedGamesAsync` return `Result<T>` with computed helpers (`IsPublic`, `IsInGame`, `HasAnyBan`, `TotalPlaytime`, `LastPlayed`).
 - **Built-in cache** — Steam reads are cached for `CacheTtlSeconds` (default 300); clear on demand with `Steam.ClearCache()`.
-- **Steam authentication** — `Auth.AuthenticateAsync` validates a session ticket, with a per-call `appId` override.
+- **Steam authentication** — `Auth.AuthenticateAsync` validates a session ticket (per-call `appId` override) and returns `Result<SteamTicketIdentity>`; a rejected ticket is an `UnauthorizedError`.
 - **Steam sign-in** — `OpenId.BuildLoginUrl` / `OpenId.VerifyAsync` implement "Sign in through Steam" (OpenID 2.0): local checks of the signed assertion (endpoint, `return_to`, identity, signed fields), then confirmation by Steam (`check_authentication`). Returns the 64-bit Steam ID.
 - **Events** — `WebhookSentEvent`, `SteamProfileFetchedEvent`, `SteamAuthenticatedEvent`, and `SteamOpenIdVerifiedEvent` on the CodeLogic event bus.
 
@@ -124,7 +124,7 @@ Full guide: **[CL.SocialConnect documentation](https://zyntal-com.github.io/Code
 
 ## Requirements
 
-- [CodeLogic 4.9+](https://github.com/zyntal-com/CodeLogic) · .NET 10
+- [CodeLogic 5.0+](https://github.com/zyntal-com/CodeLogic) · .NET 11
 - No external NuGet dependencies
 
 ## License

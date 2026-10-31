@@ -1,17 +1,15 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
     <RootNamespace>CL.GitHelper</RootNamespace>
     <AssemblyName>CL.GitHelper</AssemblyName>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <LangVersion>13</LangVersion>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <PackageId>CodeLogic.GitHelper</PackageId>
     <PackageTags>git;repository;libgit2</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <Authors>Zyntal.com</Authors>
-    <Description>Git repository management library for CodeLogic 4 applications</Description>
+    <Description>Git repository management library for CodeLogic 5 applications</Description>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="LibGit2Sharp" Version="0.32.*" />

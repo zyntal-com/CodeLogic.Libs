@@ -293,5 +293,5 @@ public sealed partial class StorageLibrary : IConfigReloadable
 
     private static Dictionary<string, StorageConnectionConfigBase> ToConnectionMap(ProviderStorageConfigBase? config) =>
         config?.EnumerateConnections().ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase)
-        ?? new Dictionary<string, StorageConnectionConfigBase>(StringComparer.OrdinalIgnoreCase);
+        ?? [with(StringComparer.OrdinalIgnoreCase)];
 }

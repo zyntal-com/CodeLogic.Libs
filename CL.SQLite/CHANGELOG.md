@@ -3,6 +3,24 @@
 All notable changes to **CodeLogic.SQLite** are documented here. Versions follow
 [Semantic Versioning](https://semver.org/).
 
+## 5.0 (unreleased)
+
+### Breaking
+
+- Targets **.NET 11** (`net11.0`) and requires **CodeLogic 5.0** (`[5.0.0, 6.0.0)`). On .NET 10, stay on
+  4.9.x. CodeLogic 5 makes `Result<T>` / `Result` C# 15 unions and `Error` a closed record with
+  kind subtypes (`NotFoundError`, `ValidationError`, ...). This library's API is unchanged, and
+  its results can now be matched exhaustively with `switch`.
+
+### Changed
+
+- `Microsoft.Data.Sqlite` 11.0 (RC3 until .NET 11 GA). The `SQLitePCLRaw.bundle_e_sqlite3` 3.0.5 security pin stays.
+
+### Fixed
+
+- `array.Contains(x.Column)` in a `Where` predicate threw `NotSupportedException` when the caller compiles with C# 14 or later (the default on .NET 10 and 11). C# 14 binds it to `MemoryExtensions.Contains(ReadOnlySpan<T>, T)`, and the translator now reads the array through the span conversion and emits `IN (...)` again.
+- `decimal` properties read from NUMERIC/REAL columns came back with binary noise on .NET 11 (`123.45` became `123.45000000000000284217094304`), because .NET 11 made double → decimal conversion exact. Values are now converted through the shortest round-trip string, which restores `123.45`. `Min`/`Max`/`Sum`/`Average` results use the same conversion, and nullable result types no longer fail.
+
 ## 2026-10-26
 
 ### Added

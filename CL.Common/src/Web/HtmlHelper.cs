@@ -27,11 +27,12 @@ public static class HtmlHelper
         "blockquote", "pre", "code", "ul", "ol", "li", "h1", "h2", "h3", "h4", "h5", "h6", "span", "div", "a"
     };
 
-    private static readonly HashSet<string> DroppedWithContent = new(StringComparer.OrdinalIgnoreCase)
-    {
+    private static readonly HashSet<string> DroppedWithContent =
+    [
+        with(StringComparer.OrdinalIgnoreCase),
         "script", "style", "iframe", "object", "embed", "applet", "template", "noscript", "textarea", "title",
         "svg", "math", "select", "xmp", "noembed", "noframes"
-    };
+    ];
 
     private static readonly Regex SanitizeTagRegex = new(
         @"<!--.*?(-->|$)|<(?<close>/?)(?<name>[a-zA-Z][a-zA-Z0-9]*)(?<attrs>(?:[^>""']|""[^""]*""|'[^']*')*)>|<",

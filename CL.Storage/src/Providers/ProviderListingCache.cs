@@ -41,7 +41,7 @@ internal sealed class ProviderListingCache
     /// <summary>Gets the process-wide cache used by the providers.</summary>
     public static ProviderListingCache Shared { get; } = new();
 
-    private readonly Dictionary<string, Snapshot> _snapshots = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Snapshot> _snapshots = [with(StringComparer.Ordinal)];
     private readonly Lock _gate = new();
     private readonly TimeProvider _time;
     private long _stamp;

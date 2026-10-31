@@ -3,6 +3,48 @@
 All notable changes to **CodeLogic.GitHelper** are documented here. Versions follow
 [Semantic Versioning](https://semver.org/).
 
+## 5.0 (unreleased)
+
+### Breaking
+
+- Targets **.NET 11** (`net11.0`) and requires **CodeLogic 5.0** (`[5.0.0, 6.0.0)`). On .NET 10, stay on
+  4.9.x. CodeLogic 5 makes `Result<T>` / `Result` C# 15 unions and `Error` a closed record with
+  kind subtypes (`NotFoundError`, `ValidationError`, ...). This library now returns those types
+  directly (see below), so its results can be matched exhaustively with `switch`.
+- **`GitResult<T>` is removed**; every operation returns CodeLogic's `Result<T>` / `Result`
+  (`CodeLogic.Core.Results`). `ErrorMessage` → `Error.Message`; `Exception` is gone (the library
+  logs it, and `Error.Details` holds the exception type name); `Diagnostics` is gone (see below).
+- Signature changes on `GitRepository`:
+  - `FetchAsync`, `PullAsync`, `PushAsync`: `Task<GitResult<bool>>` → `Task<Result<GitDiagnostics>>`.
+    The diagnostics are now the success value. A pull's diagnostics include its fetch step's
+    messages, and a failed fetch inside a pull returns the fetch's own error.
+  - `CheckoutBranchAsync`, `ResetHardAsync`: `Task<GitResult<bool>>` → `Task<Result>`.
+  - `CloneAsync`, `EnsureUpToDateAsync`, `GetRepositoryInfoAsync`: `Task<GitResult<RepositoryInfo>>`
+    → `Task<Result<RepositoryInfo>>`. `CommitAsync` → `Task<Result<CommitInfo>>`, `GetStatusAsync`
+    → `Task<Result<RepositoryStatus>>`, `ListBranchesAsync` → `Task<Result<List<BranchInfo>>>`,
+    `GetCommitLogAsync` → `Task<Result<List<CommitInfo>>>`. Clone, commit and status no longer
+    return diagnostics; clone logs its duration and messages instead.
+- `GitHelperLibrary` / `GitManager`: `FetchAllAsync` → `Task<Dictionary<string, Result<GitDiagnostics>>>`,
+  `GetAllStatusAsync` → `Task<Dictionary<string, Result<RepositoryStatus>>>`.
+- Failures have a kind and a stable code, all listed as constants on the new
+  `CL.GitHelper.Errors.GitErrors`:
+  - `NotFoundError`: `git.repository_not_found` (not cloned), `git.remote_not_found`,
+    `git.branch_not_found` (checkout or reset target), `git.not_found`.
+  - `ValidationError`: `git.empty_commit_message`, `git.nothing_to_commit`, `git.ssh_not_supported`.
+  - `UnauthorizedError`: `git.authentication_failed`.
+  - `ConflictError`: `git.directory_not_empty`, `git.uncommitted_changes`, `git.checkout_conflict`,
+    `git.non_fast_forward`.
+  - `UnavailableError`: `git.cancelled`.
+  - `InternalError` (anything else): `git.clone_failed`, `git.fetch_failed`, `git.pull_failed`,
+    `git.push_failed`, `git.commit_failed`, `git.status_failed`, `git.info_failed`,
+    `git.list_branches_failed`, `git.checkout_failed`, `git.reset_failed`, `git.log_failed`.
+
+### Changed
+
+- Fetch now records `ObjectCount` and `BytesTransferred` in its diagnostics.
+- Failures of read operations (status, info, branches, log) are logged at debug level with the
+  full exception; before, the exception was only on the result.
+
 ## 2026-10-24
 
 ### Added

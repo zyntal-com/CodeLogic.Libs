@@ -6,12 +6,13 @@ using CodeLogic.Core.Results;
 namespace CL.Common.Networking;
 
 /// <summary>
-/// Result returned by a ping operation.
+/// A successful ICMP echo reply. A ping that gets no reply is a failed
+/// <see cref="Result{T}"/> (<see cref="TimeoutError"/> or <see cref="UnavailableError"/>), never a value of this type.
 /// </summary>
-/// <param name="Success">Whether the ping received a reply.</param>
-/// <param name="RoundTripMs">Round-trip time in milliseconds, or -1 if the ping failed.</param>
 /// <param name="Host">The hostname or IP address that was pinged.</param>
-public record PingResult(bool Success, long RoundTripMs, string Host);
+/// <param name="Address">The IP address that answered.</param>
+/// <param name="RoundTripMs">Round-trip time in milliseconds.</param>
+public sealed record PingResponse(string Host, string Address, long RoundTripMs);
 
 /// <summary>
 /// Calculated information about a subnet.
@@ -36,27 +37,42 @@ public record HopInfo(int Hop, string Address, long Ms);
 public static class NetworkPing
 {
     /// <summary>
-    /// Sends an ICMP echo (ping) request to the specified host and returns the result.
+    /// Sends an ICMP echo (ping) request to the specified host.
     /// </summary>
     /// <param name="host">The hostname or IP address to ping. Must not be null or empty.</param>
     /// <param name="timeout">Timeout in milliseconds to wait for a reply. Default: 3000.</param>
     /// <returns>
-    /// A <see cref="Result{T}"/> containing a <see cref="PingResult"/> on success,
-    /// or a failure result if the operation throws an exception.
+    /// A <see cref="Result{T}"/> containing a <see cref="PingResponse"/> when the host replied.
+    /// Failures: <see cref="TimeoutError"/> <c>networking.ping_timeout</c> when no reply arrived in time;
+    /// <see cref="UnavailableError"/> <c>networking.ping_unreachable</c> when the host or network is
+    /// unreachable or the name cannot be resolved (the <see cref="IPStatus"/> is in <see cref="Error.Details"/>);
+    /// <see cref="InternalError"/> <c>networking.ping_failed</c> for anything else.
     /// </returns>
-    public static async Task<Result<PingResult>> PingAsync(string host, int timeout = 3000)
+    public static async Task<Result<PingResponse>> PingAsync(string host, int timeout = 3000)
     {
         ArgumentException.ThrowIfNullOrEmpty(host);
         try
         {
             using var ping = new Ping();
             var reply = await ping.SendPingAsync(host, timeout);
-            var success = reply.Status == IPStatus.Success;
-            return Result<PingResult>.Success(new PingResult(success, success ? reply.RoundtripTime : -1, host));
+            return reply.Status switch
+            {
+                IPStatus.Success => new PingResponse(host, reply.Address.ToString(), reply.RoundtripTime),
+                IPStatus.TimedOut => Error.Timeout("networking.ping_timeout",
+                    $"No ping reply from {host} within {timeout} ms"),
+                _ => Error.Unavailable("networking.ping_unreachable",
+                    $"Ping to {host} failed: {reply.Status}", reply.Status.ToString()),
+            };
+        }
+        catch (PingException ex)
+        {
+            return Error.Unavailable("networking.ping_unreachable",
+                $"Ping to {host} failed: {ex.InnerException?.Message ?? ex.Message}",
+                (ex.InnerException ?? ex).GetType().Name);
         }
         catch (Exception ex)
         {
-            return Result<PingResult>.Failure(Error.FromException(ex, "networking.ping_failed"));
+            return Error.FromException(ex, "networking.ping_failed");
         }
     }
 }

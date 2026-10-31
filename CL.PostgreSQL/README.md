@@ -3,7 +3,7 @@
 [![NuGet](https://img.shields.io/nuget/v/CodeLogic.PostgreSQL)](https://www.nuget.org/packages/CodeLogic.PostgreSQL)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/zyntal-com/CodeLogic.Libs/blob/main/LICENSE)
 
-> A typed PostgreSQL data-access layer for [CodeLogic 4](https://github.com/zyntal-com/CodeLogic) — multi-database connections, an attribute-driven repository, a fluent LINQ query builder, joins and projections, cursor paging, upserts, caching, migrations, and declarative schema sync.
+> A typed PostgreSQL data-access layer for [CodeLogic 5](https://github.com/zyntal-com/CodeLogic) — multi-database connections, an attribute-driven repository, a fluent LINQ query builder, joins and projections, cursor paging, upserts, caching, migrations, and declarative schema sync.
 
 Map a plain class with attributes and the library reconciles the live table to match, then exposes a typed `Repository<T>` and a chainable `QueryBuilder<T>` over it. It builds on [Npgsql](https://www.nuget.org/packages/Npgsql) and connects to one or many PostgreSQL instances from a single config. Every fallible operation returns a framework `Result<T>` — no exceptions on the expected failure paths.
 
@@ -160,7 +160,7 @@ Full guide: **[CL.PostgreSQL documentation](https://zyntal-com.github.io/CodeLog
 
 ## Requirements
 
-- [CodeLogic 4.9+](https://github.com/zyntal-com/CodeLogic) · .NET 10
+- [CodeLogic 5.0+](https://github.com/zyntal-com/CodeLogic) · .NET 11
 - Npgsql 9.x · PostgreSQL 12+ (covering `INCLUDE` indexes need 11+; identity columns need 10+)
 
 ## License

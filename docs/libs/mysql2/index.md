@@ -2,7 +2,7 @@
 
 > A typed data-access layer for MySQL, MariaDB, and Percona — repositories, a LINQ query builder, declarative schema sync, imperative migrations, and a self-invalidating result cache.
 
-`CL.MySQL2` is the flagship data library for CodeLogic 4. Map a plain class with attributes and the library keeps the live table in shape, generates reflection-free row mappers, translates LINQ-shaped expressions to real SQL, and caches results with version-stamped invalidation. It builds on [MySqlConnector](https://www.nuget.org/packages/MySqlConnector) and works against MySQL, MariaDB, and Percona. Every fallible operation returns a framework `Result<T>` — no exceptions for the expected failure paths.
+`CL.MySQL2` is the flagship data library for CodeLogic 5. Map a plain class with attributes and the library keeps the live table in shape, generates reflection-free row mappers, translates LINQ-shaped expressions to real SQL, and caches results with version-stamped invalidation. It builds on [MySqlConnector](https://www.nuget.org/packages/MySqlConnector) and works against MySQL, MariaDB, and Percona. Every fallible operation returns a framework `Result<T>` — no exceptions for the expected failure paths.
 
 | | |
 |---|---|

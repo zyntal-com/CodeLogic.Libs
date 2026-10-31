@@ -3,7 +3,7 @@
 [![NuGet](https://img.shields.io/nuget/v/CodeLogic.GameNetQuery)](https://www.nuget.org/packages/CodeLogic.GameNetQuery)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/zyntal-com/CodeLogic.Libs/blob/main/LICENSE)
 
-> Query and administer game servers from [CodeLogic 4](https://github.com/zyntal-com/CodeLogic) — Valve A2S over UDP, Source RCON, and Minecraft GameSpy4 / RCON.
+> Query and administer game servers from [CodeLogic 5](https://github.com/zyntal-com/CodeLogic) — Valve A2S over UDP, Source RCON, and Minecraft GameSpy4 / RCON.
 
 Speaks the wire protocols used by Source-engine and Minecraft servers: A2S over UDP for live server info and player lists, the Source RCON TCP protocol for remote console commands (with high-level Counter-Strike 2 / Counter-Strike: Source admin wrappers), and Minecraft's GameSpy4 UDP query plus RCON. No external NuGet dependencies.
 
@@ -20,8 +20,16 @@ The query clients are used **directly by namespace** — they don't need a libra
 ```csharp
 using CL.GameNetQuery.Valve;
 using CL.GameNetQuery.Models;
+using CodeLogic.Core.Results;
 
-// A2S UDP — live server info (no library load required)
+// A2S UDP — info + players + timing as a CodeLogic Result (no library load required)
+Result<ServerQuery> query = await ValveUdpQuery.QueryAsync("203.0.113.10", 27015);
+if (query.IsSuccess)
+    Console.WriteLine($"{query.Value.Info.Hostname}: {query.Value.Players.Count} players in {query.Value.DurationMs} ms");
+else
+    Console.WriteLine($"{query.Error.Code}: {query.Error.Message}"); // e.g. gamenetquery.timeout
+
+// Or the simple helpers: null / empty list on failure
 ServerInfo? info = await ValveUdpQuery.GetServerInfoAsync("203.0.113.10", 27015);
 if (info is { IsOnline: true })
     Console.WriteLine($"{info.Hostname} — {info.Map} ({info.PlayerCount}/{info.MaxPlayers})");
@@ -48,7 +56,7 @@ await CodeLogic.StartAsync();
 
 ## Features
 
-- **Valve A2S UDP query** — `ValveUdpQuery.GetServerInfoAsync` / `GetPlayerListAsync` return typed `ServerInfo?` and `List<PlayerInfo>`; failures return `null` / an empty list rather than throwing.
+- **Valve A2S UDP query** — `ValveUdpQuery.QueryAsync` returns `Result<ServerQuery>` (info, players, duration) with typed failures (`TimeoutError`, `UnavailableError`, ...); `GetServerInfoAsync` / `GetPlayerListAsync` return `ServerInfo?` and `List<PlayerInfo>`, with `null` / an empty list on failure.
 - **Source RCON** — `ValveRconClient` connects over TCP and runs console commands, returning the raw server response string.
 - **Counter-Strike admin wrappers** — `CounterStrike2` and `CounterStrikeSource` expose named helpers (change map, kick/ban, say, cvars, restart…) over RCON; CS2 adds cheats, friendly-fire, team-balance, and slay.
 - **`status` parsers** — `ValveStatusParser` and `ValveStatusParserCS2` turn raw `status` output into `ServerInfo` / `PlayerInfo`.
@@ -64,7 +72,7 @@ Full guide: **[CL.GameNetQuery documentation](https://zyntal-com.github.io/CodeL
 
 ## Requirements
 
-- [CodeLogic 4.9+](https://github.com/zyntal-com/CodeLogic) · .NET 10
+- [CodeLogic 5.0+](https://github.com/zyntal-com/CodeLogic) · .NET 11
 - No external NuGet dependencies.
 
 ## License

@@ -3,7 +3,7 @@
 [![NuGet](https://img.shields.io/nuget/v/CodeLogic.MySQL2)](https://www.nuget.org/packages/CodeLogic.MySQL2)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/zyntal-com/CodeLogic.Libs/blob/main/LICENSE)
 
-> A typed MySQL data layer for CodeLogic 4: repositories, LINQ-shaped SQL, cursor paging, schema synchronization, migrations, caching, resilience, and operational diagnostics in one library.
+> A typed MySQL data layer for CodeLogic 5: repositories, LINQ-shaped SQL, cursor paging, schema synchronization, migrations, caching, resilience, and operational diagnostics in one library.
 
 `CodeLogic.MySQL2` sits between a micro-ORM and a lightweight application data platform. Map ordinary C# classes with attributes, then use repositories or a fluent query builder while the library handles parameterized SQL, compiled row materialization, schema drift, cache invalidation, retries, health checks, and events.
 
@@ -436,8 +436,8 @@ If a changed database cannot be reached, the change stays saved, the other datab
 
 ## Requirements
 
-- .NET 10
-- CodeLogic 4.9+
+- .NET 11
+- CodeLogic 5.0+
 - MySqlConnector 2.x
 - MySQL 5.7+, MariaDB 10.3+, or a compatible Percona release
 
