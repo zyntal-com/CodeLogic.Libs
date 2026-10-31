@@ -6,6 +6,9 @@
   <PropertyGroup>
     <TargetFramework>net11.0</TargetFramework>
     <LangVersion>15</LangVersion>
+    <!-- A switch over a C# 15 union or closed hierarchy (Result<T>, Error, StorageConnectionConfigBase)
+         that misses a case is an error, so adding a case shows every place that must handle it. -->
+    <WarningsAsErrors>$(WarningsAsErrors);CS8509</WarningsAsErrors>
   </PropertyGroup>
 
   <!-- Shared NuGet metadata for all CL.* libraries -->

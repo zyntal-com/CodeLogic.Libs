@@ -105,7 +105,7 @@ internal sealed class ServerIdentityRecorder
 /// <summary>Reads the server address and transport security from a connection configuration.</summary>
 internal static class StorageEndpoints
 {
-    public static (string? Host, int? Port, StorageTransportSecurity Security) Describe(object configuration) => configuration switch
+    public static (string? Host, int? Port, StorageTransportSecurity Security) Describe(StorageConnectionConfigBase configuration) => configuration switch
     {
         FtpConnectionConfig ftp => (ftp.Host, ftp.Port,
             ftp.EncryptionMode == StorageFtpEncryptionMode.None ? StorageTransportSecurity.None : StorageTransportSecurity.Tls),
@@ -115,7 +115,7 @@ internal static class StorageEndpoints
         AzureBlobConnectionConfig azure => FromAzure(azure),
         GoogleCloudConnectionConfig gcs => FromUrl(string.IsNullOrWhiteSpace(gcs.ServiceUrl) ? "https://storage.googleapis.com" : gcs.ServiceUrl),
         SwiftConnectionConfig swift => FromUrl(swift.StorageUrl ?? swift.AuthenticationUrl),
-        _ => (null, null, StorageTransportSecurity.Unknown)
+        // No default arm: StorageConnectionConfigBase is closed, so a new provider type fails to compile here.
     };
 
     private static (string?, int?, StorageTransportSecurity) FromUrl(string? url)

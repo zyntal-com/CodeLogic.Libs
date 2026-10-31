@@ -5,7 +5,11 @@ using System.Text.Json.Serialization;
 namespace CL.Storage.Configuration;
 
 /// <summary>Common shape used by provider connection configuration.</summary>
-public abstract class StorageConnectionConfigBase
+/// <remarks>
+/// A C# 15 <c>closed</c> class: the provider connection types (FTP, SFTP, WebDAV, S3, Azure Blob, Google Cloud,
+/// Swift) are its only direct subtypes, so a <c>switch</c> over a connection is checked for exhaustiveness.
+/// </remarks>
+public closed class StorageConnectionConfigBase
 {
     /// <summary>Gets or sets whether this named connection is enabled.</summary>
     public bool Enabled { get; set; } = true;
