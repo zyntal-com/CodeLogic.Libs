@@ -38,6 +38,10 @@ All notable changes to **CodeLogic.TwoFactorAuth** are documented here. Versions
 
 - Configuration examples use the camelCase keys the CodeLogic loader reads (PascalCase keys were ignored).
 
+### Changed
+
+- Package versions are pinned (Otp.NET 1.4.1, QRCoder 1.8.1) instead of floating (`1.*`).
+
 ## 2026-10-24
 
 ### Changed

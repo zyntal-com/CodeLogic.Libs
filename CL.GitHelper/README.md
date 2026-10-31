@@ -108,7 +108,7 @@ Full guide: **[CL.GitHelper documentation](https://zyntal-com.github.io/CodeLogi
 ## Requirements
 
 - [CodeLogic 5.0+](https://github.com/zyntal-com/CodeLogic) · .NET 11
-- LibGit2Sharp 0.30.x
+- LibGit2Sharp 0.32.x
 
 ## License
 

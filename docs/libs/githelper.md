@@ -9,7 +9,7 @@
 | **Package** | [`CodeLogic.GitHelper`](https://www.nuget.org/packages/CodeLogic.GitHelper) |
 | **Library class** | `CL.GitHelper.GitHelperLibrary` |
 | **Config file** | `config.githelper.json` |
-| **Dependencies** | LibGit2Sharp 0.30.x |
+| **Dependencies** | LibGit2Sharp 0.32.x |
 
 ## Install & load
 

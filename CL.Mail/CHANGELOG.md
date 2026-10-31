@@ -103,6 +103,10 @@ All notable changes to **CodeLogic.Mail** are documented here. Versions follow
 - Configuration examples in the README and the docs use the camelCase keys the CodeLogic loader reads.
   The PascalCase keys shown before are matched case-sensitively and were ignored, leaving defaults active.
 
+### Changed
+
+- Package versions are pinned (MailKit and MimeKit 4.18.2) instead of floating (`4.*`), so a build restores the same dependencies every time.
+
 ## 2026-10-27
 
 ### Security
