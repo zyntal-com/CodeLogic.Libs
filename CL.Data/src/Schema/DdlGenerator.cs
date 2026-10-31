@@ -38,6 +38,12 @@ public class DdlGenerator(SqlDialect dialect)
     /// <summary>A query run before commit that must return no rows (SQLite <c>PRAGMA foreign_key_check</c>), or null.</summary>
     public virtual string? IntegrityCheckSql => null;
 
+    /// <summary>Statements run (in the restore transaction) before rows with explicit identity values are inserted.</summary>
+    public virtual IReadOnlyList<string> IdentityInsertSetup(TableSchema table) => [];
+
+    /// <summary>Statements run after rows with explicit identity values were inserted (reset sequences).</summary>
+    public virtual IReadOnlyList<string> IdentityInsertTeardown(TableSchema table) => [];
+
     /// <summary>A quoted, possibly schema-qualified table name.</summary>
     protected string Table(string table, string? schema) => Dialect.QuoteTable(table, schema);
 

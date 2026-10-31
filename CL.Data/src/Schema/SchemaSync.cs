@@ -147,6 +147,15 @@ public sealed class SchemaSync
         if (actual.IsFailure) return actual.Error!;
         var plan = SchemaDiff.Compare(desired, actual.Value, level);
 
+        if (actual.Value is not null && _db.Config.BackupDirectory is { Length: > 0 } backupRoot
+            && plan.Apply.Any(c => c is DropColumnChange or AlterColumnChange))
+        {
+            // Changes that can lose data run only after the table's rows are safely on disk.
+            var folder = Path.Combine(backupRoot, $"{_db.Options.Time.GetUtcNow():yyyyMMdd-HHmmss}-{key.Replace('.', '_')}");
+            var backup = await _db.Backup.BackupAsync(folder, [desired.Name], desired.Schema, ct).ConfigureAwait(false);
+            if (backup.IsFailure) return DataErrors.SchemaSyncFailed(key, $"backup to '{folder}' failed; nothing was changed", backup.Error);
+        }
+
         if (plan.Apply.Count > 0)
         {
             var applied = await ApplyAsync(key, plan.Apply, ct).ConfigureAwait(false);

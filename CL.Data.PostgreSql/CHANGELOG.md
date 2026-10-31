@@ -1,2 +1,2 @@
 
-- `PostgreSqlDatabaseAdmin` (through the postgres database; DROP ... WITH (FORCE)); TRUNCATE ... RESTART IDENTITY.
+- Restores move identity sequences past the restored values (setval).

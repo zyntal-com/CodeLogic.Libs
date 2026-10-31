@@ -135,6 +135,9 @@ public abstract class DataProvider
     /// <summary>A statement that releases the advisory lock <paramref name="name"/>.</summary>
     public virtual CL.Data.Sql.SqlText UnlockSql(string name) => throw new NotSupportedException($"{Name} has no advisory locks.");
 
+    /// <summary>A statement that writes a consistent copy of the whole database to <paramref name="file"/> (SQLite), or null.</summary>
+    public virtual string? SnapshotSql(string file) => null;
+
     /// <summary>Server-level database administration (exists/create/drop), or null.</summary>
     public virtual CL.Data.Admin.DatabaseAdmin? DatabaseAdmin => null;
 

@@ -88,3 +88,5 @@ public sealed class SqliteSyncTests(SqliteFixture fixture) : SyncConformance(fix
 public sealed class SqliteMigrationTests(SqliteFixture fixture) : MigrationConformance(fixture);
 [Collection("sqlite")]
 public sealed class SqliteAdminTests(SqliteFixture fixture) : AdminConformance(fixture);
+[Collection("sqlite")]
+public sealed class SqliteBackupTests(SqliteFixture fixture) : BackupConformance(fixture);

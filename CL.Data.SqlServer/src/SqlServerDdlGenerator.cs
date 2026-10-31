@@ -13,6 +13,12 @@ public sealed class SqlServerDdlGenerator(SqlDialect dialect) : DdlGenerator(dia
     protected override string IdentityClause(ColumnSchema column) => " IDENTITY(1,1)";
 
     /// <inheritdoc />
+    public override IReadOnlyList<string> IdentityInsertSetup(TableSchema table) => [$"SET IDENTITY_INSERT {Table(table.Name, table.Schema)} ON"];
+
+    /// <inheritdoc />
+    public override IReadOnlyList<string> IdentityInsertTeardown(TableSchema table) => [$"SET IDENTITY_INSERT {Table(table.Name, table.Schema)} OFF"];
+
+    /// <inheritdoc />
     protected override string AddColumnKeyword => "ADD";
 
     /// <inheritdoc />

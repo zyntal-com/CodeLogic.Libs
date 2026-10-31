@@ -194,3 +194,9 @@
   - **Provider hook:** `DatabaseAdmin`; `ServerDatabaseAdmin` connects to the server-level database for the server providers.
 - **Retention (`db.Retention`):** `PurgeAsync<T>` deletes rows past their `[RetainDays]` limit in batches of `BatchSize` and publishes `RetentionPurgedEvent`. `Schedule(scheduler, maps, every)` runs it on `DataScheduler`.
 - **Dialect hooks:** `RenderTruncate` and `RenderBatchedDelete`.
+- **Backups (`db.Backup`):** `BackupAsync(directory, tables?, schema?)` writes a portable logical backup.
+  - **Contents:** `manifest.json` holds the table definitions in dependency order, and each table's rows go to a typed JSON-lines file, streamed with sequential access. Values whose type differs from their column's (SQLite) are tagged inline.
+  - **Restore:** `RestoreAsync(directory)` recreates the tables on the same provider and reinserts the rows in multi-row chunks, one transaction per table, keeping identity values.
+  - **Snapshot:** `SnapshotAsync(file)` makes a native whole-file copy (SQLite `VACUUM INTO`).
+- **Backup before alter:** with `BackupDirectory` set, table sync backs up a table before dropping or altering its columns. If the backup fails, nothing is changed.
+- **Provider hooks:** `DdlGenerator.IdentityInsertSetup`/`IdentityInsertTeardown`; `DataProvider.SnapshotSql`.

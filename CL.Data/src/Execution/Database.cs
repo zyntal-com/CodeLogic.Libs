@@ -208,6 +208,9 @@ public sealed partial class Database : IAsyncDisposable
     /// <summary>Database and table administration for this connection.</summary>
     public CL.Data.Admin.DataAdmin Admin => field ??= new CL.Data.Admin.DataAdmin(this);
 
+    /// <summary>Logical table backups and restores (and SQLite file snapshots) for this connection.</summary>
+    public CL.Data.Backup.DataBackup Backup => field ??= new CL.Data.Backup.DataBackup(this);
+
     /// <summary>Retention purges (<c>[RetainDays]</c>) for this connection.</summary>
     public CL.Data.Retention.DataRetention Retention => field ??= new CL.Data.Retention.DataRetention(this);
 

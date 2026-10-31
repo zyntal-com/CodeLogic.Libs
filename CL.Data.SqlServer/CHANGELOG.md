@@ -1,2 +1,2 @@
 
-- `SqlServerDatabaseAdmin` (through master; single-user before DROP); batched deletes with DELETE TOP (n).
+- Restores wrap explicit identity values in SET IDENTITY_INSERT ON/OFF.

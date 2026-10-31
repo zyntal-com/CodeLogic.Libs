@@ -66,6 +66,9 @@ public sealed class SqliteDataProvider : DataProvider
     public override CL.Data.Admin.DatabaseAdmin DatabaseAdmin { get; } = new SqliteDatabaseAdmin();
 
     /// <inheritdoc />
+    public override string? SnapshotSql(string file) => "VACUUM INTO '" + file.Replace("'", "''", StringComparison.Ordinal) + "'";
+
+    /// <inheritdoc />
     public override IReadOnlyDictionary<string, string> TableOptions(CL.Data.Mapping.EntityMap map, DataConnectionConfig config)
     {
         var hint = map.Hint<SqliteTableAttribute>();

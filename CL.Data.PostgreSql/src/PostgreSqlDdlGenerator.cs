@@ -7,6 +7,17 @@ namespace CL.Data.PostgreSql;
 public sealed class PostgreSqlDdlGenerator(SqlDialect dialect) : DdlGenerator(dialect)
 {
     /// <inheritdoc />
+    public override IReadOnlyList<string> IdentityInsertTeardown(TableSchema table)
+    {
+        // Explicit identity values do not advance the sequence; move it past the highest restored value.
+        var quoted = Table(table.Name, table.Schema);
+        var literal = "'" + quoted.Replace("'", "''", StringComparison.Ordinal) + "'";
+        return table.Columns.Where(c => c.Identity).Select(c =>
+            $"SELECT setval(pg_get_serial_sequence({literal}, '{c.Name.Replace("'", "''", StringComparison.Ordinal)}'), " +
+            $"COALESCE(MAX({Q(c.Name)}), 1), MAX({Q(c.Name)}) IS NOT NULL) FROM {quoted}").ToArray();
+    }
+
+    /// <inheritdoc />
     protected override IReadOnlyList<string> AlterColumn(AlterColumnChange change)
     {
         var table = Table(change.Table, change.Schema);
