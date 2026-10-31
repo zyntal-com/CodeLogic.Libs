@@ -19,3 +19,11 @@
     per-provider options (`MySql`, `PostgreSql`, `SqlServer`, `Sqlite`).
   - `data.cache` section (`DataCacheConfig`).
   - Validation reports field paths. Connection names stay case-insensitive after loading from JSON.
+- **Mapping attributes:**
+  - Entity and column attributes: `[Table]`, `[DataRow]`, `[Column]` (composite keys via `KeyOrder`), `[Ignore]`.
+  - Relationship and index attributes: `[ForeignKey]` and `[ForeignKey<TEntity>]`, `[Index]` (multi-column, direction,
+    included columns), `[CompositeIndex]`.
+  - Behavior attributes: `[SoftDelete]`, `[RetainDays]`, `[ConcurrencyToken]`, `[CreatedAt]`/`[UpdatedAt]`/`[CreatedBy]`/
+    `[UpdatedBy]` and `[TenantKey]`.
+  - Types: a provider-neutral `DataType` enum, plus provider hint attributes (`[MySqlTable]`/`[MySqlColumn]`,
+    `[PostgresTable]`/`[PostgresColumn]`, `[SqlServerTable]`/`[SqlServerColumn]`, `[SqliteTable]`/`[SqliteColumn]`).
