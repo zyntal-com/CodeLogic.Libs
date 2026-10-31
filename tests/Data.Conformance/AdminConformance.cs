@@ -45,13 +45,13 @@ public abstract class AdminConformance(ProviderFixture fixture) : ConformanceSui
         try
         {
             Assert.False((await admin.DatabaseExistsAsync(name)).ValueOrThrow());
-            (await admin.CreateDatabaseAsync(name)).Ensure();
+            (await admin.CreateDatabaseAsync(name)).ThrowIfFailure();
             Assert.True((await admin.DatabaseExistsAsync(name)).ValueOrThrow());
-            (await admin.CreateDatabaseAsync(name)).Ensure();   // no-op
+            (await admin.CreateDatabaseAsync(name)).ThrowIfFailure();   // no-op
         }
         finally
         {
-            (await admin.DropDatabaseAsync(name)).Ensure();
+            (await admin.DropDatabaseAsync(name)).ThrowIfFailure();
         }
         Assert.False((await admin.DatabaseExistsAsync(name)).ValueOrThrow());
     }
@@ -61,7 +61,7 @@ public abstract class AdminConformance(ProviderFixture fixture) : ConformanceSui
     {
         RequireProvider();
         var admin = Db.Admin;
-        (await admin.DropTableAsync<AdminItem>()).Ensure();
+        (await admin.DropTableAsync<AdminItem>()).ThrowIfFailure();
         Assert.False((await admin.TableExistsAsync<AdminItem>()).ValueOrThrow());
         (await Db.Schema.SyncAsync<AdminItem>(new CL.Data.Schema.SchemaSyncOptions { Force = true })).ValueOrThrow();
         Assert.True((await admin.TableExistsAsync<AdminItem>()).ValueOrThrow());
@@ -69,12 +69,12 @@ public abstract class AdminConformance(ProviderFixture fixture) : ConformanceSui
 
         var repo = Db.Repository<AdminItem>();
         (await repo.InsertManyAsync([new AdminItem { Name = "a" }, new AdminItem { Name = "b" }])).ValueOrThrow();
-        (await admin.TruncateAsync<AdminItem>()).Ensure();
+        (await admin.TruncateAsync<AdminItem>()).ThrowIfFailure();
         Assert.Equal(0L, (await Db.Query<AdminItem>().CountAsync()).ValueOrThrow());
         var next = (await repo.InsertAsync(new AdminItem { Name = "c" })).ValueOrThrow();
         if (Db.Provider.Name != "sqlite") Assert.Equal(1L, next.Id);   // identity restarts (SQLite keeps AUTOINCREMENT counters)
 
-        (await admin.DropTableAsync<AdminItem>()).Ensure();
+        (await admin.DropTableAsync<AdminItem>()).ThrowIfFailure();
         Assert.False((await admin.TableExistsAsync<AdminItem>()).ValueOrThrow());
     }
 
@@ -82,7 +82,7 @@ public abstract class AdminConformance(ProviderFixture fixture) : ConformanceSui
     public async Task Retention_purges_expired_rows_in_batches()
     {
         RequireProvider();
-        (await Db.Admin.DropTableAsync<RetentionLog>()).Ensure();
+        (await Db.Admin.DropTableAsync<RetentionLog>()).ThrowIfFailure();
         (await Db.Schema.SyncAsync<RetentionLog>(new CL.Data.Schema.SchemaSyncOptions { Force = true })).ValueOrThrow();
         var now = DateTimeOffset.UtcNow;
         var rows = Enumerable.Range(0, 5).Select(i => new RetentionLog { At = now.AddDays(-10 - i), Message = $"old{i}" })

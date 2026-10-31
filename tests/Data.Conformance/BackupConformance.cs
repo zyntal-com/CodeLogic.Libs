@@ -83,7 +83,7 @@ public abstract class BackupConformance(ProviderFixture fixture) : ConformanceSu
             var snapshot = await Db.Backup.SnapshotAsync(file);
             if (Db.Provider.Name == "sqlite")
             {
-                snapshot.Ensure();
+                snapshot.ThrowIfFailure();
                 Assert.True(new FileInfo(file).Length > 0);
             }
             else

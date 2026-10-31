@@ -35,7 +35,7 @@ public abstract class BatchConformance(ProviderFixture fixture) : ConformanceSui
         var expensive = batch.Count(db.Query<Product>().Where(p => p.Price >= 3m));
         var names = batch.Sql<string>($"SELECT {Sql.Identifier("Name")} FROM conf_products WHERE {Sql.Identifier("Stock")} = {5}");
 
-        (await batch.ExecuteAsync()).Ensure();
+        (await batch.ExecuteAsync()).ThrowIfFailure();
 
         Assert.Equal(1, counter.Commands);
         Assert.Equal(["B0", "B1", "B2"], cheap.Value.Select(p => p.Sku));

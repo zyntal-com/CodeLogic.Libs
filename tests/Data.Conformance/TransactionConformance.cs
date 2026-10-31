@@ -19,14 +19,14 @@ public abstract class TransactionConformance(ProviderFixture fixture) : Conforma
             await tx.Repository<Product>().InsertAsync(New("T1"));
             Assert.Equal(1L, (await tx.Query<Product>().CountAsync()).ValueOrThrow());   // visible inside
             Assert.Equal(0L, (await Db.Query<Product>().CountAsync()).ValueOrThrow());   // not outside yet
-            (await tx.CommitAsync()).Ensure();
+            (await tx.CommitAsync()).ThrowIfFailure();
         }
         Assert.Equal(1L, (await Db.Query<Product>().CountAsync()).ValueOrThrow());
 
         await using (var tx = (await Db.BeginTransactionAsync()).ValueOrThrow())
         {
             await tx.Repository<Product>().InsertAsync(New("T2"));
-            (await tx.RollbackAsync()).Ensure();
+            (await tx.RollbackAsync()).ThrowIfFailure();
         }
         await using (var tx = (await Db.BeginTransactionAsync()).ValueOrThrow())
         {
@@ -76,10 +76,10 @@ public abstract class TransactionConformance(ProviderFixture fixture) : Conforma
         });
         Assert.True(nested.IsSuccess);
 
-        (await tx.SavepointAsync("sp1")).Ensure();
+        (await tx.SavepointAsync("sp1")).ThrowIfFailure();
         await tx.Repository<Product>().InsertAsync(New("N2"));
-        (await tx.RollbackToSavepointAsync("sp1")).Ensure();
-        (await tx.CommitAsync()).Ensure();
+        (await tx.RollbackToSavepointAsync("sp1")).ThrowIfFailure();
+        (await tx.CommitAsync()).ThrowIfFailure();
 
         Assert.Equal(["N1"], (await Db.Query<Product>().Select(p => p.Sku).ToListAsync()).ValueOrThrow());
         Assert.Equal(DataErrors.ValidationCode, (await tx.Db.BeginTransactionAsync()).Error!.Code);

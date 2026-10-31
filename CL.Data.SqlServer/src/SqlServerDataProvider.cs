@@ -286,7 +286,7 @@ public sealed class SqlServerDataLibrary : ILibrary
     public Task OnConfigureAsync(LibraryContext context)
     {
         var registered = DataProviderRegistry.Register(SqlServerDataProvider.Instance);
-        if (registered.IsFailure) throw new InvalidOperationException(registered.Error!.ToString());
+        registered.ThrowIfFailure();
         return Task.CompletedTask;
     }
 

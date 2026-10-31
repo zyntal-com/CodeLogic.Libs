@@ -282,7 +282,7 @@ public sealed class PostgreSqlDataLibrary : ILibrary
     public Task OnConfigureAsync(LibraryContext context)
     {
         var registered = DataProviderRegistry.Register(PostgreSqlDataProvider.Instance);
-        if (registered.IsFailure) throw new InvalidOperationException(registered.Error!.ToString());
+        registered.ThrowIfFailure();
         return Task.CompletedTask;
     }
 

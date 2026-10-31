@@ -30,6 +30,11 @@
     <PackageReference Include="CodeLogic" Version="$(CodeLogicPackageVersion)" />
   </ItemGroup>
 
+  <!-- Local development: build against the sibling CodeLogic source (see Directory.Build.props). -->
+  <ItemGroup Condition="'$(CodeLogicFromNuGet)' != 'true' And '$(CLIsRoslynComponent)' != 'true'">
+    <ProjectReference Include="$(_CodeLogicLocalPath)" />
+  </ItemGroup>
+
   <!--
     Derive AssemblyVersion from $(Version) — strip any -prerelease suffix AND
     any +build-metadata (e.g. 4.8.142-preview+a1b2c3d → 4.8.142) so the value

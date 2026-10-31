@@ -24,7 +24,7 @@ public sealed class SqliteDataLibrary : ILibrary
     public Task OnConfigureAsync(LibraryContext context)
     {
         var registered = DataProviderRegistry.Register(SqliteDataProvider.Instance);
-        if (registered.IsFailure) throw new InvalidOperationException(registered.Error!.ToString());
+        registered.ThrowIfFailure();
         return Task.CompletedTask;
     }
 

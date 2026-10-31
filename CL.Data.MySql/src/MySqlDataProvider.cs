@@ -264,7 +264,7 @@ public sealed class MySqlDataLibrary : ILibrary
     public Task OnConfigureAsync(LibraryContext context)
     {
         var registered = DataProviderRegistry.Register(MySqlDataProvider.Instance);
-        if (registered.IsFailure) throw new InvalidOperationException(registered.Error!.ToString());
+        registered.ThrowIfFailure();
         return Task.CompletedTask;
     }
 
