@@ -1,8 +1,8 @@
 # CL.Common — Utilities
 
-> Strings, time, web, networking, cron, imaging, caching, file handling, and reflection.
+> Strings, time, web, networking, cron, resilience, scheduling, caching, fast hashing, threading, file handling, and reflection.
 
-This page covers the everyday utility helpers in `CL.Common`. Most are **static classes** — the one exception is the cache, which is an instance type (`MemoryCache` implementing `ICache`). Pure transforms and predicates return plain values; anything involving I/O, parsing, or the network returns a framework `Result` / `Result<T>`.
+This page covers the everyday utility helpers in `CL.Common`. Most are **static classes**; the resilience, scheduling, caching and threading types are instances you create once and share. Pure transforms and predicates return plain values; anything involving I/O, parsing, or the network returns a framework `Result` / `Result<T>`.
 
 See the [Overview](index.md) for loading and the full catalog, and [Security & Data](security-data.md) for encryption, hashing, generators, JSON, conversion, and compression.
 
@@ -140,6 +140,7 @@ Result         del  = await HttpClientHelper.DeleteAsync(http, url);
 | `PostJsonAsync<TBody, TResponse>(client, url, body, headers?)` | `Task<Result<TResponse>>` | POST JSON, typed response. |
 | `PutJsonAsync<TBody>(client, url, body, headers?)` | `Task<Result<string>>` | PUT JSON. |
 | `DeleteAsync(client, url, headers?)` | `Task<Result>` | DELETE. |
+| `GetJsonAsync<T>(client, url, typeInfo, headers?)`, `PostJsonAsync(…, bodyTypeInfo[, responseTypeInfo], …)`, `PutJsonAsync(…, bodyTypeInfo, …)` | as above | Trim/Native-AOT-safe overloads taking source-generated `JsonTypeInfo<T>`. The overloads without it use reflection and are marked `[RequiresUnreferencedCode]` / `[RequiresDynamicCode]`. |
 
 ### HttpHeaderHelper
 
@@ -238,6 +239,10 @@ bool good = CronParser.IsValid("0 */6 * * *");
 Result<CronExpression> parsed = CronParser.Parse("0 */6 * * *");
 Result<DateTime> next = CronParser.GetNextOccurrence("0 */6 * * *");        // from now (UTC)
 Result<DateTime> from = CronParser.GetNextOccurrence("0 0 * * *", DateTime.UtcNow.AddDays(1));
+
+// Fields evaluated in a time zone; returns a UTC instant
+Result<DateTimeOffset> local = CronParser.GetNextOccurrence("0 9 * * 1-5", DateTimeOffset.UtcNow,
+    TimeZoneInfo.FindSystemTimeZoneById("Europe/Copenhagen"));
 ```
 
 | Member | Returns | Purpose |
@@ -245,105 +250,231 @@ Result<DateTime> from = CronParser.GetNextOccurrence("0 0 * * *", DateTime.UtcNo
 | `Parse(expression)` | `Result<CronExpression>` | Parse into fields. |
 | `IsValid(expression)` | `bool` | Quick validity check. |
 | `GetNextOccurrence(expression, from? = null)` | `Result<DateTime>` | Next UTC fire time at/after `from`. |
+| `GetNextOccurrence(expression, from, timeZone)` | `Result<DateTimeOffset>` | Next fire time strictly after `from`, with the fields read in `timeZone` (null = UTC). Used by `JobScheduler`. |
 
 ```csharp
 public record CronExpression(string Raw, string Minutes, string Hours,
                              string DayOfMonth, string Month, string DayOfWeek);
 ```
 
-## Imaging — CLU_Imaging
+## Resilience — RetryPolicy & CircuitBreaker
 
-`CL.Common.Imaging.CLU_Imaging` does image validation and transformation via SkiaSharp, working with both `Stream`s and file paths. The validation predicates return `bool`; transforms return `Result`.
+`CL.Common.Resilience` protects calls to flaky dependencies. Both types work on `Result` / `Result<T>`, take an
+optional `TimeProvider` (so tests can drive delays and break durations with `FakeTimeProvider`), are thread-safe and
+are meant to be created once and shared.
 
-Every method that decodes refuses images over `CLU_Imaging.DefaultMaxPixels` (40 megapixels, checked from the header before decoding; error `imaging.too_large`) and turns photos upright from their EXIF orientation. The size checks read only the header.
+### RetryPolicy
 
-For user uploads use `ProcessImage`: one call that checks the pixel count, orients, scales down into a box and re-encodes (which also drops metadata such as GPS positions).
+Retries while a failure is *transient*, with backoff and jitter:
 
 ```csharp
-using var upload = request.File.OpenReadStream();
-Result<ProcessedImage> avatar = CLU_Imaging.ProcessImage(upload, new ImageProcessOptions
+using CL.Common.Resilience;
+
+var retry = new RetryPolicy(new RetryOptions
 {
-    MaxWidth = 512, MaxHeight = 512,   // scaled down, never up
-    Format = ImageFormat.Webp,         // default
-    Quality = 85,                      // default
-    MaxPixels = 40_000_000             // default; refused before decoding
+    MaxAttempts = 4,                         // total, including the first
+    BaseDelay = TimeSpan.FromMilliseconds(100),
+    MaxDelay = TimeSpan.FromSeconds(5),
+    Backoff = BackoffKind.Exponential,       // Constant | Linear | Exponential | DecorrelatedJitter
+    JitterFactor = 0.2,                      // ±20 %
 });
-if (avatar.IsFailure) return BadRequest(avatar.Error!.Message);   // imaging.decode_failed / imaging.too_large
-await storage.UploadBytesAsync($"avatars/{id}.webp", avatar.Value!.Data);
-// avatar.Value.Width / Height are the final size
+retry.Retrying += a => log.Warning($"attempt {a.Attempt} failed ({a.Error?.Code}); retrying in {a.Delay}");
+
+Result<User> user = await retry.ExecuteAsync(
+    (attempt, ct) => repository.GetAsync(id, ct),
+    isTransient: e => e is TimeoutError or UnavailableError,
+    ct);
 ```
+
+- A failure `isTransient` rejects comes back unchanged, at once.
+- When the last attempt fails transiently: `resilience.retries_exhausted` (unavailable) with the last error as
+  `InnerError`.
+- Once the token is cancelled no further attempt starts: `resilience.cancelled` (unavailable).
+- An action that throws is treated as failing with `resilience.unhandled_exception`, which `isTransient` sees too;
+  `RetryAttempt.Exception` carries the exception.
+- `GetDelay(attempt)` exposes the schedule. A second constructor takes a `Random` for reproducible jitter.
+
+### CircuitBreaker
+
+Stops calling a failing dependency for `BreakDuration`, then lets trial calls through:
 
 ```csharp
-using CL.Common.Imaging;
+var breaker = new CircuitBreaker("orders-db", new CircuitBreakerOptions
+{
+    FailureThreshold = 5,                    // consecutive failures that open the circuit
+    // FailureRatio = 0.5, MinimumThroughput = 20, SamplingWindow = TimeSpan.FromSeconds(30),  // or: ratio-based
+    BreakDuration = TimeSpan.FromSeconds(30),
+    HalfOpenMaxCalls = 1,
+});
+breaker.StateChanged += c => log.Warning($"{c.Name}: {c.From} → {c.To}");
 
-// Validate
-using var input = File.OpenRead("photo.jpg");
-bool fits = CLU_Imaging.IsValidSize(input, maxWidth: 4000, maxHeight: 4000);
-
-// Convert to WebP (stream in, stream out)
-using var src = File.OpenRead("photo.jpg");
-Result<MemoryStream> webp = CLU_Imaging.ConvertImage(src, ImageFormat.Webp);
-if (webp.IsSuccess)
-    await File.WriteAllBytesAsync("photo.webp", webp.Value!.ToArray());
-
-// File-path overloads
-CLU_Imaging.ResizeImage("in.png", "out.png", 800, 600, maintainAspectRatio: true);
-CLU_Imaging.CreateThumbnail("in.png", "thumb.png", thumbnailSize: 128);
-Result<(int width, int height)> dims = CLU_Imaging.GetImageDimensions("in.png");
+Result<Order> order = await breaker.ExecuteAsync(
+    ct => repository.GetOrderAsync(id, ct),
+    countsAsFailure: e => e is TimeoutError or UnavailableError,   // not-found etc. don't trip it
+    ct);
+// open → resilience.circuit_open (unavailable), Details "retry_after=…s"
 ```
 
-| Member | Returns | Purpose |
-|--------|---------|---------|
-| `ProcessImage(stream, options?)` | `Result<ProcessedImage>` | Safe upload pipeline: pixel limit, EXIF orientation, fit into a box, re-encode (default WebP q85). |
-| `FitWithin(width, height, maxWidth, maxHeight)` | `(int, int)` | Size scaled down (never up) to fit a box; 0 = no limit on that side. |
-| `IsValidSize(stream, maxWidth, maxHeight)` | `bool` | Whether dimensions are within bounds (header only). |
-| `IsValidAspectRatio(stream)` | `bool` | Aspect-ratio sanity check (header only). |
-| `ConvertImage(stream, format)` | `Result<MemoryStream>` | Re-encode to JPEG/PNG/WebP (quality 90). |
-| `ResizeImage(stream, targetWidth, targetHeight, allowCrop = true)` | `Result<MemoryStream>` | Resize to PNG: `allowCrop` covers and crops to the exact size, otherwise fits inside keeping the aspect ratio. |
-| `ResizeImage(stream, targetWidth, targetHeight, allowCrop, format, quality = 90)` | `Result<MemoryStream>` | Resize to another format. |
-| `ImageToBase64(imagePath)` | `Result<string>` | Read a file as a Base64 string. |
-| `ResizeImage(inputPath, outputPath, width, height, maintainAspectRatio = true)` | `Result` | Resize file → file (`false` covers and crops). |
-| `ConvertImageFormat(inputPath, outputPath, format)` | `Result` | Convert file → file. |
-| `CreateThumbnail(inputPath, outputPath, thumbnailSize = 100)` | `Result` | Square thumbnail. |
-| `GetImageDimensions(imagePath)` | `Result<(int width, int height)>` | Read the stored width/height from the header. |
+Without a delegate: `if (breaker.TryAcquire(out var lease)) { …; lease.Success(); /* or lease.Failure() / lease.Ignore() */ }`.
+`TryAcquire` and the lease don't allocate. `Isolate()` forces the circuit open until `Reset()`.
+
+| State | Behaviour |
+|---|---|
+| `Closed` | Calls flow; failures counted (consecutive, or the ratio over a 10-bucket sliding window). |
+| `Open` | Calls refused until `BreakDuration` has passed (or until `Reset()` after `Isolate()`). |
+| `HalfOpen` | Up to `HalfOpenMaxCalls` trial calls; the first success closes, the first failure re-opens. |
+
+Combine them by running the breaker inside the retry: `retry.ExecuteAsync((_, ct) => breaker.ExecuteAsync(..., ct), e => e.Code != ResilienceErrors.CircuitOpenCode && …)`.
+
+Error codes (`ResilienceErrors` / `CommonErrors`): `resilience.circuit_open`, `resilience.retries_exhausted`,
+`resilience.cancelled`, `resilience.unhandled_exception`.
+
+## Scheduling — JobScheduler
+
+`CL.Common.Scheduling.JobScheduler` runs named background jobs on an interval, a cron expression or once. Timers come
+from the `TimeProvider`, so `FakeTimeProvider.Advance` drives it deterministically in tests.
 
 ```csharp
-public enum ImageFormat { Jpeg, Png, Webp }
+using CL.Common.Scheduling;
+
+await using var scheduler = new JobScheduler(maxConcurrency: 4);   // 0 = unlimited
+scheduler.JobCompleted += r =>
+{
+    if (r.Error is not null) log.Error($"{r.Name} failed after {r.Duration}: {r.Error}");
+};
+
+IJobHandle cleanup = scheduler.Schedule("cleanup",
+    new JobSchedule.Interval(TimeSpan.FromMinutes(5)),
+    async ct => await sessions.PurgeExpiredAsync(ct),
+    new JobOptions { Timeout = TimeSpan.FromMinutes(1) });
+
+scheduler.Schedule("nightly-report",
+    new JobSchedule.Cron("0 3 * * *", TimeZoneInfo.FindSystemTimeZoneById("Europe/Copenhagen")),
+    ct => reports.BuildAsync(ct));
+
+scheduler.Schedule("warm-up", new JobSchedule.Once(DateTimeOffset.UtcNow.AddSeconds(10)), ct => cache.WarmAsync(ct));
+
+cleanup.Pause();                                  // skip scheduled runs
+Result run = await scheduler.TriggerAsync("cleanup");   // run now and wait (works while paused)
+cleanup.Dispose();                                // unschedule
+IReadOnlyList<JobInfo> jobs = scheduler.Jobs;     // last run, duration, error, next run, run count, …
+await scheduler.StopAsync(drainTimeout: TimeSpan.FromSeconds(10));
 ```
 
-`ImageProcessOptions`: `Format` (Webp), `Quality` (85), `MaxWidth`/`MaxHeight` (0 = no limit), `MaxPixels` (`DefaultMaxPixels`), `ApplyOrientation` (true). `ProcessedImage(byte[] Data, int Width, int Height, ImageFormat Format)`.
+| Schedule | Behaviour |
+|---|---|
+| `Interval(Period, InitialDelay?)` | Fixed rate from the scheduled times; missed slots are skipped, not run in a burst. |
+| `Cron(Expression, TimeZone?)` | 5-field cron (see `CronParser`), evaluated in the zone (UTC by default), to the minute. |
+| `Once(At)` | One run; immediately if `At` has passed. |
 
-Error codes: `imaging.decode_failed` (not an image), `imaging.too_large` (over the pixel limit), `imaging.invalid_options`, `imaging.encode_failed`.
+- **Failures never stop the scheduler.** A job that throws reports `scheduling.job_failed` in
+  `JobRunCompleted.Error` and `JobInfo.LastError`; the next run happens as scheduled.
+- **Overlap:** by default a due run is skipped while the previous run is still going, and `TriggerAsync` returns
+  `scheduling.already_running`. Set `JobOptions.AllowOverlap` to run them side by side.
+- **Timeout:** `JobOptions.Timeout` cancels the job's token; the run reports `scheduling.job_timeout`.
+- **Jitter:** `JobOptions.Jitter` (0..1) adds a random fraction of the interval to each run.
+- **Stop:** `StopAsync(drainTimeout)` starts no new runs, gives running jobs the drain time (default 30 s), then
+  cancels their tokens (`scheduling.cancelled`). `DisposeAsync` calls it.
+- Invalid schedules or a duplicate name throw `ArgumentException` (programming errors).
 
-## Caching — ICache / MemoryCache
+## Caching — ICache&lt;TKey&gt; / MemoryCache
 
-`CL.Common.Caching.MemoryCache` is the one instance type here: a sealed, thread-safe, in-process cache implementing `ICache` and `IDisposable`. A background loop evicts expired entries on the cleanup interval (default 60 seconds).
+`CL.Common.Caching.MemoryCache<TKey>` is a thread-safe in-process cache; `MemoryCache` is the string-keyed version.
+Both take an optional `TimeProvider`, so expiration is testable with a fake clock.
 
 ```csharp
 using CL.Common.Caching;
 
-ICache cache = new MemoryCache();                                  // or new MemoryCache(TimeSpan.FromSeconds(30))
+using var cache = new MemoryCache(new MemoryCacheOptions
+{
+    SizeLimit = 50_000,                         // in your unit (bytes, rows, …); null = unbounded
+    MaxEntries = 10_000,                        // null = unbounded
+    CompactionPercentage = 0.1,                 // evict to 10 % below the limit
+    ExpirationScanInterval = TimeSpan.FromMinutes(1),
+});
 
-await cache.SetAsync("user:1", userObj, TimeSpan.FromMinutes(5));
-User? cached = await cache.GetAsync<User>("user:1");               // null if missing/expired
-bool  has    = await cache.ExistsAsync("user:1");
+cache.Set("user:1", user, new CacheEntryOptions
+{
+    AbsoluteExpiration = TimeSpan.FromMinutes(10),
+    SlidingExpiration = TimeSpan.FromMinutes(2),
+    Tags = ["users", "tenant:42"],
+    Size = 1,
+    Priority = CachePriority.Normal,            // Low | Normal | High | NeverRemove
+});
 
-await cache.RemoveByPrefixAsync("user:");
-int count = await cache.GetCountAsync();
-await cache.ClearAsync();
+if (cache.TryGet("user:1", out User? hit)) { /* … */ }
+if (cache.TryGet(keySpan, out User? fromSpan)) { /* span key, no string allocated */ }
+
+// Stampede-protected: 100 concurrent callers → one factory run.
+User u = await cache.GetOrCreateAsync("user:2", (key, ct) => repository.LoadUserAsync(key, ct),
+    new CacheEntryOptions { AbsoluteExpiration = TimeSpan.FromMinutes(5) }, ct);
+
+cache.RemoveByTag("tenant:42");
+cache.RemoveByPrefix("user:");
+CacheStatistics stats = cache.GetStatistics();  // Hits, Misses, Evictions, Count, Size
+
+// Any key type, never boxed — e.g. 128-bit hashes:
+using var plans = new MemoryCache<UInt128>();
+plans.Set(FastHash.XxHash128(sql.AsSpan()), plan);
 ```
 
-| Member | Returns | Purpose |
-|--------|---------|---------|
-| `SetAsync<T>(key, value, ttl? = null)` | `Task` | Store with optional TTL. |
-| `GetAsync<T>(key)` | `Task<T?>` | Read; `null` if absent or expired. |
-| `ExistsAsync(key)` | `Task<bool>` | Membership check. |
-| `RemoveAsync(key)` | `Task` | Remove one entry. |
-| `RemoveByPrefixAsync(prefix)` | `Task` | Remove all entries with a key prefix. |
-| `ClearAsync()` | `Task` | Drop everything. |
-| `GetCountAsync()` | `Task<int>` | Current entry count. |
+| Member | Purpose |
+|---|---|
+| `TryGet<T>(key, out value)` | Read a live entry; an entry of another type is a miss. |
+| `GetOrCreateAsync<T>(key, factory, options?, ct)` | Read or create; one factory run per key at a time. A throwing factory caches nothing. |
+| `Set<T>(key, value, options?)` | Store or replace. An entry larger than `SizeLimit` is not stored. |
+| `Remove(key)` / `RemoveByTag(tag)` / `Clear()` | Explicit removal (tags use a reverse index). |
+| `RemoveByPrefix(prefix)`, `TryGet<T>(ReadOnlySpan<char>, …)` | `ICache` (string keys) only. |
+| `RemoveExpired()` | Sweep now (the periodic timer calls it). |
+| `GetStatistics()` | Counters snapshot. |
 
-The constructor is `MemoryCache(TimeSpan? cleanupInterval = null)`; pass a value to tune how often the eviction loop runs. Dispose the cache to stop the loop.
+**Eviction:** when a limit is exceeded, expired entries go first, then the lowest priority, least recently used
+entries (approximate LRU) until the cache is `CompactionPercentage` below the limit. `NeverRemove` entries are only
+removed by expiry or explicitly. Expired entries are removed when read and by the periodic sweep.
+
+## Hashing — FastHash
+
+`CL.Common.Hashing.FastHash` is fast **non-cryptographic** hashing (XXH3 / XXH128 via `System.IO.Hashing`) for cache
+keys, deduplication and change detection. For passwords and signatures use `Security.Hashing`.
+
+```csharp
+using CL.Common.Hashing;
+
+ulong   h64  = FastHash.XxHash3(bytes);
+UInt128 h128 = FastHash.XxHash128(bytes, seed: 0);
+UInt128 key  = FastHash.XxHash128(sql.AsSpan());       // UTF-16 bytes, no allocation
+string  hex  = FastHash.ToHex(key);                    // 32 lowercase chars
+
+var hasher = FastHasher.Create();                      // incremental
+hasher.Append(sql.AsSpan());
+hasher.Append(parameterCount);                         // any unmanaged value
+hasher.Append(dialectBytes);
+UInt128 combined = hasher.GetHash128();
+```
+
+Hashes are stable across processes and machines for the same input and seed. `FastHasher` is a mutable struct:
+create it with `Create()` and don't copy it while appending.
+
+## Threading — AsyncKeyedLock&lt;TKey&gt;
+
+`CL.Common.Threading.AsyncKeyedLock<TKey>` is an async lock per key: different keys run in parallel, the same key one
+at a time. Per-key state exists only while held and is pooled, so it doesn't grow with the number of keys seen.
+
+```csharp
+using CL.Common.Threading;
+
+var locks = new AsyncKeyedLock<string>();
+
+using (await locks.LockAsync(accountId, ct))
+{
+    // one caller per account at a time
+}
+
+if (locks.TryLock(accountId, out var releaser))
+    using (releaser) { /* got it without waiting */ }
+```
+
+Not reentrant; dispose each releaser once. A cancelled wait throws `OperationCanceledException` and takes nothing.
 
 ## File handling — FileSystem
 
@@ -374,6 +505,12 @@ bool exists = FileSystem.FileExists("a.txt");
 ## Reflection — AssemblyHelper & ReflectionHelper
 
 The `CL.Common.Assemblies` namespace holds two static helpers. `AssemblyHelper` reads assembly metadata and discovers types; `ReflectionHelper` does dynamic instance and member access. Metadata getters return plain values; loading, discovery, and dynamic access return `Result`.
+
+These helpers are reflection by nature. They carry trimming annotations: `CreateInstance`, `ToDictionary` and
+`HasDefaultConstructor` declare what they need with `[DynamicallyAccessedMembers]` (safe when the type is known
+statically); name-based member access (`GetPropertyValue`, `SetPropertyValue`, `InvokeMethod`), `LoadFrom`,
+`GetFileMetadata` and type discovery are `[RequiresUnreferencedCode]`, so a trimmed or Native AOT app gets a warning
+where it calls them.
 
 ```csharp
 using CL.Common.Assemblies;
@@ -420,6 +557,7 @@ bool plugin = ReflectionHelper.Implements<IPlugin>(typeof(MyType));
 
 - [Overview](index.md) — loading, organization, and the full catalog.
 - [Security & Data](security-data.md) — encryption, hashing, generators, JSON, conversion, and compression.
+- [CL.Imaging](../imaging/index.md) — image processing, which moved out of CL.Common in 5.0.
 - [Getting Started](../../getting-started.md) — load, configure, and use any `CL.*` library.
 - [API Reference](../../api/index.md) — generated type/member documentation.
 - [Package on NuGet](https://www.nuget.org/packages/CodeLogic.Common)

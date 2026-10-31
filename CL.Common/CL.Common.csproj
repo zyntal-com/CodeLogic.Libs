@@ -7,7 +7,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <PackageId>CodeLogic.Common</PackageId>
-    <PackageTags>utilities;imaging;caching;hashing;compression</PackageTags>
+    <PackageTags>utilities;caching;resilience;retry;circuit-breaker;scheduler;cron;hashing;xxhash;compression;aot</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <Authors>Zyntal.com</Authors>
     <Description>General-purpose utility toolkit for CodeLogic 5 applications</Description>

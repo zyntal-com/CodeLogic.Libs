@@ -5,7 +5,7 @@ namespace CL.Common;
 
 /// <summary>
 /// CL.Common library — general-purpose utility toolkit for CodeLogic applications.
-/// Provides Security, Generators, Caching, Compression, Imaging, Networking,
+/// Provides Security, Generators, Caching, Resilience, Scheduling, Hashing, Threading, Compression, Networking,
 /// Data, FileHandling, Conversion, Parser, Time, and String utilities.
 /// No external service dependencies — always healthy when initialized.
 /// </summary>
@@ -17,7 +17,7 @@ public sealed class CommonLibrary : ILibrary
         Id          = "cl.common",
         Name        = "CL.Common",
         Version     = CL.Internal.InternalLibraryVersion.Current,
-        Description = "General-purpose utility toolkit — security, generators, caching, imaging, and more",
+        Description = "General-purpose utility toolkit — security, generators, caching, resilience, scheduling, hashing, and more",
         Author      = "Zyntal.com",
         Dependencies = []
     };

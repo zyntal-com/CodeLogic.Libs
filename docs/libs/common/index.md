@@ -1,6 +1,6 @@
 # CL.Common
 
-> A broad, stateless utility toolkit — security, generators, JSON, compression, imaging, strings, time, web, networking, caching, file handling, and reflection for CodeLogic applications.
+> A broad utility toolkit — security, generators, JSON, compression, strings, time, web, networking, caching, resilience, scheduling, fast hashing, file handling, and reflection for CodeLogic applications. Trim- and Native-AOT-compatible.
 
 `CL.Common` is a grab-bag of small, dependency-light helpers used across CodeLogic applications. Almost everything is exposed as **static helper classes** grouped by namespace, so you call them directly without wiring up a library instance. Many fallible operations return a framework `Result` / `Result<T>` instead of throwing; the simplest helpers return plain values (`string`, `bool`, `byte[]`). The package also ships a `CommonLibrary` (`ILibrary`) so it participates in the CodeLogic lifecycle and health system — but loading it is optional for the static helpers.
 
@@ -9,12 +9,15 @@
 | **Package** | [`CodeLogic.Common`](https://www.nuget.org/packages/CodeLogic.Common) |
 | **Library class** | `CL.Common.CommonLibrary` |
 | **Config file** | *None — stateless utility library* |
-| **Dependencies** | K4os.Compression.LZ4 1.x · SkiaSharp 3.x · Newtonsoft.Json 13.x |
+| **Dependencies** | K4os.Compression.LZ4 1.x · System.IO.Hashing |
+| **AOT** | `IsAotCompatible`; reflection-based members are annotated |
+
+> **Imaging moved.** `CLU_Imaging` is now the separate [`CodeLogic.Imaging`](../imaging/index.md) package (5.0).
 
 This overview covers loading, how the helpers are organized, and the full catalog. The deep material lives on two sub-pages:
 
 - **[Security & Data](security-data.md)** — `Encryption` (AES-GCM), `Hashing` (incl. password hashing), `IdGenerator`, `PasswordGenerator` / `PasswordStrength`, `JsonHelper`, `TypeConverter`, `CompressionHelper`.
-- **[Utilities](utilities.md)** — `StringHelper` / `StringValidator`, `DateTimeHelper`, the `Web` helpers, the `Networking` set, `CronParser`, `CLU_Imaging`, `ICache` / `MemoryCache`, `FileSystem`, and the reflection helpers.
+- **[Utilities](utilities.md)** — `StringHelper` / `StringValidator`, `DateTimeHelper`, the `Web` helpers, the `Networking` set, `CronParser`, `RetryPolicy` / `CircuitBreaker`, `JobScheduler`, `MemoryCache<TKey>`, `FastHash`, `AsyncKeyedLock<TKey>`, `FileSystem`, and the reflection helpers.
 
 ## Install & load
 
@@ -78,7 +81,7 @@ if (next.IsFailure) Console.WriteLine(next.Error?.Message);
 using CL.Common.Security;
 using CL.Common.Generators;
 using CL.Common.Compression;
-using CL.Common.Imaging;
+using CL.Common.Resilience;
 
 // Authenticated encryption
 string cipher = Encryption.EncryptAes("top secret", "passphrase");
@@ -91,9 +94,10 @@ PasswordStrength strength = PasswordGenerator.CalculateStrength(pass);
 // Compress a payload with LZ4
 Result<byte[]> packed = CompressionHelper.CompressLz4(payloadBytes);
 
-// Convert an image to WebP
-using var input = File.OpenRead("photo.jpg");
-Result<MemoryStream> webp = CLU_Imaging.ConvertImage(input, ImageFormat.Webp);
+// Retry a flaky call with exponential backoff
+var retry = new RetryPolicy(new RetryOptions { MaxAttempts = 3 });
+Result<string> page = await retry.ExecuteAsync((attempt, ct) => FetchAsync(url, ct),
+    isTransient: e => e is TimeoutError or UnavailableError);
 ```
 
 ## The full catalog
@@ -127,16 +131,20 @@ Every helper class, grouped by area, with the page that documents it in depth.
 | `Networking.NetworkDns` | static | DNS lookup returning resolved addresses. |
 | `Networking.SubnetCalculator` | static | IPv4 subnet math returning a `SubnetInfo`. |
 | `Networking.TraceRoute` | static | Walks the route to a host, returning `HopInfo` records. |
-| `Parser.CronParser` | static | Parse/validate 5-field cron and compute the next UTC occurrence (`CronExpression`). |
-| `Imaging.CLU_Imaging` | static | Safe upload processing (pixel limit, EXIF orientation, fit, WebP), resize, crop, format conversion (JPEG/PNG/WebP), thumbnails, dimensions, Base64. |
-| `Caching.MemoryCache` (`ICache`) | instance | Async typed in-process cache with per-entry TTL, prefix removal, background eviction. |
+| `Parser.CronParser` | static | Parse/validate 5-field cron and compute the next occurrence, in UTC or a time zone (`CronExpression`). |
+| `Resilience.RetryPolicy` | instance | `Result`-based retry with constant/linear/exponential/decorrelated-jitter backoff. |
+| `Resilience.CircuitBreaker` | instance | Consecutive-failure or failure-ratio breaker with half-open trials, `Isolate`/`Reset`. |
+| `Scheduling.JobScheduler` | instance | Interval, cron and one-shot background jobs; overlap control, timeouts, concurrency limit. |
+| `Caching.MemoryCache<TKey>` / `MemoryCache` (`ICache<TKey>` / `ICache`) | instance | Expiration, tags, size/entry limits with priority-aware LRU, stampede-protected `GetOrCreateAsync`. |
+| `Hashing.FastHash` / `FastHasher` | static / struct | Non-cryptographic XXH3 / XXH128, incremental hashing. |
+| `Threading.AsyncKeyedLock<TKey>` | instance | Async mutual exclusion per key, pooled per-key state. |
 | `FileHandling.FileSystem` | static | Async read/write/copy/move/delete, directory create, listing, size, existence. |
 | `Assemblies.AssemblyHelper` | static | Assembly metadata/loading, type discovery, embedded resources. |
 | `Assemblies.ReflectionHelper` | static | Dynamic instance creation, property/method access, object-to-dictionary. |
 
 ## Health check
 
-`CommonLibrary` implements `HealthCheckAsync()` so it shows up in operational monitoring like every other `CL.*` library. Because the toolkit is stateless and has no external dependencies, the check always reports **Healthy** once the library is initialized.
+`CommonLibrary` implements `HealthCheckAsync()` so it shows up in operational monitoring like every other `CL.*` library. Because the library itself holds no state and has no external dependencies, the check always reports **Healthy** once the library is initialized.
 
 ```csharp
 HealthStatus status = await common.HealthCheckAsync();
