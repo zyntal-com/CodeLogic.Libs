@@ -28,6 +28,11 @@
           Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
   </ItemGroup>
 
+  <!-- Shared building blocks (scheduling, resilience, caching, fast hashing) live in CL.Common. -->
+  <ItemGroup>
+    <ProjectReference Include="../CL.Common/CL.Common.csproj" />
+  </ItemGroup>
+
   <ItemGroup>
     <InternalsVisibleTo Include="Data.Tests" />
     <InternalsVisibleTo Include="Data.Conformance" />

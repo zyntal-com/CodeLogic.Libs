@@ -59,3 +59,5 @@
   - Typed ids implement `IDataValue<TSelf, TStore>` (static abstract members, no reflection).
   - `EnumToStringConverter<TEnum>` stores enums by name.
   - `JsonValueConverter<T>` stores JSON columns through System.Text.Json source-gen metadata.
+- **Background jobs:** `DataScheduler` runs CL.Data's background work on CL.Common's `JobScheduler`, with one
+  clock (`TimeProvider`), no overlapping runs and failures reported per run. CL.Data now depends on CodeLogic.Common.
