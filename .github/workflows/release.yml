@@ -229,6 +229,8 @@ jobs:
         if: steps.changes.outputs.has_changes == 'True'
         uses: softprops/action-gh-release@v3
         with:
+          # Tag the commit that was built. Without this a new tag lands on the default branch.
+          target_commitish: ${{ github.sha }}
           tag_name: ${{ startsWith(github.ref_name, 'prerelease/') && format('libs-preview-v{0}-{1}', steps.changes.outputs.line, github.run_number) || format('libs-v{0}-{1}', steps.changes.outputs.line, github.run_number) }}
           name: ${{ startsWith(github.ref_name, 'prerelease/') && format('CodeLogic.Libs {0} preview {1}', steps.changes.outputs.line, github.run_number) || format('CodeLogic.Libs {0} release {1}', steps.changes.outputs.line, github.run_number) }}
           body_path: artifacts/release-notes.md
