@@ -96,16 +96,17 @@ public sealed class GroupedQuery<T, TKey>
             {
                 var part = SqlTranslator.TranslateValue(composite.Arguments[i], keyScope);
                 if (part.IsFailure) return part.Error!;
-                members[names[i].Name] = part.Value!;
-                groupBy.Add(part.Value!);
+                var value = GroupKeys.AsValue(part.Value!);
+                members[names[i].Name] = value;
+                groupBy.Add(value);
             }
         }
         else
         {
             var key = SqlTranslator.TranslateValue(_key, keyScope);
             if (key.IsFailure) return key.Error!;
-            single = key.Value;
-            groupBy.Add(single!);
+            single = GroupKeys.AsValue(key.Value!);
+            groupBy.Add(single);
         }
 
         TranslationScope GroupScope(LambdaExpression lambda) =>
@@ -147,6 +148,14 @@ public sealed class GroupedQuery<T, TKey>
         return await _source.Database.QueryProjectedAsync(statement, projection.Value.Materialize, table, [DataTags.Table(table)], ct)
             .ConfigureAwait(false);
     }
+}
+
+internal static class GroupKeys
+{
+    /// <summary>A condition used as a group key becomes a CASE value (SQL Server cannot group by a predicate).</summary>
+    public static SqlExpr AsValue(SqlExpr key) => SqlPredicates.IsPredicate(key) && key is not LiteralExpr
+        ? new CaseExpr([new CaseWhen(key, new LiteralExpr(true))], new LiteralExpr(false))
+        : key;
 }
 
 /// <summary>The projected results of a grouped query.</summary>

@@ -62,8 +62,6 @@ public enum SqlServerAuthentication
     EntraManagedIdentity,
     /// <summary>Microsoft Entra ID, service principal (user name = client id, password = secret).</summary>
     EntraServicePrincipal,
-    /// <summary>Microsoft Entra ID, user name and password.</summary>
-    EntraPassword,
 }
 
 /// <summary>SQL Server options of a connection (<c>"sqlServer": { ... }</c>).</summary>

@@ -153,3 +153,6 @@
   - Savepoints fall back to standard `SAVEPOINT` SQL when a driver has no savepoint API.
 - **Upsert fix (found on PostgreSQL):** `ON CONFLICT DO UPDATE` qualifies target columns, because PostgreSQL treats a
   bare name as ambiguous with `EXCLUDED`.
+- **Grouping fix (found on SQL Server):** a condition used as a group key is grouped as a CASE value, because SQL
+  Server cannot group by a predicate.
+- **Breaking:** `SqlServerAuthentication.EntraPassword` was removed (deprecated by Microsoft).
