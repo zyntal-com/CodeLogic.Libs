@@ -27,9 +27,13 @@ public sealed class SteamOpenIdTests
     private static FakeSteam Answer(string body, HttpStatusCode status = HttpStatusCode.OK) =>
         new(_ => new HttpResponseMessage(status) { Content = new StringContent(body) });
 
-    private static SteamOpenIdService Service(HttpMessageHandler handler) => new(new SteamConfig { TimeoutSeconds = 5 }, handler);
+    private static SteamOpenIdService Service(HttpMessageHandler handler, int maxNonceAgeSeconds = 300) =>
+        new(new SteamConfig { TimeoutSeconds = 5, OpenIdNonceMaxAgeSeconds = maxNonceAgeSeconds }, handler);
 
-    private static Dictionary<string, string> Assertion(string? claimedId = null) => new()
+    private static string Nonce(TimeSpan age, string unique = "abc") =>
+        (DateTime.UtcNow - age).ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", System.Globalization.CultureInfo.InvariantCulture) + unique;
+
+    private static Dictionary<string, string> Assertion(string? claimedId = null, string? nonce = null) => new()
     {
         ["openid.ns"] = "http://specs.openid.net/auth/2.0",
         ["openid.mode"] = "id_res",
@@ -37,7 +41,7 @@ public sealed class SteamOpenIdTests
         ["openid.claimed_id"] = claimedId ?? "https://steamcommunity.com/openid/id/" + SteamId,
         ["openid.identity"] = claimedId ?? "https://steamcommunity.com/openid/id/" + SteamId,
         ["openid.return_to"] = ReturnTo,
-        ["openid.response_nonce"] = "2026-10-26T12:00:00Zabc",
+        ["openid.response_nonce"] = nonce ?? Nonce(TimeSpan.FromSeconds(5)),
         ["openid.assoc_handle"] = "1234567890",
         ["openid.signed"] = "signed,op_endpoint,claimed_id,identity,return_to,response_nonce,assoc_handle",
         ["openid.sig"] = "c2lnbmF0dXJl"
@@ -85,6 +89,80 @@ public sealed class SteamOpenIdTests
         var body = Uri.UnescapeDataString(Assert.Single(steam.Bodies));
         Assert.Contains("openid.mode=check_authentication", body);
         Assert.DoesNotContain("openid.mode=id_res", body);
+    }
+
+    [Fact]
+    public async Task Verify_exposes_the_response_nonce_and_its_issue_time()
+    {
+        var nonce = Nonce(TimeSpan.FromSeconds(30), "Zx9-unique");
+        using var service = Service(Answer("is_valid:true"));
+
+        var result = await service.VerifyAsync(Assertion(nonce: nonce), ReturnTo);
+
+        Assert.True(result.IsSuccess, result.Error?.Message);
+        Assert.Equal(nonce, result.Value!.ResponseNonce);
+        Assert.Equal(DateTimeKind.Utc, result.Value.NonceIssuedAtUtc.Kind);
+        Assert.InRange(DateTime.UtcNow - result.Value.NonceIssuedAtUtc, TimeSpan.FromSeconds(29), TimeSpan.FromSeconds(60));
+    }
+
+    [Fact]
+    public async Task Verify_refuses_an_assertion_older_than_the_max_age_without_asking_steam()
+    {
+        var steam = Answer("is_valid:true");
+        using var service = Service(steam, maxNonceAgeSeconds: 300);
+
+        var result = await service.VerifyAsync(Assertion(nonce: Nonce(TimeSpan.FromMinutes(10))), ReturnTo);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("social.steam.openid_expired", result.Error!.Code);
+        Assert.Empty(steam.Bodies);
+    }
+
+    [Fact]
+    public async Task Verify_accepts_an_old_assertion_when_the_age_check_is_off()
+    {
+        using var service = Service(Answer("is_valid:true"), maxNonceAgeSeconds: 0);
+
+        var result = await service.VerifyAsync(Assertion(nonce: "2020-01-01T00:00:00Zold"), ReturnTo);
+
+        Assert.True(result.IsSuccess, result.Error?.Message);
+        Assert.Equal(new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc), result.Value!.NonceIssuedAtUtc);
+    }
+
+    [Fact]
+    public async Task Verify_refuses_an_assertion_dated_in_the_future()
+    {
+        using var service = Service(Answer("is_valid:true"));
+
+        var result = await service.VerifyAsync(Assertion(nonce: Nonce(TimeSpan.FromMinutes(-5))), ReturnTo);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("social.steam.openid_invalid", result.Error!.Code);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("abc")]
+    [InlineData("2026-13-01T00:00:00Zabc")]
+    [InlineData("2026-10-31 12:00:00Zabc")]
+    [InlineData("2026-10-31T12:00:00+01:00")]
+    public async Task Verify_refuses_a_malformed_nonce(string nonce)
+    {
+        var steam = Answer("is_valid:true");
+        using var service = Service(steam, maxNonceAgeSeconds: 0);
+
+        var result = await service.VerifyAsync(Assertion(nonce: nonce), ReturnTo);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("social.steam.openid_invalid", result.Error!.Code);
+        Assert.Empty(steam.Bodies);
+    }
+
+    [Fact]
+    public void Negative_max_nonce_age_is_a_config_error()
+    {
+        var config = new SocialConnectConfig { Steam = { OpenIdNonceMaxAgeSeconds = -1 } };
+        Assert.False(config.Validate().IsValid);
     }
 
     [Fact]

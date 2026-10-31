@@ -2,7 +2,9 @@ using CodeLogic;                          // Libraries, CodeLogicOptions
 using CodeLogic.Framework.Libraries;      // HealthStatusLevel
 using CL.SystemStats;
 using CL.SystemStats.Abstractions;        // PlatformType
+using CL.SystemStats.Models;
 using CL.SystemStats.Services;            // PlatformDetector
+using CodeLogic.Core.Results;
 using Xunit;
 
 namespace SystemStats.Tests;
@@ -185,5 +187,101 @@ public sealed class SystemStatsTests
         Assert.True(
             health.Status is HealthStatusLevel.Healthy or HealthStatusLevel.Degraded,
             $"unexpected status: {health.Status}");
+    }
+}
+
+// ── Cache refresh coalescing (fake provider, no boot required) ──────────────────
+
+public sealed class SystemStatsCacheCoalescingTests
+{
+    private sealed class GatedUptimeProvider : ISystemStatsProvider
+    {
+        private int _calls;
+        public int Calls => Volatile.Read(ref _calls);
+        public TaskCompletionSource<Result<TimeSpan>> Gate { get; set; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task<Result<TimeSpan>> GetSystemUptimeAsync()
+        {
+            Interlocked.Increment(ref _calls);
+            return Gate.Task;
+        }
+
+        public Task InitializeAsync() => Task.CompletedTask;
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        public Task<Result<CpuInfo>> GetCpuInfoAsync() => throw new NotSupportedException();
+        public Task<Result<CpuStats>> GetCpuStatsAsync() => throw new NotSupportedException();
+        public Task<Result<MemoryInfo>> GetMemoryInfoAsync() => throw new NotSupportedException();
+        public Task<Result<MemoryStats>> GetMemoryStatsAsync() => throw new NotSupportedException();
+        public Task<Result<ProcessStats>> GetProcessStatsAsync(int processId) => throw new NotSupportedException();
+        public Task<Result<IReadOnlyList<ProcessStats>>> GetAllProcessesAsync() => throw new NotSupportedException();
+        public Task<Result<IReadOnlyList<ProcessStats>>> GetTopProcessesByCpuAsync(int topCount) => throw new NotSupportedException();
+        public Task<Result<IReadOnlyList<ProcessStats>>> GetTopProcessesByMemoryAsync(int topCount) => throw new NotSupportedException();
+        public Task<Result<SystemSnapshot>> GetSystemSnapshotAsync() => throw new NotSupportedException();
+    }
+
+    private static SystemStatsService Service(GatedUptimeProvider provider, bool caching = true) =>
+        new(provider, new SystemStatsConfig { EnableCaching = caching, CacheDurationSeconds = 60 });
+
+    [Fact]
+    public async Task Concurrent_cache_misses_share_one_provider_call()
+    {
+        var provider = new GatedUptimeProvider();
+        await using var service = Service(provider);
+
+        var callers = Enumerable.Range(0, 32).Select(_ => Task.Run(service.GetSystemUptimeAsync)).ToArray();
+        await Task.Delay(100);
+        provider.Gate.SetResult(Result<TimeSpan>.Success(TimeSpan.FromHours(3)));
+        var results = await Task.WhenAll(callers);
+
+        Assert.Equal(1, provider.Calls);
+        Assert.All(results, r => Assert.Equal(TimeSpan.FromHours(3), r.Value));
+        Assert.Equal(TimeSpan.FromHours(3), (await service.GetSystemUptimeAsync()).Value);
+        Assert.Equal(1, provider.Calls);
+    }
+
+    [Fact]
+    public async Task A_failed_refresh_is_shared_but_not_cached()
+    {
+        var provider = new GatedUptimeProvider();
+        await using var service = Service(provider);
+
+        var callers = Enumerable.Range(0, 8).Select(_ => Task.Run(service.GetSystemUptimeAsync)).ToArray();
+        await Task.Delay(100);
+        provider.Gate.SetResult(Result<TimeSpan>.Failure(Error.Unavailable("systemstats.test", "sampling failed")));
+        var results = await Task.WhenAll(callers);
+
+        Assert.Equal(1, provider.Calls);
+        Assert.All(results, r => Assert.True(r.IsFailure));
+
+        provider.Gate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        provider.Gate.SetResult(Result<TimeSpan>.Success(TimeSpan.FromMinutes(1)));
+        Assert.Equal(TimeSpan.FromMinutes(1), (await service.GetSystemUptimeAsync()).Value);
+        Assert.Equal(2, provider.Calls);
+    }
+
+    [Fact]
+    public async Task A_throwing_provider_releases_the_refresh_slot()
+    {
+        var provider = new GatedUptimeProvider();
+        await using var service = Service(provider);
+        provider.Gate.SetException(new InvalidOperationException("boom"));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(service.GetSystemUptimeAsync);
+
+        provider.Gate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        provider.Gate.SetResult(Result<TimeSpan>.Success(TimeSpan.FromSeconds(5)));
+        Assert.Equal(TimeSpan.FromSeconds(5), (await service.GetSystemUptimeAsync()).Value);
+    }
+
+    [Fact]
+    public async Task Without_caching_every_call_reaches_the_provider()
+    {
+        var provider = new GatedUptimeProvider();
+        provider.Gate.SetResult(Result<TimeSpan>.Success(TimeSpan.FromSeconds(1)));
+        await using var service = Service(provider, caching: false);
+
+        await Task.WhenAll(Enumerable.Range(0, 4).Select(_ => service.GetSystemUptimeAsync()));
+
+        Assert.Equal(4, provider.Calls);
     }
 }

@@ -86,6 +86,10 @@ public class DnsblChecker
                 return DnsblCheckResult.Error(ipAddress, IpAddressType.Unknown, "Invalid IP address format");
             }
 
+            // An IPv4 client seen through a dual-stack socket (::ffff:a.b.c.d) is listed in the IPv4 zones.
+            if (ip.IsIPv4MappedToIPv6)
+                ip = ip.MapToIPv4();
+
             if (IsLocalOrPrivateIp(ip))
             {
                 _logger?.Debug($"Skipping DNSBL check for local/private IP: {ipAddress}");
@@ -100,10 +104,10 @@ public class DnsblChecker
             }
 
             if (ip.AddressFamily == AddressFamily.InterNetwork)
-                return await CheckIpv4Async(ipAddress, request, cancellationToken).ConfigureAwait(false);
+                return await CheckIpv4Async(ip, ipAddress, request, cancellationToken).ConfigureAwait(false);
 
             if (ip.AddressFamily == AddressFamily.InterNetworkV6)
-                return await CheckIpv6Async(ipAddress, request, cancellationToken).ConfigureAwait(false);
+                return await CheckIpv6Async(ip, ipAddress, request, cancellationToken).ConfigureAwait(false);
 
             _logger?.Debug($"DNSBL check skipped for unsupported address family: {ipAddress}");
             return DnsblCheckResult.NotBlacklisted(ipAddress, IpAddressType.Unknown);
@@ -119,16 +123,16 @@ public class DnsblChecker
 
     private enum ZoneOutcome { NotListed, Listed, Failed }
 
-    private async Task<DnsblCheckResult> CheckIpv4Async(string ipAddress, DnsblCheckRequest request, CancellationToken cancellationToken)
+    private async Task<DnsblCheckResult> CheckIpv4Async(IPAddress ip, string ipAddress, DnsblCheckRequest request, CancellationToken cancellationToken)
     {
-        var reversedIp = string.Join(".", ipAddress.Split('.').Reverse());
+        var reversedIp = ReverseLookupLabel(ip);
         return await CheckZonesAsync(ipAddress, reversedIp, IpAddressType.IPv4, request.Ipv4Services, request.Ipv4FallbackServices, request, cancellationToken)
             .ConfigureAwait(false);
     }
 
-    private async Task<DnsblCheckResult> CheckIpv6Async(string ipAddress, DnsblCheckRequest request, CancellationToken cancellationToken)
+    private async Task<DnsblCheckResult> CheckIpv6Async(IPAddress ip, string ipAddress, DnsblCheckRequest request, CancellationToken cancellationToken)
     {
-        var reversedIpv6 = ReverseIpv6(ipAddress);
+        var reversedIpv6 = ReverseLookupLabel(ip);
         return await CheckZonesAsync(ipAddress, reversedIpv6, IpAddressType.IPv6, request.Ipv6Services, request.Ipv6FallbackServices, request, cancellationToken)
             .ConfigureAwait(false);
     }
@@ -276,37 +280,65 @@ public class DnsblChecker
         return sawError ? ZoneOutcome.Failed : ZoneOutcome.NotListed;
     }
 
-    private static bool IsLocalOrPrivateIp(IPAddress ip)
+    /// <summary>
+    /// Whether an address is not publicly routable, so no DNSBL can list it: loopback, private, link-local,
+    /// shared (CGNAT), documentation/benchmark, multicast, reserved and unspecified ranges.
+    /// </summary>
+    internal static bool IsLocalOrPrivateIp(IPAddress ip)
     {
+        if (ip.IsIPv4MappedToIPv6)
+            ip = ip.MapToIPv4();
+
         if (IPAddress.IsLoopback(ip))
             return true;
 
         if (ip.AddressFamily == AddressFamily.InterNetwork)
         {
             var b = ip.GetAddressBytes();
-            if (b[0] == 10) return true;
-            if (b[0] == 172 && b[1] >= 16 && b[1] <= 31) return true;
-            if (b[0] == 192 && b[1] == 168) return true;
+            return b[0] switch
+            {
+                0 => true,                                   // 0.0.0.0/8 "this network"
+                10 => true,                                  // 10.0.0.0/8 private
+                100 => b[1] is >= 64 and <= 127,             // 100.64.0.0/10 shared address space (CGNAT)
+                169 => b[1] == 254,                          // 169.254.0.0/16 link-local
+                172 => b[1] is >= 16 and <= 31,              // 172.16.0.0/12 private
+                192 => (b[1] == 168)                         // 192.168.0.0/16 private
+                       || (b[1] == 0 && b[2] is 0 or 2),     // 192.0.0.0/24 IETF, 192.0.2.0/24 TEST-NET-1
+                198 => b[1] is 18 or 19                      // 198.18.0.0/15 benchmarking
+                       || (b[1] == 51 && b[2] == 100),       // 198.51.100.0/24 TEST-NET-2
+                203 => b[1] == 0 && b[2] == 113,             // 203.0.113.0/24 TEST-NET-3
+                >= 224 => true,                              // 224.0.0.0/4 multicast, 240.0.0.0/4 reserved, broadcast
+                _ => false
+            };
         }
-        else if (ip.AddressFamily == AddressFamily.InterNetworkV6)
+
+        if (ip.AddressFamily == AddressFamily.InterNetworkV6)
         {
-            if (ip.IsIPv6LinkLocal || ip.IsIPv6SiteLocal || ip.IsIPv6Multicast)
+            if (ip.Equals(IPAddress.IPv6None) || ip.IsIPv6LinkLocal || ip.IsIPv6SiteLocal || ip.IsIPv6Multicast
+                || ip.IsIPv6UniqueLocal)
                 return true;
 
             var b = ip.GetAddressBytes();
-            if (b[0] == 0xfc || b[0] == 0xfd) return true;
+            if (b[0] == 0x20 && b[1] == 0x01 && b[2] == 0x0d && b[3] == 0xb8) return true;   // 2001:db8::/32 documentation
         }
 
         return false;
     }
 
-    private static string ReverseIpv6(string ipv6)
+    /// <summary>
+    /// The DNSBL query label for an address, built from its bytes (not the input text, which may be a shorthand
+    /// such as <c>127.1</c> or <c>0x7f.0.0.1</c>): reversed octets for IPv4, reversed nibbles for IPv6.
+    /// </summary>
+    internal static string ReverseLookupLabel(IPAddress ip)
     {
-        var expanded = IPAddress.Parse(ipv6).GetAddressBytes()
+        var bytes = ip.GetAddressBytes();
+        if (ip.AddressFamily == AddressFamily.InterNetwork)
+            return $"{bytes[3]}.{bytes[2]}.{bytes[1]}.{bytes[0]}";
+
+        var nibbles = bytes
             .SelectMany(b => new[] { (b >> 4) & 0xF, b & 0xF })
             .Reverse();
-
-        return string.Join(".", expanded.Select(n => n.ToString("x")));
+        return string.Join(".", nibbles.Select(n => n.ToString("x")));
     }
 
     private static IpAddressType GetAddressType(IPAddress ip) =>

@@ -342,6 +342,57 @@ public sealed class LocalStorageBackendTests : IDisposable
         Assert.Equal(tokens.Count, tokens.Distinct(StringComparer.Ordinal).Count());
     }
 
+    [Theory]
+    [InlineData("file.txt:hidden.exe")]
+    [InlineData("data.json::$DATA")]
+    [InlineData("docs/file.txt:stream")]
+    [InlineData("dir:stream/child.txt")]
+    public async Task Windows_alternate_data_stream_paths_are_rejected(string path)
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        await using var backend = CreateBackend();
+        await backend.UploadBytesAsync("file.txt", [1]);
+        await backend.UploadBytesAsync("data.json", [1]);
+
+        var upload = await backend.UploadBytesAsync(path, [9, 9, 9]);
+        var exists = await backend.ExistsAsync(path);
+
+        Assert.True(upload.IsFailure);
+        Assert.Equal(CL.Storage.Errors.StorageErrors.InvalidPathCode, upload.Error!.Code);
+        Assert.True(exists.IsFailure);
+        Assert.Equal(CL.Storage.Errors.StorageErrors.InvalidPathCode, exists.Error!.Code);
+    }
+
+    [Fact]
+    public void Windows_drive_relative_paths_do_not_resolve_against_the_process_directory()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        // Root at the process directory: before the fix "C:name" resolved against the current directory of drive C
+        // (the process directory), passed the containment check, and pointed at a different file than root/"C:name".
+        var cwd = Directory.GetCurrentDirectory();
+        var drive = Path.GetPathRoot(cwd)![0];
+        var resolver = new LocalPathResolver(cwd, followLinks: false);
+
+        var resolved = resolver.Resolve($"{drive}:drive-relative.txt");
+        var rooted = resolver.Resolve($"{drive}:/Windows/win.ini");
+
+        Assert.True(resolved.IsFailure);
+        Assert.Equal(CL.Storage.Errors.StorageErrors.InvalidPathCode, resolved.Error!.Code);
+        Assert.True(rooted.IsFailure);
+        Assert.Equal(CL.Storage.Errors.StorageErrors.InvalidPathCode, rooted.Error!.Code);
+    }
+
+    [Fact]
+    public void Colons_stay_valid_in_portable_paths_for_remote_providers()
+    {
+        // Colons are legal in S3 keys and on POSIX servers, so StoragePath itself keeps them; only the local
+        // provider on Windows rejects them.
+        var normalized = StoragePath.Normalize("logs/2026-10-31T12:00:00.json");
+
+        Assert.True(normalized.IsSuccess);
+        Assert.Equal("logs/2026-10-31T12:00:00.json", normalized.Value);
+    }
+
     private LocalStorageBackend CreateBackend(bool followLinks = false, long maxBufferedBytes = 67_108_864) =>
         new("LocalTest", new LocalConnectionConfig
         {

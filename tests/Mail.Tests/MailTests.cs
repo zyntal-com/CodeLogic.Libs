@@ -62,6 +62,42 @@ public sealed class SimpleTemplateEngineTests
     }
 
     [Fact]
+    public async Task Layout_receives_named_sections_and_the_remaining_body()
+    {
+        var layout = MailTemplate.Create("layout", "ignored",
+            textBody: "<{{header}}>|{{body}}|<{{footer}}>",
+            htmlBody: "<h1>{{header}}</h1>{{body}}");
+        var child = MailTemplate.Create("child", "Hi {{name}}",
+            textBody: "{{#section header}}\nTop {{name}}\n{{/section}}Main {{#if vip}}VIP{{#else}}std{{/if}}{{#each items}}[{{n}}]{{/each}}{{#section footer}}Bye{{/section}}",
+            htmlBody: "{{#section header}}<b>{{name}}</b>{{/section}}<p>{{name}}</p>") with { Layout = "layout" };
+        var engine = new SimpleTemplateEngine(new SingleLayoutProvider(layout));
+
+        var result = await engine.RenderAsync(child, new()
+        {
+            ["name"] = "A&B",
+            ["vip"] = true,
+            ["items"] = new[] { new Dictionary<string, object?> { ["n"] = 1 }, new Dictionary<string, object?> { ["n"] = 2 } }
+        });
+
+        Assert.True(result.IsSuccess, result.Error?.ToString());
+        Assert.Equal("Hi A&B", result.Value!.Subject);
+        Assert.Equal("<Top A&B>|Main VIP[1][2]|<Bye>", result.Value.TextBody);
+        Assert.Equal("<h1><b>A&amp;B</b></h1><p>A&amp;B</p>", result.Value.HtmlBody);
+    }
+
+    private sealed class SingleLayoutProvider(MailTemplate layout) : IMailTemplateProvider
+    {
+        public Task<Result<MailTemplate>> LoadTemplateAsync(string templateId, CancellationToken cancellationToken = default) =>
+            Task.FromResult(templateId == layout.Id
+                ? Result<MailTemplate>.Success(layout)
+                : Result<MailTemplate>.Failure(Error.NotFound(MailErrorCodes.TemplateNotFound, templateId)));
+        public Task<Result<IReadOnlyList<string>>> ListTemplatesAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult(Result<IReadOnlyList<string>>.Success([layout.Id]));
+        public Task<Result> SaveTemplateAsync(MailTemplate template, CancellationToken cancellationToken = default) =>
+            Task.FromResult(Result.Success());
+    }
+
+    [Fact]
     public async Task If_block_includes_content_when_flag_is_truthy()
     {
         var template = MailTemplate.Create("if-true", "s", textBody: "[{{#if flag}}YES{{/if}}]");
@@ -400,6 +436,65 @@ public sealed class MailErrorTests
         var error = await SendFailure(Message(subject: ""));
         Assert.IsType<ValidationError>(error);
         Assert.Equal(MailErrorCodes.InvalidSubject, error.Code);
+    }
+
+    [Theory]
+    [InlineData("Subject line\r\nBcc: victim@example.com")]
+    [InlineData("Subject\nline")]
+    [InlineData("Subject\rline")]
+    public async Task Subject_with_a_line_break_is_a_validation_error(string subject)
+    {
+        var error = await SendFailure(Message(subject: subject));
+        Assert.IsType<ValidationError>(error);
+        Assert.Equal(MailErrorCodes.InvalidSubject, error.Code);
+    }
+
+    [Theory]
+    [InlineData("Alice\r\nBcc: victim@example.com")]
+    [InlineData("Alice\nSmith")]
+    public async Task FromName_with_a_line_break_is_a_validation_error(string fromName)
+    {
+        var error = await SendFailure(Message() with { FromName = fromName });
+        Assert.IsType<ValidationError>(error);
+        Assert.Equal(MailErrorCodes.InvalidSender, error.Code);
+    }
+
+    [Theory]
+    [InlineData("X-Bad:Name", "v")]
+    [InlineData("X Bad", "v")]
+    [InlineData("", "v")]
+    [InlineData("X-Ünicode", "v")]
+    [InlineData("X-Tab\t", "v")]
+    [InlineData("X-Fine", "line\r\nBcc: victim@example.com")]
+    [InlineData("X-Fine", "line\nbreak")]
+    [InlineData("X-Fine", "nul\0")]
+    [InlineData("From", "attacker@example.com")]
+    [InlineData("bcc", "hidden@example.com")]
+    [InlineData("Content-Type", "text/plain")]
+    public async Task Invalid_custom_header_is_a_validation_error(string name, string value)
+    {
+        var error = await SendFailure(Message() with { Headers = new Dictionary<string, string> { [name] = value } });
+        Assert.IsType<ValidationError>(error);
+        Assert.Equal(MailErrorCodes.InvalidHeader, error.Code);
+    }
+
+    [Fact]
+    public async Task Valid_custom_headers_pass_validation_and_fail_only_at_the_connection()
+    {
+        var error = await SendFailure(Message() with
+        {
+            FromName = "Alice Ünicode",
+            Subject = "Grüße",
+            Headers = new Dictionary<string, string>
+            {
+                ["X-Campaign"] = "autumn",
+                ["Reply-To"] = "reply@example.com",
+                ["List-Unsubscribe"] = "<mailto:u@example.com>",
+                ["X-Note"] = "tabs\tand ünicode are fine"
+            }
+        });
+
+        Assert.Equal(MailErrorCodes.SmtpConnectionFailed, error.Code);
     }
 
     [Fact]

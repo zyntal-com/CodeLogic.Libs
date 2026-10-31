@@ -40,7 +40,7 @@ if (net.HasGeoIp)
 }
 ```
 
-Local and private addresses (loopback, RFC 1918, IPv6 link/site-local and unique-local) are returned as **not blacklisted** without any DNS query.
+Local and private addresses (loopback, RFC 1918, link-local, CGNAT, documentation/reserved ranges, IPv6 link/site-local and unique-local) are returned as **not blacklisted** without any DNS query.
 
 ## Features
 

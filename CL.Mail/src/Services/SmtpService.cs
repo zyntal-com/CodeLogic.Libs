@@ -133,8 +133,18 @@ public sealed class SmtpService : IDisposable
             if (!IsValidAddress(address))
                 return MailErrors.Validation(MailErrorCodes.InvalidRecipient, $"Recipient address is malformed: '{address}'");
 
+        if (HasLineBreak(message.FromName))
+            return MailErrors.Validation(MailErrorCodes.InvalidSender, "Sender name cannot contain a line break");
+
         if (string.IsNullOrWhiteSpace(message.Subject))
             return MailErrors.Validation(MailErrorCodes.InvalidSubject, "Subject not specified");
+
+        if (HasLineBreak(message.Subject))
+            return MailErrors.Validation(MailErrorCodes.InvalidSubject, "Subject cannot contain a line break");
+
+        foreach (var (name, value) in message.Headers)
+            if (ValidateHeader(name, value) is { } headerError)
+                return MailErrors.Validation(MailErrorCodes.InvalidHeader, headerError);
 
         if (string.IsNullOrWhiteSpace(message.TextBody) && string.IsNullOrWhiteSpace(message.HtmlBody))
             return MailErrors.Validation(MailErrorCodes.InvalidBody, "Message body is empty");
@@ -143,6 +153,33 @@ public sealed class SmtpService : IDisposable
             if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
                 return MailErrors.NotFound(MailErrorCodes.AttachmentNotFound, $"Attachment not found: '{path}'");
 
+        return null;
+    }
+
+    private static bool HasLineBreak(string? value) =>
+        value is not null && value.AsSpan().IndexOfAny('\r', '\n') >= 0;
+
+    // Headers the service writes from the message itself; a custom copy would duplicate or contradict them.
+    private static readonly HashSet<string> ReservedHeaders = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "From", "To", "Cc", "Bcc", "Subject", "MIME-Version", "Importance",
+    };
+
+    /// <summary>Returns why a custom header is not acceptable, or null when it is.</summary>
+    private static string? ValidateHeader(string? name, string? value)
+    {
+        // RFC 5322 field-name: one or more printable US-ASCII characters except ':'.
+        if (string.IsNullOrEmpty(name))
+            return "A custom header name is empty";
+        foreach (var c in name)
+            if (c is < '!' or > '~' or ':')
+                return $"Custom header name '{name}' must be printable US-ASCII without spaces or ':'";
+        if (ReservedHeaders.Contains(name) || name.StartsWith("Content-", StringComparison.OrdinalIgnoreCase))
+            return $"Custom header '{name}' is set by the mail service and cannot be supplied";
+        if (value is null)
+            return $"Custom header '{name}' has no value";
+        if (value.AsSpan().IndexOfAny('\r', '\n', '\0') >= 0)
+            return $"Custom header '{name}' cannot contain a line break or NUL";
         return null;
     }
 

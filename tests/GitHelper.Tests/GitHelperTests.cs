@@ -423,6 +423,114 @@ public sealed class GitHelperLiveTests
     }
 }
 
+// ── Cache eviction never disposes a repository under a running operation ─────────
+
+public sealed class GitManagerCacheEvictionTests : IDisposable
+{
+    private readonly string _baseDir = Path.Combine(Path.GetTempPath(), "cl-git-cache-" + Guid.NewGuid().ToString("N"));
+    private readonly ManualClock _clock = new();
+    private readonly GitManager _manager;
+
+    public GitManagerCacheEvictionTests()
+    {
+        Directory.CreateDirectory(_baseDir);
+        _manager = new GitManager(new GitHelperConfig
+        {
+            EnableRepositoryCaching = true,
+            CacheTimeoutMinutes = 5,
+            Repositories = [new RepositoryConfiguration { Id = "Default", LocalPath = "repo" }]
+        }, _baseDir, time: _clock);
+    }
+
+    public void Dispose()
+    {
+        _manager.Dispose();
+        try { Directory.Delete(_baseDir, recursive: true); } catch (IOException) { }
+    }
+
+    private sealed class ManualClock : TimeProvider
+    {
+        public DateTimeOffset Now { get; set; } = DateTimeOffset.UtcNow;
+        public override DateTimeOffset GetUtcNow() => Now;
+    }
+
+    // Stands in for a clone or fetch in progress: every git operation holds the repository's lock.
+    private static SemaphoreSlim OperationLock(GitRepository repository) =>
+        (SemaphoreSlim)typeof(GitRepository).GetField("_lock", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .GetValue(repository)!;
+
+    private static async Task AssertDisposedSoonAsync(GitRepository repository)
+    {
+        for (var i = 0; i < 100 && !repository.IsDisposed; i++)
+            await Task.Delay(20);
+        Assert.True(repository.IsDisposed);
+    }
+
+    private async Task AssertWaitsForRunningOperationAsync(Func<GitRepository, Task> evict)
+    {
+        var repository = await _manager.GetRepositoryAsync();
+        var running = OperationLock(repository);
+        await running.WaitAsync();
+
+        await evict(repository);
+        await Task.Delay(50);
+
+        Assert.False(repository.IsDisposed);
+        running.Release();      // threw ObjectDisposedException when eviction disposed immediately
+        await AssertDisposedSoonAsync(repository);
+    }
+
+    [Fact]
+    public Task Expired_entry_cleanup_waits_for_the_running_operation() =>
+        AssertWaitsForRunningOperationAsync(_ =>
+        {
+            _clock.Now += TimeSpan.FromMinutes(6);
+            _manager.CleanupExpiredEntries();
+            Assert.Empty(_manager.GetCacheStats().Entries);
+            return Task.CompletedTask;
+        });
+
+    [Fact]
+    public Task Stale_entry_replaced_by_GetRepositoryAsync_waits_for_the_running_operation() =>
+        AssertWaitsForRunningOperationAsync(async stale =>
+        {
+            _clock.Now += TimeSpan.FromMinutes(6);
+            var fresh = await _manager.GetRepositoryAsync();
+            Assert.NotSame(stale, fresh);
+        });
+
+    [Fact]
+    public Task EvictFromCacheAsync_waits_for_the_running_operation() =>
+        AssertWaitsForRunningOperationAsync(_ => _manager.EvictFromCacheAsync("Default"));
+
+    [Fact]
+    public Task ClearCacheAsync_waits_for_the_running_operation() =>
+        AssertWaitsForRunningOperationAsync(_ => _manager.ClearCacheAsync());
+
+    [Fact]
+    public async Task An_idle_expired_entry_is_disposed_right_away()
+    {
+        var repository = await _manager.GetRepositoryAsync();
+        _clock.Now += TimeSpan.FromMinutes(6);
+
+        _manager.CleanupExpiredEntries();
+
+        await AssertDisposedSoonAsync(repository);
+    }
+
+    [Fact]
+    public async Task A_recently_used_entry_is_kept()
+    {
+        var repository = await _manager.GetRepositoryAsync();
+        _clock.Now += TimeSpan.FromMinutes(4);
+
+        _manager.CleanupExpiredEntries();
+
+        Assert.Same(repository, await _manager.GetRepositoryAsync());
+        Assert.False(repository.IsDisposed);
+    }
+}
+
 // ── GitErrors mapping (pure) ─────────────────────────────────────────────────────
 
 public sealed class GitErrorsTests

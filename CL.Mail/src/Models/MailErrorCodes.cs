@@ -11,11 +11,19 @@ public static class MailErrorCodes
     /// <summary>A recipient address is missing or malformed. Kind: <see cref="ValidationError"/>.</summary>
     public const string InvalidRecipient = "mail.invalid_recipient";
 
-    /// <summary>The sender address is missing or malformed. Kind: <see cref="ValidationError"/>.</summary>
+    /// <summary>The sender address is missing or malformed, or the sender name contains a line break. Kind: <see cref="ValidationError"/>.</summary>
     public const string InvalidSender = "mail.invalid_sender";
 
-    /// <summary>The subject line is missing. Kind: <see cref="ValidationError"/>.</summary>
+    /// <summary>The subject line is missing or contains a line break. Kind: <see cref="ValidationError"/>.</summary>
     public const string InvalidSubject = "mail.invalid_subject";
+
+    /// <summary>
+    /// A custom header has an invalid name (empty, not printable US-ASCII, or containing <c>:</c>), a value with a
+    /// line break or NUL, or names a header the service writes itself (From, To, Cc, Bcc, Subject, MIME-Version,
+    /// Importance, Content-*).
+    /// Kind: <see cref="ValidationError"/>.
+    /// </summary>
+    public const string InvalidHeader = "mail.invalid_header";
 
     /// <summary>The message has neither a text nor an HTML body. Kind: <see cref="ValidationError"/>.</summary>
     public const string InvalidBody = "mail.invalid_body";

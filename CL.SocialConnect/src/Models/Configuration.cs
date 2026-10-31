@@ -34,6 +34,9 @@ public class SocialConnectConfig : ConfigModelBase
         if (Steam.CacheTtlSeconds <= 0)
             errors.Add("Steam cache TTL must be greater than 0");
 
+        if (Steam.OpenIdNonceMaxAgeSeconds < 0)
+            errors.Add("Steam OpenID max assertion age cannot be negative");
+
         return errors.Any()
             ? ConfigValidationResult.Invalid(errors)
             : ConfigValidationResult.Valid();
@@ -123,6 +126,16 @@ public class SteamConfig
     [ConfigField(Label = "Steam Sign-in (OpenID)", Description = "\"Sign in through Steam\" for websites.",
         Group = "Steam", Order = 27)]
     public bool OpenIdEnabled { get; set; } = true;
+
+    /// <summary>
+    /// Oldest Steam OpenID assertion accepted, in seconds, judged by the timestamp in its
+    /// <c>openid.response_nonce</c>. Default: 300 (5 minutes). <c>0</c> turns the age check off (the nonce must
+    /// still be well formed). An assertion stamped more than a minute in the future is always refused.
+    /// </summary>
+    [ConfigField(Label = "OpenID max assertion age (s)", Min = 0, Max = 3600,
+        Description = "Refuse Steam sign-in callbacks older than this. 0 = no age limit.",
+        Group = "Steam", Order = 28, Collapsed = true)]
+    public int OpenIdNonceMaxAgeSeconds { get; set; } = 300;
 
     /// <summary>Base URL for the Steam Web API. Typically not changed.</summary>
     [ConfigField(Label = "API Base URL", InputType = ConfigInputType.Url,

@@ -21,6 +21,13 @@ All notable changes to **CodeLogic.SocialConnect** are documented here. Versions
 - A ticket that is not hex is now refused locally with `social.steam.invalid_ticket` (it used to be
   pasted unescaped into the request URL). A 4xx from Steam (e.g. a bad API key) is now
   `InternalError` `social.steam.request_rejected` instead of `UnavailableError` `social.steam.network_error`.
+- **Steam OpenID checks `openid.response_nonce`.** `VerifyAsync` never looked at the nonce, so an intercepted
+  assertion stayed usable indefinitely. It now refuses, before asking Steam, a nonce without a valid
+  `yyyy-MM-ddTHH:mm:ssZ` prefix or dated more than a minute ahead (`social.steam.openid_invalid`) and an
+  assertion older than the new `SteamConfig.OpenIdNonceMaxAgeSeconds` (default 300; `0` turns the age check
+  off) with `UnauthorizedError` `social.steam.openid_expired`. `SteamOpenIdResult` gains the required
+  `ResponseNonce` and `NonceIssuedAtUtc`: record accepted nonces and refuse a repeat to stop replays inside
+  the window. Code that constructs `SteamOpenIdResult` itself must set both.
 
 ### Added
 

@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.RegularExpressions;
 using CL.SocialConnect.Events;
 using CL.SocialConnect.Models;
@@ -35,14 +36,18 @@ public sealed partial class SteamOpenIdService : IDisposable
     // Fields Steam always signs; an assertion that leaves any of them unsigned is refused.
     private static readonly string[] RequiredSigned = ["op_endpoint", "claimed_id", "identity", "return_to", "response_nonce"];
 
+    // An assertion stamped further ahead than this (clock skew between Steam and this host) is refused.
+    private static readonly TimeSpan MaxFutureSkew = TimeSpan.FromMinutes(1);
+
     private readonly ILogger? _logger;
     private readonly IEventBus? _events;
     private readonly HttpClient _http;
+    private readonly TimeSpan? _maxNonceAge;
 
     /// <summary>
     /// Initializes a new instance of <see cref="SteamOpenIdService"/>.
     /// </summary>
-    /// <param name="config">Steam configuration (only <c>TimeoutSeconds</c> is used; OpenID needs no API key).</param>
+    /// <param name="config">Steam configuration (<c>TimeoutSeconds</c> and <c>OpenIdNonceMaxAgeSeconds</c>; OpenID needs no API key).</param>
     /// <param name="logger">Optional scoped logger.</param>
     /// <param name="events">Optional event bus for publishing <see cref="SteamOpenIdVerifiedEvent"/>.</param>
     public SteamOpenIdService(SteamConfig config, ILogger? logger = null, IEventBus? events = null)
@@ -54,7 +59,7 @@ public sealed partial class SteamOpenIdService : IDisposable
     /// Initializes a new instance of <see cref="SteamOpenIdService"/> that sends verification
     /// requests through <paramref name="handler"/> (tests, outbound proxies).
     /// </summary>
-    /// <param name="config">Steam configuration (only <c>TimeoutSeconds</c> is used).</param>
+    /// <param name="config">Steam configuration (<c>TimeoutSeconds</c> and <c>OpenIdNonceMaxAgeSeconds</c>).</param>
     /// <param name="handler">HTTP handler for the <c>check_authentication</c> request; disposed with the service.</param>
     /// <param name="logger">Optional scoped logger.</param>
     /// <param name="events">Optional event bus for publishing <see cref="SteamOpenIdVerifiedEvent"/>.</param>
@@ -64,6 +69,7 @@ public sealed partial class SteamOpenIdService : IDisposable
         ArgumentNullException.ThrowIfNull(handler);
         _logger = logger;
         _events = events;
+        _maxNonceAge = config.OpenIdNonceMaxAgeSeconds > 0 ? TimeSpan.FromSeconds(config.OpenIdNonceMaxAgeSeconds) : null;
         _http = new HttpClient(handler, disposeHandler: true)
         {
             Timeout = TimeSpan.FromSeconds(config.TimeoutSeconds > 0 ? config.TimeoutSeconds : 15)
@@ -124,7 +130,9 @@ public sealed partial class SteamOpenIdService : IDisposable
     /// Verifies Steam's callback and returns the player's Steam ID.
     /// <para>
     /// Local checks first (mode, namespace, provider endpoint, <c>return_to</c>, claimed id = identity,
-    /// a well-formed SteamID64, the required fields signed, no repeated <c>openid.*</c> parameters),
+    /// a well-formed SteamID64, the required fields signed, no repeated <c>openid.*</c> parameters, a well-formed
+    /// <c>response_nonce</c> no older than <c>OpenIdNonceMaxAgeSeconds</c> (<c>social.steam.openid_expired</c>)
+    /// and not dated more than a minute ahead),
     /// then Steam must answer <c>is_valid:true</c> to <c>check_authentication</c>.
     /// </para>
     /// </summary>
@@ -167,6 +175,15 @@ public sealed partial class SteamOpenIdService : IDisposable
         if (string.IsNullOrEmpty(Get("sig")) || RequiredSigned.Any(f => !signed.Contains(f, StringComparer.Ordinal)))
             return Refuse("social.steam.openid_invalid", "The assertion does not sign the required fields", verifiedAt);
 
+        // OpenID 2.0 response_nonce: "yyyy-MM-ddTHH:mm:ssZ" followed by up to 235 unique characters.
+        var nonce = Get("response_nonce");
+        if (!TryParseNonceTime(nonce, out var issuedAt))
+            return Refuse("social.steam.openid_invalid", "The assertion's response_nonce is malformed", verifiedAt);
+        if (issuedAt > verifiedAt + MaxFutureSkew)
+            return Refuse("social.steam.openid_invalid", "The assertion's response_nonce is dated in the future", verifiedAt);
+        if (_maxNonceAge is { } maxAge && verifiedAt - issuedAt > maxAge)
+            return Refuse("social.steam.openid_expired", $"The assertion is older than {(int)maxAge.TotalSeconds} seconds", verifiedAt);
+
         var steamId = match.Groups[1].Value;
 
         // Ask Steam whether it really issued this assertion.
@@ -201,7 +218,21 @@ public sealed partial class SteamOpenIdService : IDisposable
 
         _logger?.Info($"Steam OpenID sign-in verified for {steamId}");
         _events?.Publish(new SteamOpenIdVerifiedEvent(steamId, true, verifiedAt));
-        return Result<SteamOpenIdResult>.Success(new SteamOpenIdResult { SteamId = steamId, ClaimedId = claimedId });
+        return Result<SteamOpenIdResult>.Success(new SteamOpenIdResult
+        {
+            SteamId = steamId,
+            ClaimedId = claimedId,
+            ResponseNonce = nonce,
+            NonceIssuedAtUtc = issuedAt
+        });
+    }
+
+    private static bool TryParseNonceTime(string nonce, out DateTime issuedAtUtc)
+    {
+        issuedAtUtc = default;
+        return nonce.Length is >= 20 and <= 255
+            && DateTime.TryParseExact(nonce.AsSpan(0, 20), "yyyy-MM-dd'T'HH:mm:ss'Z'", CultureInfo.InvariantCulture,
+                DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out issuedAtUtc);
     }
 
     /// <inheritdoc/>

@@ -7,8 +7,19 @@ namespace CL.Common.Strings;
 /// Provides string manipulation utilities: truncation, slugification,
 /// case conversion, HTML stripping, and more.
 /// </summary>
-public static class StringHelper
+public static partial class StringHelper
 {
+    // Source-generated: no parsing, no Regex cache lookup and no interpreter on each call.
+    [GeneratedRegex(@"[_\s]+")] private static partial Regex SlugSeparators();
+    [GeneratedRegex(@"[^a-z0-9\-]")] private static partial Regex SlugInvalidChars();
+    [GeneratedRegex(@"-{2,}")] private static partial Regex RepeatedHyphens();
+    [GeneratedRegex(@"[\s_\-]+")] private static partial Regex WordSeparators();
+    [GeneratedRegex(@"([a-z0-9])([A-Z])")] private static partial Regex LowerUpperBoundary();
+    [GeneratedRegex(@"[\s\-]+")] private static partial Regex SpacesAndHyphens();
+    [GeneratedRegex(@"<[^>]+>")] private static partial Regex HtmlTag();
+    [GeneratedRegex(@"\S+")] private static partial Regex NonWhitespaceRun();
+    [GeneratedRegex(@"\d+")] private static partial Regex DigitRun();
+
     /// <summary>
     /// Truncates a string to <paramref name="maxLength"/> characters,
     /// appending <paramref name="suffix"/> if truncation occurs.
@@ -28,9 +39,9 @@ public static class StringHelper
     {
         if (string.IsNullOrWhiteSpace(value)) return string.Empty;
         var slug = value.ToLowerInvariant().Trim();
-        slug = Regex.Replace(slug, @"[_\s]+", "-");
-        slug = Regex.Replace(slug, @"[^a-z0-9\-]", "");
-        slug = Regex.Replace(slug, @"-{2,}", "-");
+        slug = SlugSeparators().Replace(slug, "-");
+        slug = SlugInvalidChars().Replace(slug, "");
+        slug = RepeatedHyphens().Replace(slug, "-");
         return slug.Trim('-');
     }
 
@@ -52,7 +63,7 @@ public static class StringHelper
     public static string ToPascalCase(string value)
     {
         if (string.IsNullOrWhiteSpace(value)) return string.Empty;
-        var words = Regex.Split(value.Trim(), @"[\s_\-]+");
+        var words = WordSeparators().Split(value.Trim());
         return string.Concat(words.Select(w => w.Length > 0
             ? char.ToUpperInvariant(w[0]) + w[1..].ToLowerInvariant()
             : string.Empty));
@@ -66,8 +77,8 @@ public static class StringHelper
     {
         if (string.IsNullOrWhiteSpace(value)) return string.Empty;
         // Insert underscore before uppercase letters that follow lowercase
-        var result = Regex.Replace(value.Trim(), @"([a-z0-9])([A-Z])", "$1_$2");
-        result = Regex.Replace(result, @"[\s\-]+", "_");
+        var result = LowerUpperBoundary().Replace(value.Trim(), "$1_$2");
+        result = SpacesAndHyphens().Replace(result, "_");
         return result.ToLowerInvariant().Trim('_');
     }
 
@@ -85,14 +96,14 @@ public static class StringHelper
     public static string StripHtml(string html)
     {
         if (string.IsNullOrEmpty(html)) return html;
-        return Regex.Replace(html, @"<[^>]+>", string.Empty);
+        return HtmlTag().Replace(html, string.Empty);
     }
 
     /// <summary>Returns the number of words in the text (split on whitespace).</summary>
     public static int WordCount(string text)
     {
         if (string.IsNullOrWhiteSpace(text)) return 0;
-        return Regex.Matches(text.Trim(), @"\S+").Count;
+        return NonWhitespaceRun().Count(text.Trim());
     }
 
     /// <summary>Repeats <paramref name="value"/> exactly <paramref name="count"/> times.</summary>
@@ -135,7 +146,7 @@ public static class StringHelper
     public static IEnumerable<long> ExtractNumbers(string text)
     {
         if (string.IsNullOrEmpty(text)) yield break;
-        foreach (Match m in Regex.Matches(text, @"\d+"))
+        foreach (Match m in DigitRun().Matches(text))
             if (long.TryParse(m.Value, out var n)) yield return n;
     }
 

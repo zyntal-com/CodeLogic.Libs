@@ -18,6 +18,22 @@
   The PascalCase keys shown before are matched case-sensitively and were ignored, leaving defaults active.
 - Local connections: the root-path checks are documented as traversal protection for caller-supplied paths, not a sandbox. A process that can modify the tree under the root at the same time can swap a checked path for a link before it is opened.
 
+### Security
+
+- **Local connections on Windows reject paths containing `:`** with `storage.invalid_path`. A segment such as
+  `file.txt:hidden` addresses an NTFS alternate data stream and passed the root containment check, so a caller
+  could read, probe and delete hidden streams of files inside the root. A drive-relative path such as `C:name`
+  resolved against the process's current directory on that drive instead of the root (contained only by
+  chance when that directory lies under the root). Colons stay valid on other operating systems and for the
+  remote providers (`StoragePath.Normalize` is unchanged).
+
+### Tests
+
+- `Persistence_failure_does_not_publish_an_healthy_replacement` failed against CodeLogic 5.0.32, whose
+  configuration writes use a unique temp-file name, so the blocking `<file>.tmp` directory no longer made the
+  save fail. The test now puts a directory in place of the configuration file itself, which fails the rename
+  on Windows and Linux whatever the temp name.
+
 ## 2026-10-27 (4.9.104)
 
 ### Fixed
