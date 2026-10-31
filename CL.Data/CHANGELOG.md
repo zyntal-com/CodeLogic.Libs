@@ -61,3 +61,9 @@
   - `JsonValueConverter<T>` stores JSON columns through System.Text.Json source-gen metadata.
 - **Background jobs:** `DataScheduler` runs CL.Data's background work on CL.Common's `JobScheduler`, with one
   clock (`TimeProvider`), no overlapping runs and failures reported per run. CL.Data now depends on CodeLogic.Common.
+- **SQL tree:** statements are closed record trees (`SqlExpr`, `SqlStatement`: select with joins, grouping,
+  HAVING, paging and locks; insert with RETURNING; update; limited delete; upsert).
+  - `SqlWriter` renders them through dialect hooks with exhaustive switches, adding only the parentheses that
+    precedence needs.
+  - Limits and offsets are parameters, so the SQL text does not change with their values.
+  - Literals accept only numbers and booleans.
