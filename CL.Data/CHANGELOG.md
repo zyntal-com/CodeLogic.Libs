@@ -120,3 +120,8 @@
     with depth. Cursors from a differently ordered query fail with `data.invalid_cursor`.
   - Streams hold one connection while you enumerate. A failure mid-stream throws `DataQueryException`, the one place
     CL.Data throws.
+- **Projections:** `Select` projects into scalars, anonymous types, records and DTOs.
+  - Projected values can be computed: arithmetic, string concatenation, comparisons, `?:` and `SqlFn` functions.
+  - `Distinct()` removes duplicate results.
+  - A projected column keeps its column converter, so enums stored as text come back as enums.
+  - Rows are built with the constructor and setters named in the expression (no extra reflection; Native AOT safe).

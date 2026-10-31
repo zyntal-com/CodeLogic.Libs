@@ -125,6 +125,19 @@ public sealed class QueryBuilder<T>
         return With(_state with { Excluded = excluded });
     }
 
+    /// <summary>Projects each row with <paramref name="selector"/> (computed values allowed).</summary>
+    public ProjectedQuery<T, TResult> Select<TResult>(Expression<Func<T, TResult>> selector)
+    {
+        ArgumentNullException.ThrowIfNull(selector);
+        return new ProjectedQuery<T, TResult>(this, selector);
+    }
+
+    internal Database Database => _db;
+
+    internal Result<(SelectStatement Select, IEntityAccessor<T> Accessor, string Table)> PlanSelect() => BuildSelect();
+
+    internal TranslationScope ScopeFor(EntityMap map, ParameterExpression parameter) => Scope(map, parameter);
+
     // ── Reading ─────────────────────────────────────────────────────────────
 
     /// <summary>Runs the query and returns every row.</summary>

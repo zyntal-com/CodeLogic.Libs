@@ -73,6 +73,29 @@ public sealed partial class Database
             static list => list.Count).ConfigureAwait(false);
     }
 
+    /// <summary>Runs a SELECT and builds each row with <paramref name="materialize"/> (projections).</summary>
+    internal async ValueTask<Result<List<TResult>>> QueryProjectedAsync<TResult>(SelectStatement statement, Func<DbDataReader, TResult> materialize,
+        string? table, IReadOnlyList<string> tags, CancellationToken ct)
+    {
+        var rendered = Render(statement);
+        if (rendered.IsFailure) return rendered.Error!;
+        var context = new CommandContext(this, new CommandSpec(rendered.Value!.Text, rendered.Value.Parameters), CommandKind.Query, ct)
+        {
+            Operation = "select",
+            Table = table,
+            Tags = tags,
+        };
+        return await RunAsync(context, materialize,
+            static async (cmd, build, token) =>
+            {
+                List<TResult> rows = [];
+                await using var reader = await cmd.ExecuteReaderAsync(token).ConfigureAwait(false);
+                while (await reader.ReadAsync(token).ConfigureAwait(false)) rows.Add(build(reader));
+                return rows;
+            },
+            static list => list.Count).ConfigureAwait(false);
+    }
+
     /// <summary>Runs a statement that returns one value (aggregates, EXISTS).</summary>
     internal async ValueTask<Result<T?>> ScalarAsync<T>(SqlStatement statement, string? table, IReadOnlyList<string> tags, CancellationToken ct)
     {
