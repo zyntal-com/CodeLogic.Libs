@@ -94,8 +94,19 @@ public sealed class MySqlSqlDialect : SqlDialect
             w.Identifier(table).Append('.').Identifier(key).Append(" = ").Identifier(table).Append('.').Identifier(key);
             return;
         }
-        w.List(upsert.UpdateSet, (writer, s) => writer.Identifier(table).Append('.').Identifier(s.Column).Append(" = ")
-            .Expr(QualifyColumns(s.Value, table)));
+        w.List(upsert.UpdateSet, (writer, s) =>
+        {
+            writer.Identifier(table).Append('.').Identifier(s.Column).Append(" = ");
+            if (upsert.GuardColumn is not { } guard)
+            {
+                writer.Expr(QualifyColumns(s.Value, table));
+                return;
+            }
+            // ON DUPLICATE KEY UPDATE has no WHERE: keep every column of a row owned by another tenant unchanged. The guard
+            // column itself is never assigned, so each comparison sees the original owner.
+            writer.Append("IF(").Identifier(table).Append('.').Identifier(guard).Append(" <=> ").Identifier(ExcludedAlias).Append('.').Identifier(guard)
+                .Append(", ").Expr(QualifyColumns(s.Value, table)).Append(", ").Identifier(table).Append('.').Identifier(s.Column).Append(')');
+        });
     }
 
     /// <inheritdoc />

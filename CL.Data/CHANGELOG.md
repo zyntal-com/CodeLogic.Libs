@@ -4,6 +4,11 @@
 
 ### Fixed
 
+- **Tenant isolation on writes (security):**
+  - **No tenant:** updating, deleting (soft or hard, by entity or by key) or adjusting a counter on a `[TenantKey]` entity without a tenant now fails with `data.tenant_missing`, exactly like reads. Before, such writes ran unscoped and could change another tenant's row by key.
+  - **Upserts:** an upsert can no longer update another tenant's row that has the same conflict key. Every dialect guards the conflict update by the tenant column (PostgreSQL/SQLite `DO UPDATE ... WHERE`, MySQL `IF(...)` per assignment, SQL Server join condition), and a pre-check reports `data.conflict` before anything is written.
+- **Mixed identity inserts:** when explicit and server-generated identities are interleaved in one `InsertManyAsync` call, generated identities are written back to the right entities. Before, a generated identity could overwrite an explicit entity's identity.
+
 - Float-to-decimal materialization preserves the float's shortest round-trip representation instead
   of promoting it to double first (for example, `0.1f` now reads as `0.1m`).
 - Converter registry version increments are atomic under concurrent registration/removal. Removing a

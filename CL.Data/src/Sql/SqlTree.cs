@@ -300,4 +300,10 @@ public sealed record UpsertStatement(InsertStatement Insert, IReadOnlyList<strin
     public IReadOnlyList<SetItem> UpdateSet { get; init; } = [];
     /// <summary>Insert only when no row with the key exists (insert-ignore).</summary>
     public bool IgnoreOnConflict { get; init; }
+
+    /// <summary>
+    /// When set, the conflict update only applies to an existing row whose value in this column equals the new row's
+    /// (the tenant column): an upsert can never change another tenant's row.
+    /// </summary>
+    public string? GuardColumn { get; init; }
 }
