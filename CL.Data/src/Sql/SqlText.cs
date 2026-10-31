@@ -19,6 +19,25 @@ public abstract class SqlParameterValue
     public static SqlParameterValue Of<T>(T value) => new Typed<T>(value);
 
     /// <summary>
+    /// A typed value written to <paramref name="column"/>. The column's converter produces the stored form;
+    /// without one the value stays typed (no boxing) and the provider sees the column when creating the parameter.
+    /// </summary>
+    public static SqlParameterValue For<T>(T value, CL.Data.Mapping.ColumnMap column)
+    {
+        if (value is null) return new Boxed(null, column);
+        if (column.Converter is { } converter && converter.ModelType.IsInstanceOfType(value))
+            return new Boxed(converter.ToStoreObject(value), column);
+        if (value is Enum) return ForColumn(value, column);
+        return new TypedColumn<T>(value, column);
+    }
+
+    private sealed class TypedColumn<T>(T value, CL.Data.Mapping.ColumnMap column) : SqlParameterValue
+    {
+        public override object? BoxedValue => value;
+        public override DbParameter Create(ITypeMapper types, string name) => types.CreateParameter(name, value, column);
+    }
+
+    /// <summary>
     /// A value compared with or assigned to <paramref name="column"/>: the column's converter (or one registered
     /// for the value's type) produces the stored form, and enums without a converter are bound as numbers.
     /// </summary>

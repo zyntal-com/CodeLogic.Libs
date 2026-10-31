@@ -85,3 +85,11 @@
 - **Dialect hooks:** conditions and boolean literals are rendered through dialect hooks (`RenderConditionLiteral`),
   `SqlPredicates.IsPredicate` is public, and dialects declare when an upsert needs a transaction
   (`UpsertRequiresTransaction`, `UpsertParameterMultiplier`).
+- **Unified write path:** `WritePlanner` plans every entity write (insert, update, soft/hard delete, delete by key,
+  upsert with overwrite, increments and ignore) in one place. It covers:
+  - audit columns, tenant stamping and checks, and optimistic concurrency (integer tokens bumped after success;
+    rowversion tokens returned);
+  - server-generated identity (`RETURNING`/`OUTPUT`, or last-insert-id);
+  - batching by the provider's parameter limit;
+  - cache tags (`table:` and `entity:`).
+- **Write context:** `IDataUserAccessor` and `IDataTenantAccessor` supply the current user and tenant.
