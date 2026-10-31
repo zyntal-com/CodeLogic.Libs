@@ -35,7 +35,7 @@
 
 All packages target **.NET 11** and depend on **CodeLogic 5.0** (range `[5.0.0, 6.0.0)`). On .NET 10, use the 4.9.x packages (CodeLogic `[4.9.0, 5.0.0)`), maintained on the `support/4.x` branch.
 
-Every library and the CodeLogic framework itself share one version line: **`4.9.<patch>`**.
+Every library and the CodeLogic framework itself share one version line: **`5.0.<patch>`** (4.9 on the .NET 10 maintenance line).
 The `major.minor` is hand-controlled in the repo-root `version.txt`; the patch is the CI run
 number. See [Versioning](docs/versioning.md) for the full scheme.
 

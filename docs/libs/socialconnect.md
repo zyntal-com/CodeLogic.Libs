@@ -448,7 +448,7 @@ The library writes `config.socialconnect.json` (section `socialconnect`) with de
 
 ### Changing config while running
 
-With CodeLogic 4.9+, `config.socialconnect.json` applies live when changed through `Libraries.UpdateConfigAsync`, `Libraries.ReloadConfigAsync`, or the config file watcher. Only the service whose settings changed is rebuilt:
+Config changes apply live: `config.socialconnect.json` applies live when changed through `Libraries.UpdateConfigAsync`, `Libraries.ReloadConfigAsync`, or the config file watcher. Only the service whose settings changed is rebuilt:
 
 - **Discord settings**: `social.Discord` is replaced.
 - **Steam settings**: `social.Steam`, `social.Auth` and `social.OpenId` are replaced; the profile cache starts empty.
