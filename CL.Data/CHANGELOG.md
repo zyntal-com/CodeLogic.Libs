@@ -114,3 +114,9 @@
     Aggregates over no rows return null, and sums return zero.
   - Set-based writes: `UpdateAsync(x => new T { ... })` (values may use the row's columns; audit columns are written and
     the token bumped) and `DeleteAsync` (soft unless `hard`).
+- **Paging and streaming:** `ToPagedListAsync` (offset paging, count only on request), `ToCursorPageAsync` and
+  `AsAsyncEnumerable`.
+  - Cursor paging is keyset paging: the order is completed with the key, so ties are broken and the cost does not grow
+    with depth. Cursors from a differently ordered query fail with `data.invalid_cursor`.
+  - Streams hold one connection while you enumerate. A failure mid-stream throws `DataQueryException`, the one place
+    CL.Data throws.

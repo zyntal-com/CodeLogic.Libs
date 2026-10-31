@@ -61,3 +61,6 @@ public sealed class SqliteUpsertTests(SqliteFixture fixture) : UpsertConformance
 
 [Collection("sqlite")]
 public sealed class SqliteQueryTests(SqliteFixture fixture) : QueryConformance(fixture);
+
+[Collection("sqlite")]
+public sealed class SqlitePagingTests(SqliteFixture fixture) : PagingConformance(fixture);

@@ -156,6 +156,58 @@ public sealed partial class Database
         return total;
     }
 
+    /// <summary>Streams the rows of a SELECT, holding one connection while the caller enumerates.</summary>
+    internal async IAsyncEnumerable<T> StreamAsync<T>(SelectStatement statement, IEntityAccessor<T> accessor,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
+    {
+        var rendered = Render(statement);
+        if (rendered.IsFailure) throw new DataQueryException(rendered.Error!);
+
+        DbConnection? connection = null;
+        DbCommand? command = null;
+        DbDataReader? reader = null;
+        try
+        {
+            int[] ordinals;
+            try
+            {
+                connection = await Primary.DataSource.OpenConnectionAsync(ct).ConfigureAwait(false);
+                command = connection.CreateCommand();
+                command.CommandText = rendered.Value!.Text;
+                command.CommandTimeout = Config.CommandTimeoutSeconds;
+                for (var i = 0; i < rendered.Value.Parameters.Count; i++)
+                    command.Parameters.Add(rendered.Value.Parameters[i].Create(Provider.Types, Provider.Dialect.ParameterName(i)));
+                reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
+                ordinals = RowReader.Ordinals(reader, accessor.Map, NamingPolicy);
+            }
+            catch (Exception ex)
+            {
+                throw new DataQueryException(Executor.Map(ex, ct));
+            }
+
+            while (true)
+            {
+                T row;
+                try
+                {
+                    if (!await reader.ReadAsync(ct).ConfigureAwait(false)) yield break;
+                    row = accessor.Materialize(reader, ordinals);
+                }
+                catch (Exception ex)
+                {
+                    throw new DataQueryException(Executor.Map(ex, ct));
+                }
+                yield return row;
+            }
+        }
+        finally
+        {
+            if (reader is not null) await reader.DisposeAsync().ConfigureAwait(false);
+            if (command is not null) await command.DisposeAsync().ConfigureAwait(false);
+            if (connection is not null) await connection.DisposeAsync().ConfigureAwait(false);
+        }
+    }
+
     private async ValueTask<Result<TResult>> ExecuteInTransactionAsync<TState, TResult>(DataNode node, CommandContext ctx, TState state,
         Func<DbCommand, TState, CancellationToken, ValueTask<TResult>> body, IsolationLevel isolation)
     {

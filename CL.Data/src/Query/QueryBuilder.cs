@@ -214,6 +214,115 @@ public sealed class QueryBuilder<T>
         return result.IsSuccess ? Result<TValue?>.Success(result.Value) : result.Error!;
     }
 
+    // ── Paging and streaming ────────────────────────────────────────────────
+
+    /// <summary>
+    /// One page (offset paging). The total is counted only when <paramref name="withTotal"/> is true;
+    /// <see cref="PagedResult{T}.HasMore"/> is always set. Prefer <see cref="ToCursorPageAsync"/> for deep paging.
+    /// </summary>
+    public async ValueTask<Result<PagedResult<T>>> ToPagedListAsync(int page, int pageSize, bool withTotal = false, CancellationToken ct = default)
+    {
+        if (page < 1 || pageSize < 1) return DataErrors.Validation("Page and page size must be at least 1.");
+        var rows = await Skip((page - 1) * pageSize).Take(pageSize + 1).ToListAsync(ct).ConfigureAwait(false);
+        if (rows.IsFailure) return rows.Error!;
+        var items = rows.Value!;
+        var hasMore = items.Count > pageSize;
+        if (hasMore) items.RemoveAt(items.Count - 1);
+
+        long? total = null;
+        if (withTotal)
+        {
+            var count = await CountAsync(ct).ConfigureAwait(false);
+            if (count.IsFailure) return count.Error!;
+            total = count.Value;
+        }
+        return new PagedResult<T>(items, page, pageSize, total, hasMore);
+    }
+
+    /// <summary>
+    /// Keyset paging: the next <paramref name="pageSize"/> rows after <paramref name="after"/> (a cursor from the previous
+    /// page). The order (property sorts only) is completed with the primary key, so pages never skip or repeat rows
+    /// while data changes, and the cost does not grow with depth.
+    /// </summary>
+    public async ValueTask<Result<CursorPage<T>>> ToCursorPageAsync(int pageSize, string? after = null, CancellationToken ct = default)
+    {
+        if (pageSize < 1) return DataErrors.Validation("Page size must be at least 1.");
+        var accessor = EntityAccessorRegistry.Get<T>();
+        if (accessor.IsFailure) return accessor.Error!;
+        var map = accessor.Value!.Map;
+        if (map.Key.IsEmpty) return DataErrors.NoPrimaryKey(map.ClrType.Name);
+
+        List<(ColumnMap Column, bool Descending)> order = [];
+        foreach (var sort in _state.Order)
+        {
+            var body = sort.Key.Body is UnaryExpression { NodeType: ExpressionType.Convert } convert ? convert.Operand : sort.Key.Body;
+            if (body is not MemberExpression { Expression: ParameterExpression } member || map.FindProperty(member.Member.Name) is not { } column)
+                return DataErrors.Validation("Cursor paging can only order by mapped properties.");
+            if (order.All(o => o.Column != column)) order.Add((column, sort.Descending));
+        }
+        var lastDescending = order.Count > 0 && order[^1].Descending;
+        foreach (var key in map.Key.Columns)
+            if (order.All(o => o.Column != key)) order.Add((key, lastDescending));
+
+        var fingerprint = typeof(T).Name + ":" + string.Join(",", order.Select(o => o.Column.PropertyName + (o.Descending ? "-" : "+")));
+        var names = map.GetNames(_db.NamingPolicy);
+        var alias = _state.Correlated ? Alias : null;
+
+        var plan = With(_state with { Take = null, Skip = null }).BuildSelect();
+        if (plan.IsFailure) return plan.Error!;
+        var (select, _, table) = plan.Value!;
+        select = select with
+        {
+            OrderBy = order.Select(o => new OrderItem(new ColumnExpr(names.Of(o.Column), alias), o.Descending)).ToArray(),
+            Limit = LimitParam(pageSize + 1),
+            Offset = null,
+        };
+
+        if (after is not null)
+        {
+            var values = CursorToken.Decode(after, fingerprint, order.Select(o => o.Column.ClrType).ToArray());
+            if (values.IsFailure) return values.Error!;
+            SqlExpr? seek = null;
+            for (var i = 0; i < order.Count; i++)
+            {
+                if (values.Value![i] is null) return DataErrors.InvalidCursor("Cursor paging needs non-null sort values.");
+                SqlExpr? branch = null;
+                for (var j = 0; j < i; j++)
+                    branch = ReadPlanner.And(branch, new BinaryExpr(SqlBinaryOperator.Equal, new ColumnExpr(names.Of(order[j].Column), alias),
+                        new ParameterExpr(SqlParameterValue.ForColumn(values.Value[j], order[j].Column))));
+                branch = ReadPlanner.And(branch, new BinaryExpr(order[i].Descending ? SqlBinaryOperator.LessThan : SqlBinaryOperator.GreaterThan,
+                    new ColumnExpr(names.Of(order[i].Column), alias), new ParameterExpr(SqlParameterValue.ForColumn(values.Value[i], order[i].Column))));
+                seek = seek is null ? branch : new BinaryExpr(SqlBinaryOperator.Or, seek, branch!);
+            }
+            select = select with { Where = ReadPlanner.And(select.Where, seek) };
+        }
+
+        var rows = await _db.QueryAsync(select, accessor.Value, table, [DataTags.Table(table)], ct).ConfigureAwait(false);
+        if (rows.IsFailure) return rows.Error!;
+        var items = rows.Value!;
+        string? next = null;
+        if (items.Count > pageSize)
+        {
+            items.RemoveAt(items.Count - 1);
+            var last = items[^1];
+            next = CursorToken.Encode(fingerprint, order.Select(o => accessor.Value.GetValue(last, o.Column.Ordinal)).ToArray());
+        }
+        return new CursorPage<T>(items, next);
+    }
+
+    /// <summary>
+    /// Streams the rows without buffering them; one connection stays open until enumeration ends. Failures are thrown
+    /// as <see cref="DataQueryException"/>, because a stream cannot return a result. Streams bypass the cache.
+    /// </summary>
+    public async IAsyncEnumerable<T> AsAsyncEnumerable([System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
+    {
+        var plan = BuildSelect();
+        if (plan.IsFailure) throw new DataQueryException(plan.Error!);
+        var (select, accessor, _) = plan.Value!;
+        await foreach (var row in _db.StreamAsync(select, accessor, ct).ConfigureAwait(false))
+            yield return row;
+    }
+
     // ── Set-based writes ────────────────────────────────────────────────────
 
     /// <summary>
