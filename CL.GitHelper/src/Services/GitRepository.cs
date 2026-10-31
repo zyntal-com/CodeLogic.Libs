@@ -1,5 +1,7 @@
+using CL.GitHelper.Errors;
 using CL.GitHelper.Models;
 using CodeLogic.Core.Logging;
+using CodeLogic.Core.Results;
 using LibGit2Sharp;
 using LibGit2Sharp.Handlers;
 
@@ -61,7 +63,12 @@ public sealed class GitRepository : IDisposable
     /// Fails if the local directory already exists and is non-empty.
     /// </summary>
     /// <param name="options">Optional clone settings.</param>
-    public async Task<GitResult<RepositoryInfo>> CloneAsync(GitCloneOptions? options = null)
+    /// <returns>
+    /// The cloned repository's info, or an error: <see cref="GitErrors.SshNotSupportedCode"/>,
+    /// <see cref="GitErrors.DirectoryNotEmptyCode"/>, <see cref="GitErrors.AuthenticationFailedCode"/>,
+    /// <see cref="GitErrors.CancelledCode"/> or <see cref="GitErrors.CloneFailedCode"/>.
+    /// </returns>
+    public async Task<Result<RepositoryInfo>> CloneAsync(GitCloneOptions? options = null)
     {
         options ??= new GitCloneOptions();
         var diag = new GitDiagnostics();
@@ -70,15 +77,15 @@ public sealed class GitRepository : IDisposable
         try
         {
             if (IsSshUrl(_config.RepositoryUrl))
-                return GitResult<RepositoryInfo>.Fail(
+                return Error.Validation(GitErrors.SshNotSupportedCode,
                     "SSH URLs are not supported — LibGit2Sharp 0.30 has no SSH transport. " +
-                    "Use an HTTPS URL with a personal access token.", null, diag);
+                    "Use an HTTPS URL with a personal access token.");
 
             if (Directory.Exists(_resolvedPath))
             {
                 if (Directory.GetFileSystemEntries(_resolvedPath).Length > 0)
-                    return GitResult<RepositoryInfo>.Fail(
-                        $"Directory '{_resolvedPath}' already exists and is not empty.", null, diag);
+                    return Error.Conflict(GitErrors.DirectoryNotEmptyCode,
+                        $"Directory '{_resolvedPath}' already exists and is not empty.");
             }
             else
             {
@@ -104,17 +111,16 @@ public sealed class GitRepository : IDisposable
 
             diag.Complete();
             _logger?.Info($"Clone complete in {diag.Duration?.TotalSeconds:F2}s");
+            _logger?.Debug($"Clone diagnostics: {string.Join("; ", diag.Messages)}");
 
             _repo = new Repository(_resolvedPath);
-            var info = BuildRepositoryInfo();
-
-            return GitResult<RepositoryInfo>.Ok(info, diag);
+            return BuildRepositoryInfo();
         }
         catch (Exception ex)
         {
             diag.Complete();
             _logger?.Error($"Clone failed: {ex.Message}", ex);
-            return GitResult<RepositoryInfo>.Fail($"Clone failed: {ex.Message}", ex, diag);
+            return GitErrors.FromException(ex, $"Clone failed: {ex.Message}", GitErrors.CloneFailedCode);
         }
     }
 
@@ -124,7 +130,13 @@ public sealed class GitRepository : IDisposable
     /// Fetches changes from the configured remote without merging.
     /// </summary>
     /// <param name="options">Optional fetch settings.</param>
-    public async Task<GitResult<bool>> FetchAsync(GitFetchOptions? options = null)
+    /// <returns>
+    /// The transfer diagnostics (timing and messages) on success, or an error:
+    /// <see cref="GitErrors.RepositoryNotFoundCode"/>, <see cref="GitErrors.RemoteNotFoundCode"/>,
+    /// <see cref="GitErrors.AuthenticationFailedCode"/>, <see cref="GitErrors.CancelledCode"/> or
+    /// <see cref="GitErrors.FetchFailedCode"/>.
+    /// </returns>
+    public async Task<Result<GitDiagnostics>> FetchAsync(GitFetchOptions? options = null)
     {
         options ??= new GitFetchOptions();
         var diag = new GitDiagnostics();
@@ -140,14 +152,21 @@ public sealed class GitRepository : IDisposable
 
                 var remote = _repo!.Network.Remotes[options.RemoteName];
                 if (remote is null)
-                    return GitResult<bool>.Fail($"Remote '{options.RemoteName}' not found", null, diag);
+                    return GitErrors.RemoteNotFound(options.RemoteName);
 
                 var refSpecs = remote.FetchRefSpecs.Select(s => s.Specification);
 
                 var fetchOpts = new LibGit2Sharp.FetchOptions
                 {
                     Prune = options.Prune,
-                    TagFetchMode = options.FetchTags ? TagFetchMode.Auto : TagFetchMode.None
+                    TagFetchMode = options.FetchTags ? TagFetchMode.Auto : TagFetchMode.None,
+                    // Record transfer stats so the returned diagnostics carry real numbers.
+                    OnTransferProgress = progress =>
+                    {
+                        diag.ObjectCount = progress.ReceivedObjects;
+                        diag.BytesTransferred = progress.ReceivedBytes;
+                        return true;
+                    }
                 };
                 var credHandler = BuildCredentialsHandler();
                 if (credHandler is not null)
@@ -159,7 +178,7 @@ public sealed class GitRepository : IDisposable
 
                 diag.Complete();
                 _logger?.Info($"Fetch complete in {diag.Duration?.TotalSeconds:F2}s");
-                return GitResult<bool>.Ok(true, diag);
+                return diag;
             }
             finally
             {
@@ -170,7 +189,7 @@ public sealed class GitRepository : IDisposable
         {
             diag.Complete();
             _logger?.Error($"Fetch failed: {ex.Message}", ex);
-            return GitResult<bool>.Fail($"Fetch failed: {ex.Message}", ex, diag);
+            return GitErrors.FromException(ex, $"Fetch failed: {ex.Message}", GitErrors.FetchFailedCode);
         }
     }
 
@@ -180,7 +199,12 @@ public sealed class GitRepository : IDisposable
     /// Fetches and integrates remote changes.
     /// </summary>
     /// <param name="options">Optional pull settings.</param>
-    public async Task<GitResult<bool>> PullAsync(GitPullOptions? options = null)
+    /// <returns>
+    /// The diagnostics of the pull (including the fetch step's messages) on success, or an error:
+    /// any error <see cref="FetchAsync"/> returns, <see cref="GitErrors.CheckoutConflictCode"/>,
+    /// <see cref="GitErrors.CancelledCode"/> or <see cref="GitErrors.PullFailedCode"/>.
+    /// </returns>
+    public async Task<Result<GitDiagnostics>> PullAsync(GitPullOptions? options = null)
     {
         options ??= new GitPullOptions();
         var diag = new GitDiagnostics();
@@ -188,8 +212,9 @@ public sealed class GitRepository : IDisposable
         try
         {
             var fetchResult = await FetchAsync(options.FetchOptions);
-            if (!fetchResult.IsSuccess)
-                return GitResult<bool>.Fail(fetchResult.ErrorMessage!, fetchResult.Exception, diag);
+            if (fetchResult.IsFailure)
+                return fetchResult;
+            diag.Messages.AddRange(fetchResult.Value!.Messages);
 
             await _lock.WaitAsync(options.CancellationToken);
             try
@@ -202,7 +227,7 @@ public sealed class GitRepository : IDisposable
 
                 diag.Complete();
                 _logger?.Info($"Pull complete in {diag.Duration?.TotalSeconds:F2}s");
-                return GitResult<bool>.Ok(true, diag);
+                return diag;
             }
             finally
             {
@@ -213,7 +238,7 @@ public sealed class GitRepository : IDisposable
         {
             diag.Complete();
             _logger?.Error($"Pull failed: {ex.Message}", ex);
-            return GitResult<bool>.Fail($"Pull failed: {ex.Message}", ex, diag);
+            return GitErrors.FromException(ex, $"Pull failed: {ex.Message}", GitErrors.PullFailedCode);
         }
     }
 
@@ -223,7 +248,13 @@ public sealed class GitRepository : IDisposable
     /// Pushes local commits to the remote.
     /// </summary>
     /// <param name="options">Optional push settings.</param>
-    public async Task<GitResult<bool>> PushAsync(GitPushOptions? options = null)
+    /// <returns>
+    /// The transfer diagnostics on success, or an error: <see cref="GitErrors.RepositoryNotFoundCode"/>,
+    /// <see cref="GitErrors.RemoteNotFoundCode"/>, <see cref="GitErrors.AuthenticationFailedCode"/>,
+    /// <see cref="GitErrors.NonFastForwardCode"/>, <see cref="GitErrors.CancelledCode"/> or
+    /// <see cref="GitErrors.PushFailedCode"/>.
+    /// </returns>
+    public async Task<Result<GitDiagnostics>> PushAsync(GitPushOptions? options = null)
     {
         options ??= new GitPushOptions();
         var diag = new GitDiagnostics();
@@ -240,7 +271,7 @@ public sealed class GitRepository : IDisposable
 
                 var remote = _repo!.Network.Remotes[options.RemoteName];
                 if (remote is null)
-                    return GitResult<bool>.Fail($"Remote '{options.RemoteName}' not found", null, diag);
+                    return GitErrors.RemoteNotFound(options.RemoteName);
 
                 var refSpec = options.Force
                     ? $"+refs/heads/{branch}:refs/heads/{branch}"
@@ -252,7 +283,7 @@ public sealed class GitRepository : IDisposable
 
                 diag.Complete();
                 _logger?.Info($"Push complete in {diag.Duration?.TotalSeconds:F2}s");
-                return GitResult<bool>.Ok(true, diag);
+                return diag;
             }
             finally
             {
@@ -263,7 +294,7 @@ public sealed class GitRepository : IDisposable
         {
             diag.Complete();
             _logger?.Error($"Push failed: {ex.Message}", ex);
-            return GitResult<bool>.Fail($"Push failed: {ex.Message}", ex, diag);
+            return GitErrors.FromException(ex, $"Push failed: {ex.Message}", GitErrors.PushFailedCode);
         }
     }
 
@@ -274,13 +305,17 @@ public sealed class GitRepository : IDisposable
     /// Optionally stages specific files before committing.
     /// </summary>
     /// <param name="options">Commit options including message and optional files to stage.</param>
-    public async Task<GitResult<CommitInfo>> CommitAsync(GitCommitOptions options)
+    /// <returns>
+    /// The new commit, or an error: <see cref="GitErrors.EmptyCommitMessageCode"/>,
+    /// <see cref="GitErrors.NothingToCommitCode"/>, <see cref="GitErrors.RepositoryNotFoundCode"/>,
+    /// <see cref="GitErrors.NotFoundCode"/> (a file to stage does not exist),
+    /// <see cref="GitErrors.CancelledCode"/> or <see cref="GitErrors.CommitFailedCode"/>.
+    /// </returns>
+    public async Task<Result<CommitInfo>> CommitAsync(GitCommitOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
         if (string.IsNullOrWhiteSpace(options.Message))
-            return GitResult<CommitInfo>.Fail("Commit message must not be empty.");
-
-        var diag = new GitDiagnostics();
+            return Error.Validation(GitErrors.EmptyCommitMessageCode, "Commit message must not be empty.");
 
         try
         {
@@ -293,7 +328,7 @@ public sealed class GitRepository : IDisposable
                     foreach (var file in options.FilesToStage)
                     {
                         Commands.Stage(_repo!, file);
-                        diag.AddMessage($"Staged: {file}");
+                        _logger?.Debug($"Staged: {file}");
                     }
                 }
 
@@ -303,11 +338,8 @@ public sealed class GitRepository : IDisposable
                     _repo!.Commit(options.Message, sig, sig), options.CancellationToken);
 
                 var info = ConvertCommit(commit);
-                diag.CommitsProcessed = 1;
-                diag.Complete();
-
                 _logger?.Info($"Committed {info.ShortSha}: {info.ShortMessage}");
-                return GitResult<CommitInfo>.Ok(info, diag);
+                return info;
             }
             finally
             {
@@ -316,9 +348,8 @@ public sealed class GitRepository : IDisposable
         }
         catch (Exception ex)
         {
-            diag.Complete();
             _logger?.Error($"Commit failed: {ex.Message}", ex);
-            return GitResult<CommitInfo>.Fail($"Commit failed: {ex.Message}", ex, diag);
+            return GitErrors.FromException(ex, $"Commit failed: {ex.Message}", GitErrors.CommitFailedCode);
         }
     }
 
@@ -327,9 +358,11 @@ public sealed class GitRepository : IDisposable
     /// <summary>
     /// Returns the current working-tree status of the repository.
     /// </summary>
-    public async Task<GitResult<GitRepoStatus>> GetStatusAsync()
+    /// <returns>
+    /// The status, or an error: <see cref="GitErrors.RepositoryNotFoundCode"/> or <see cref="GitErrors.StatusFailedCode"/>.
+    /// </returns>
+    public async Task<Result<GitRepoStatus>> GetStatusAsync()
     {
-        var diag = new GitDiagnostics();
         try
         {
             await EnsureOpenAsync();
@@ -361,14 +394,12 @@ public sealed class GitRepository : IDisposable
                     status.ModifiedFiles.Add(entry);
             }
 
-            diag.FilesChanged = status.TotalChangedFiles;
-            diag.Complete();
-            return GitResult<GitRepoStatus>.Ok(status, diag);
+            return status;
         }
         catch (Exception ex)
         {
-            diag.Complete();
-            return GitResult<GitRepoStatus>.Fail($"Failed to get status: {ex.Message}", ex, diag);
+            _logger?.Debug($"Status of '{_config.Id}' failed: {ex}");
+            return GitErrors.FromException(ex, $"Failed to get status: {ex.Message}", GitErrors.StatusFailedCode);
         }
     }
 
@@ -377,17 +408,21 @@ public sealed class GitRepository : IDisposable
     /// <summary>
     /// Returns summary metadata about the repository.
     /// </summary>
-    public async Task<GitResult<RepositoryInfo>> GetRepositoryInfoAsync()
+    /// <returns>
+    /// The repository info, or an error: <see cref="GitErrors.RepositoryNotFoundCode"/> (not cloned yet)
+    /// or <see cref="GitErrors.InfoFailedCode"/>.
+    /// </returns>
+    public async Task<Result<RepositoryInfo>> GetRepositoryInfoAsync()
     {
         try
         {
             await EnsureOpenAsync();
-            var info = BuildRepositoryInfo();
-            return GitResult<RepositoryInfo>.Ok(info);
+            return BuildRepositoryInfo();
         }
         catch (Exception ex)
         {
-            return GitResult<RepositoryInfo>.Fail($"Failed to get repository info: {ex.Message}", ex);
+            _logger?.Debug($"Repository info of '{_config.Id}' failed: {ex}");
+            return GitErrors.FromException(ex, $"Failed to get repository info: {ex.Message}", GitErrors.InfoFailedCode);
         }
     }
 
@@ -397,7 +432,10 @@ public sealed class GitRepository : IDisposable
     /// Lists all branches in the repository.
     /// </summary>
     /// <param name="includeRemote">When true, remote-tracking branches are included.</param>
-    public async Task<GitResult<List<BranchInfo>>> ListBranchesAsync(bool includeRemote = true)
+    /// <returns>
+    /// The branches, or an error: <see cref="GitErrors.RepositoryNotFoundCode"/> or <see cref="GitErrors.ListBranchesFailedCode"/>.
+    /// </returns>
+    public async Task<Result<List<BranchInfo>>> ListBranchesAsync(bool includeRemote = true)
     {
         try
         {
@@ -425,11 +463,12 @@ public sealed class GitRepository : IDisposable
                 return list;
             });
 
-            return GitResult<List<BranchInfo>>.Ok(branches);
+            return branches;
         }
         catch (Exception ex)
         {
-            return GitResult<List<BranchInfo>>.Fail($"Failed to list branches: {ex.Message}", ex);
+            _logger?.Debug($"Listing branches of '{_config.Id}' failed: {ex}");
+            return GitErrors.FromException(ex, $"Failed to list branches: {ex.Message}", GitErrors.ListBranchesFailedCode);
         }
     }
 
@@ -438,7 +477,12 @@ public sealed class GitRepository : IDisposable
     /// </summary>
     /// <param name="branchName">Branch to check out.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    public async Task<GitResult<bool>> CheckoutBranchAsync(
+    /// <returns>
+    /// Success, or an error: <see cref="GitErrors.RepositoryNotFoundCode"/>, <see cref="GitErrors.BranchNotFoundCode"/>,
+    /// <see cref="GitErrors.CheckoutConflictCode"/>, <see cref="GitErrors.CancelledCode"/> or
+    /// <see cref="GitErrors.CheckoutFailedCode"/>.
+    /// </returns>
+    public async Task<Result> CheckoutBranchAsync(
         string branchName,
         CancellationToken cancellationToken = default)
     {
@@ -450,7 +494,7 @@ public sealed class GitRepository : IDisposable
             {
                 await Task.Run(() => Commands.Checkout(_repo!, branchName), cancellationToken);
                 _logger?.Info($"Checked out branch '{branchName}'");
-                return GitResult<bool>.Ok(true);
+                return Result.Success();
             }
             finally
             {
@@ -460,7 +504,8 @@ public sealed class GitRepository : IDisposable
         catch (Exception ex)
         {
             _logger?.Error($"Checkout failed: {ex.Message}", ex);
-            return GitResult<bool>.Fail($"Checkout failed: {ex.Message}", ex);
+            return GitErrors.FromException(ex, $"Checkout failed: {ex.Message}",
+                GitErrors.CheckoutFailedCode, GitErrors.BranchNotFoundCode);
         }
     }
 
@@ -477,13 +522,15 @@ public sealed class GitRepository : IDisposable
     /// </param>
     /// <param name="remoteName">Remote name for resolving the upstream tip. Defaults to "origin".</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    public async Task<GitResult<bool>> ResetHardAsync(
+    /// <returns>
+    /// Success, or an error: <see cref="GitErrors.RepositoryNotFoundCode"/>, <see cref="GitErrors.BranchNotFoundCode"/>
+    /// (reset target not resolvable), <see cref="GitErrors.CancelledCode"/> or <see cref="GitErrors.ResetFailedCode"/>.
+    /// </returns>
+    public async Task<Result> ResetHardAsync(
         string? branchName = null,
         string remoteName = "origin",
         CancellationToken cancellationToken = default)
     {
-        var diag = new GitDiagnostics();
-
         try
         {
             await EnsureOpenAsync();
@@ -492,17 +539,13 @@ public sealed class GitRepository : IDisposable
             {
                 var target = ResolveResetTarget(_repo!, branchName, remoteName);
                 if (target is null)
-                    return GitResult<bool>.Fail(
-                        $"Could not resolve reset target (branch='{branchName ?? "<upstream>"}', remote='{remoteName}').",
-                        null, diag);
+                    return Error.NotFound(GitErrors.BranchNotFoundCode,
+                        $"Could not resolve reset target (branch='{branchName ?? "<upstream>"}', remote='{remoteName}').");
 
-                diag.AddMessage($"Hard reset to {target.Sha[..Math.Min(7, target.Sha.Length)]}");
                 _logger?.Info($"Hard reset '{_config.Id}' → {target.Sha[..Math.Min(7, target.Sha.Length)]}");
 
                 await Task.Run(() => _repo!.Reset(ResetMode.Hard, target), cancellationToken);
-
-                diag.Complete();
-                return GitResult<bool>.Ok(true, diag);
+                return Result.Success();
             }
             finally
             {
@@ -511,9 +554,8 @@ public sealed class GitRepository : IDisposable
         }
         catch (Exception ex)
         {
-            diag.Complete();
             _logger?.Error($"Reset failed: {ex.Message}", ex);
-            return GitResult<bool>.Fail($"Reset failed: {ex.Message}", ex, diag);
+            return GitErrors.FromException(ex, $"Reset failed: {ex.Message}", GitErrors.ResetFailedCode);
         }
     }
 
@@ -533,7 +575,12 @@ public sealed class GitRepository : IDisposable
     /// set to <c>true</c>. Defaults to <c>false</c> (fail instead of discarding).
     /// </param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    public async Task<GitResult<RepositoryInfo>> EnsureUpToDateAsync(
+    /// <returns>
+    /// The up-to-date repository info, or the error of the failing step (clone, fetch or reset), or
+    /// <see cref="GitErrors.UncommittedChangesCode"/> when the working tree is dirty and
+    /// <paramref name="discardLocalChanges"/> is false.
+    /// </returns>
+    public async Task<Result<RepositoryInfo>> EnsureUpToDateAsync(
         string? branchName = null,
         string remoteName = "origin",
         bool discardLocalChanges = false,
@@ -552,7 +599,7 @@ public sealed class GitRepository : IDisposable
                 BranchName = branchName,
                 CancellationToken = cancellationToken
             });
-            if (!cloneResult.IsSuccess)
+            if (cloneResult.IsFailure)
                 return cloneResult;
             return await GetRepositoryInfoAsync();
         }
@@ -562,23 +609,22 @@ public sealed class GitRepository : IDisposable
             RemoteName = remoteName,
             CancellationToken = cancellationToken
         });
-        if (!fetch.IsSuccess)
-            return GitResult<RepositoryInfo>.Fail(fetch.ErrorMessage!, fetch.Exception);
+        if (fetch.IsFailure)
+            return fetch.Error!;
 
         // Guard against silent data loss: the hard reset below discards uncommitted work.
         if (!discardLocalChanges)
         {
             var status = await GetStatusAsync();
             if (status.IsSuccess && status.Value!.IsDirty)
-                return GitResult<RepositoryInfo>.Fail(
+                return Error.Conflict(GitErrors.UncommittedChangesCode,
                     "Working tree has uncommitted changes; refusing to hard-reset and lose them. " +
-                    "Commit/stash first, or call EnsureUpToDateAsync with discardLocalChanges: true.",
-                    null);
+                    "Commit/stash first, or call EnsureUpToDateAsync with discardLocalChanges: true.");
         }
 
         var reset = await ResetHardAsync(branchName, remoteName, cancellationToken);
-        if (!reset.IsSuccess)
-            return GitResult<RepositoryInfo>.Fail(reset.ErrorMessage!, reset.Exception);
+        if (reset.IsFailure)
+            return reset.Error!;
 
         return await GetRepositoryInfoAsync();
     }
@@ -587,7 +633,10 @@ public sealed class GitRepository : IDisposable
     /// Retrieves the commit log for the current branch.
     /// </summary>
     /// <param name="maxCount">Maximum number of commits to return. 0 returns all.</param>
-    public async Task<GitResult<List<CommitInfo>>> GetCommitLogAsync(int maxCount = 20)
+    /// <returns>
+    /// The commits, newest first, or an error: <see cref="GitErrors.RepositoryNotFoundCode"/> or <see cref="GitErrors.LogFailedCode"/>.
+    /// </returns>
+    public async Task<Result<List<CommitInfo>>> GetCommitLogAsync(int maxCount = 20)
     {
         try
         {
@@ -604,11 +653,12 @@ public sealed class GitRepository : IDisposable
                 return commits.Select(ConvertCommit).ToList();
             });
 
-            return GitResult<List<CommitInfo>>.Ok(commits);
+            return commits;
         }
         catch (Exception ex)
         {
-            return GitResult<List<CommitInfo>>.Fail($"Failed to get commit log: {ex.Message}", ex);
+            _logger?.Debug($"Commit log of '{_config.Id}' failed: {ex}");
+            return GitErrors.FromException(ex, $"Failed to get commit log: {ex.Message}", GitErrors.LogFailedCode);
         }
     }
 
@@ -665,7 +715,7 @@ public sealed class GitRepository : IDisposable
 
         if (!Directory.Exists(_resolvedPath) ||
             !Directory.Exists(Path.Combine(_resolvedPath, ".git")))
-            throw new InvalidOperationException(
+            throw new RepositoryNotFoundException(
                 $"Repository not found at '{_resolvedPath}'. Clone it first.");
 
         await Task.Run(() => _repo = new Repository(_resolvedPath));

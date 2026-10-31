@@ -1,50 +1,10 @@
 namespace CL.GitHelper.Models;
 
-// ── Operation results ─────────────────────────────────────────────────────────
-
-/// <summary>
-/// Result of a Git operation, carrying typed data on success or an error description on failure.
-/// </summary>
-/// <typeparam name="T">The payload type returned on success.</typeparam>
-public sealed class GitResult<T>
-{
-    /// <summary>Whether the operation succeeded.</summary>
-    public bool IsSuccess { get; private init; }
-
-    /// <summary>The result payload. Non-null only when <see cref="IsSuccess"/> is true.</summary>
-    public T? Value { get; private init; }
-
-    /// <summary>Human-readable error message. Non-null only when <see cref="IsSuccess"/> is false.</summary>
-    public string? ErrorMessage { get; private init; }
-
-    /// <summary>The exception that caused the failure, if one was caught.</summary>
-    public Exception? Exception { get; private init; }
-
-    /// <summary>Performance and transfer diagnostics captured during the operation.</summary>
-    public GitDiagnostics Diagnostics { get; private init; } = new();
-
-    /// <summary>Creates a successful result containing <paramref name="value"/>.</summary>
-    public static GitResult<T> Ok(T value, GitDiagnostics? diagnostics = null) => new()
-    {
-        IsSuccess = true,
-        Value = value,
-        Diagnostics = diagnostics ?? new()
-    };
-
-    /// <summary>Creates a failed result with an error message and optional exception.</summary>
-    public static GitResult<T> Fail(string error, Exception? ex = null, GitDiagnostics? diagnostics = null) => new()
-    {
-        IsSuccess = false,
-        ErrorMessage = error,
-        Exception = ex,
-        Diagnostics = diagnostics ?? new()
-    };
-}
-
 // ── Diagnostics ───────────────────────────────────────────────────────────────
 
 /// <summary>
-/// Performance and transfer metrics captured during a Git operation.
+/// Performance and transfer metrics captured during a Git operation. Returned as the success
+/// value of <c>GitRepository.FetchAsync</c>, <c>PullAsync</c> and <c>PushAsync</c>.
 /// </summary>
 public sealed class GitDiagnostics
 {

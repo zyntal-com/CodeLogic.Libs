@@ -1,6 +1,8 @@
+using CL.GitHelper.Errors;
 using CL.GitHelper.Models;
 using CodeLogic.Core.Configuration;
 using CodeLogic.Core.Logging;
+using CodeLogic.Core.Results;
 using System.Collections.Concurrent;
 using System.Text.Json;
 
@@ -309,12 +311,13 @@ public sealed class GitManager : IDisposable
     /// </summary>
     /// <param name="fetchOptions">Options applied to every fetch. Null uses defaults.</param>
     /// <param name="maxConcurrency">Maximum parallel fetches. 0 = use configuration default.</param>
-    public async Task<Dictionary<string, GitResult<bool>>> FetchAllAsync(
+    /// <returns>Repository ID → that repository's fetch result (diagnostics or error).</returns>
+    public async Task<Dictionary<string, Result<GitDiagnostics>>> FetchAllAsync(
         FetchOptions? fetchOptions = null,
         int maxConcurrency = 0)
     {
         var concurrency = Math.Max(1, maxConcurrency > 0 ? maxConcurrency : _config.MaxConcurrentOperations);
-        var results = new ConcurrentDictionary<string, GitResult<bool>>();
+        var results = new ConcurrentDictionary<string, Result<GitDiagnostics>>();
         using var sem = new SemaphoreSlim(concurrency, concurrency);
 
         var tasks = _config.Repositories.Select(async cfg =>
@@ -327,7 +330,8 @@ public sealed class GitManager : IDisposable
             }
             catch (Exception ex)
             {
-                results[cfg.Id] = GitResult<bool>.Fail(ex.Message, ex);
+                _logger?.Error($"Fetch failed for '{cfg.Id}': {ex.Message}", ex);
+                results[cfg.Id] = GitErrors.FromException(ex, ex.Message, GitErrors.FetchFailedCode);
             }
             finally
             {
@@ -343,11 +347,12 @@ public sealed class GitManager : IDisposable
     /// Retrieves the working-tree status of all configured repositories concurrently.
     /// </summary>
     /// <param name="maxConcurrency">Maximum parallel status checks. 0 = use configuration default.</param>
-    public async Task<Dictionary<string, GitResult<RepositoryStatus>>> GetAllStatusAsync(
+    /// <returns>Repository ID → that repository's status result.</returns>
+    public async Task<Dictionary<string, Result<RepositoryStatus>>> GetAllStatusAsync(
         int maxConcurrency = 0)
     {
         var concurrency = Math.Max(1, maxConcurrency > 0 ? maxConcurrency : _config.MaxConcurrentOperations);
-        var results = new ConcurrentDictionary<string, GitResult<RepositoryStatus>>();
+        var results = new ConcurrentDictionary<string, Result<RepositoryStatus>>();
         using var sem = new SemaphoreSlim(concurrency, concurrency);
 
         var tasks = _config.Repositories.Select(async cfg =>
@@ -360,7 +365,8 @@ public sealed class GitManager : IDisposable
             }
             catch (Exception ex)
             {
-                results[cfg.Id] = GitResult<RepositoryStatus>.Fail(ex.Message, ex);
+                _logger?.Error($"Status failed for '{cfg.Id}': {ex.Message}", ex);
+                results[cfg.Id] = GitErrors.FromException(ex, ex.Message, GitErrors.StatusFailedCode);
             }
             finally
             {
@@ -393,7 +399,7 @@ public sealed class GitManager : IDisposable
                 if (info.IsSuccess)
                     _logger?.Info($"  {cfg.Id}: healthy");
                 else
-                    _logger?.Error($"  {cfg.Id}: {info.ErrorMessage}");
+                    _logger?.Error($"  {cfg.Id}: {info.Error!.Message}");
             }
             catch (Exception ex)
             {
