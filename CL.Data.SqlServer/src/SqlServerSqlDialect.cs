@@ -230,4 +230,8 @@ public sealed class SqlServerSqlDialect : SqlDialect
             w.Identifier(table).Append('.').Identifier(keys[i]).Append(" = ").Identifier(ExcludedAlias).Append('.').Identifier(keys[i]);
         }
     }
+
+    /// <inheritdoc />
+    public override string RenderBatchedDelete(string quotedTable, string predicate, int batchSize, IReadOnlyList<string> quotedKeyColumns) =>
+        string.Create(System.Globalization.CultureInfo.InvariantCulture, $"DELETE TOP ({batchSize}) FROM {quotedTable} WHERE {predicate}");
 }

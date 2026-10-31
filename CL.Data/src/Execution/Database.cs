@@ -205,6 +205,18 @@ public sealed partial class Database : IAsyncDisposable
     public CL.Data.Migrations.MigrationRunner Migrations(IEnumerable<CL.Data.Migrations.IMigration> migrations, CL.Data.Migrations.MigrationOptions? options = null) =>
         new(this, migrations, options);
 
+    /// <summary>Database and table administration for this connection.</summary>
+    public CL.Data.Admin.DataAdmin Admin => field ??= new CL.Data.Admin.DataAdmin(this);
+
+    /// <summary>Retention purges (<c>[RetainDays]</c>) for this connection.</summary>
+    public CL.Data.Retention.DataRetention Retention => field ??= new CL.Data.Retention.DataRetention(this);
+
+    /// <summary>Runs a pre-rendered write through the pipeline (retention batches, admin statements).</summary>
+    internal ValueTask<Result<int>> ExecuteSpecAsync(CommandSpec spec, string operation, string? table, CancellationToken ct) =>
+        RunAsync(new CommandContext(this, spec, CommandKind.NonQuery, ct) { IsWrite = true, Operation = operation, Table = table }, 0,
+            static async (cmd, _, token) => await cmd.ExecuteNonQueryAsync(token).ConfigureAwait(false),
+            static affected => affected);
+
     /// <summary>Schema sync and drift detection for this connection.</summary>
     public CL.Data.Schema.SchemaSync Schema => field ??= new CL.Data.Schema.SchemaSync(this);
 

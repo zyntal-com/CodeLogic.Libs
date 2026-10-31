@@ -71,6 +71,9 @@ public sealed class SqlServerDataProvider : DataProvider
     public override CL.Data.Schema.SchemaIntrospector Introspector { get; } = new SqlServerSchemaIntrospector();
 
     /// <inheritdoc />
+    public override CL.Data.Admin.DatabaseAdmin DatabaseAdmin { get; } = new SqlServerDatabaseAdmin();
+
+    /// <inheritdoc />
     public override CL.Data.Sql.SqlText TryLockSql(string name) =>
         $"DECLARE @r int; EXEC @r = sp_getapplock @Resource = {name}, @LockMode = 'Exclusive', @LockOwner = 'Session', @LockTimeout = 0; SELECT CASE WHEN @r >= 0 THEN 1 ELSE 0 END";
 

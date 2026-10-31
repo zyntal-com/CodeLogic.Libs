@@ -135,6 +135,9 @@ public abstract class DataProvider
     /// <summary>A statement that releases the advisory lock <paramref name="name"/>.</summary>
     public virtual CL.Data.Sql.SqlText UnlockSql(string name) => throw new NotSupportedException($"{Name} has no advisory locks.");
 
+    /// <summary>Server-level database administration (exists/create/drop), or null.</summary>
+    public virtual CL.Data.Admin.DatabaseAdmin? DatabaseAdmin => null;
+
     /// <summary>Catalog reader for schema sync and drift detection (null when the provider has none).</summary>
     public virtual CL.Data.Schema.SchemaIntrospector? Introspector => null;
 

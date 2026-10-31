@@ -44,4 +44,7 @@ public sealed class PostgreSqlSqlDialect : SqlDialect
 
     private static void Part(SqlWriter w, string part, SqlExpr value) =>
         w.Append("CAST(EXTRACT(").Append(part).Append(" FROM ").Expr(value).Append(") AS integer)");
+
+    /// <inheritdoc />
+    public override string RenderTruncate(string quotedTable) => "TRUNCATE TABLE " + quotedTable + " RESTART IDENTITY";
 }

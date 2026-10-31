@@ -277,4 +277,20 @@ public abstract class SqlDialect
         }
         if (insert.Returning.Count > 0) RenderReturning(w, insert.Returning);
     }
+
+    /// <summary>Statement that removes every row of <paramref name="quotedTable"/> (and resets identity where the database does).</summary>
+    public virtual string RenderTruncate(string quotedTable) => "TRUNCATE TABLE " + quotedTable;
+
+    /// <summary>
+    /// A DELETE that removes at most <paramref name="batchSize"/> rows matching <paramref name="predicate"/> (already
+    /// rendered). The default deletes by key through a limited subquery (PostgreSQL, SQLite); row values are used for
+    /// composite keys.
+    /// </summary>
+    public virtual string RenderBatchedDelete(string quotedTable, string predicate, int batchSize, IReadOnlyList<string> quotedKeyColumns)
+    {
+        var keys = string.Join(", ", quotedKeyColumns);
+        var target = quotedKeyColumns.Count == 1 ? keys : "(" + keys + ")";
+        return string.Create(System.Globalization.CultureInfo.InvariantCulture,
+            $"DELETE FROM {quotedTable} WHERE {target} IN (SELECT {keys} FROM {quotedTable} WHERE {predicate} LIMIT {batchSize})");
+    }
 }

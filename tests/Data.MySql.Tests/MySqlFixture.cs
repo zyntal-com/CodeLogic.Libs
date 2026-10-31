@@ -60,3 +60,4 @@ public sealed class MySqlCollection : ICollectionFixture<MySqlFixture>;
 [Collection("mysql")] public sealed class MySqlSchemaTests(MySqlFixture f) : SchemaConformance(f);
 [Collection("mysql")] public sealed class MySqlSyncTests(MySqlFixture f) : SyncConformance(f);
 [Collection("mysql")] public sealed class MySqlMigrationTests(MySqlFixture f) : MigrationConformance(f);
+[Collection("mysql")] public sealed class MySqlAdminTests(MySqlFixture f) : AdminConformance(f);

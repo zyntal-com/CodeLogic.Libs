@@ -63,6 +63,9 @@ public sealed class SqliteDataProvider : DataProvider
     public override CL.Data.Schema.SchemaIntrospector Introspector { get; } = new SqliteSchemaIntrospector();
 
     /// <inheritdoc />
+    public override CL.Data.Admin.DatabaseAdmin DatabaseAdmin { get; } = new SqliteDatabaseAdmin();
+
+    /// <inheritdoc />
     public override IReadOnlyDictionary<string, string> TableOptions(CL.Data.Mapping.EntityMap map, DataConnectionConfig config)
     {
         var hint = map.Hint<SqliteTableAttribute>();

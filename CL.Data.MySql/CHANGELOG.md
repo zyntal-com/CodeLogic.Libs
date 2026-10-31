@@ -1,2 +1,2 @@
 
-- Advisory locks through GET_LOCK/RELEASE_LOCK; DDL marked non-transactional.
+- `MySqlDatabaseAdmin` (information_schema.SCHEMATA; CREATE DATABASE with the connection charset/collation); batched deletes with DELETE ... LIMIT.

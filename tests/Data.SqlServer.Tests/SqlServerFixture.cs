@@ -63,3 +63,4 @@ public sealed class SqlServerCollection : ICollectionFixture<SqlServerFixture>;
 [Collection("sqlserver")] public sealed class SqlServerSchemaTests(SqlServerFixture f) : SchemaConformance(f);
 [Collection("sqlserver")] public sealed class SqlServerSyncTests(SqlServerFixture f) : SyncConformance(f);
 [Collection("sqlserver")] public sealed class SqlServerMigrationTests(SqlServerFixture f) : MigrationConformance(f);
+[Collection("sqlserver")] public sealed class SqlServerAdminTests(SqlServerFixture f) : AdminConformance(f);

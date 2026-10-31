@@ -59,3 +59,4 @@ public sealed class PostgreSqlCollection : ICollectionFixture<PostgreSqlFixture>
 [Collection("postgresql")] public sealed class PostgreSqlSchemaTests(PostgreSqlFixture f) : SchemaConformance(f);
 [Collection("postgresql")] public sealed class PostgreSqlSyncTests(PostgreSqlFixture f) : SyncConformance(f);
 [Collection("postgresql")] public sealed class PostgreSqlMigrationTests(PostgreSqlFixture f) : MigrationConformance(f);
+[Collection("postgresql")] public sealed class PostgreSqlAdminTests(PostgreSqlFixture f) : AdminConformance(f);

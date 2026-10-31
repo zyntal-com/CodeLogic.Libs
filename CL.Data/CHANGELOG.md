@@ -188,3 +188,9 @@
   - **Safety:** `AppVersion` filters which migrations run; a rollback that includes an irreversible migration is refused before anything changes; runs take an advisory lock.
   - **Discovery:** `MigrationRunner.FromAssembly` finds migrations by reflection (annotated for trimming).
 - **`DataTransaction`:** can run session setup and teardown statements around the transaction (SQLite foreign keys).
+- **Administration (`db.Admin`):**
+  - **Databases:** `DatabaseName`, `DatabaseExistsAsync`, `EnsureDatabaseAsync`, `CreateDatabaseAsync` and `DropDatabaseAsync` (the name is always explicit).
+  - **Tables:** `ListTablesAsync`, `TableExistsAsync`, `DropTableAsync` and `TruncateAsync`, each by name or entity type.
+  - **Provider hook:** `DatabaseAdmin`; `ServerDatabaseAdmin` connects to the server-level database for the server providers.
+- **Retention (`db.Retention`):** `PurgeAsync<T>` deletes rows past their `[RetainDays]` limit in batches of `BatchSize` and publishes `RetentionPurgedEvent`. `Schedule(scheduler, maps, every)` runs it on `DataScheduler`.
+- **Dialect hooks:** `RenderTruncate` and `RenderBatchedDelete`.

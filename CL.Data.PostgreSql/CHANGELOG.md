@@ -1,2 +1,2 @@
 
-- Advisory locks through pg_try_advisory_lock(hashtextextended(name, 0)).
+- `PostgreSqlDatabaseAdmin` (through the postgres database; DROP ... WITH (FORCE)); TRUNCATE ... RESTART IDENTITY.

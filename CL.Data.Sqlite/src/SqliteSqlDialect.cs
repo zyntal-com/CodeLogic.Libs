@@ -68,4 +68,7 @@ public sealed class SqliteSqlDialect : SqlDialect
 
     private static void Part(SqlWriter w, string format, SqlExpr value) =>
         w.Append("CAST(strftime('").Append(format).Append("', ").Expr(value).Append(") AS INTEGER)");
+
+    /// <inheritdoc />
+    public override string RenderTruncate(string quotedTable) => "DELETE FROM " + quotedTable;   // SQLite has no TRUNCATE
 }

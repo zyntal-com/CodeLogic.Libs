@@ -68,6 +68,9 @@ public sealed class MySqlDataProvider : DataProvider
     /// <inheritdoc />
     public override CL.Data.Schema.SchemaIntrospector Introspector { get; } = new MySqlSchemaIntrospector();
 
+    /// <inheritdoc />
+    public override CL.Data.Admin.DatabaseAdmin DatabaseAdmin { get; } = new MySqlDatabaseAdmin();
+
     // MySQL lock names are limited to 64 characters.
     private static string LockName(string name) => name.Length <= 64 ? name : CL.Data.Schema.SchemaBuilder.Identifier(name, 64);
 

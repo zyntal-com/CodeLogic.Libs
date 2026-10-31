@@ -97,4 +97,8 @@ public sealed class MySqlSqlDialect : SqlDialect
         w.List(upsert.UpdateSet, (writer, s) => writer.Identifier(table).Append('.').Identifier(s.Column).Append(" = ")
             .Expr(QualifyColumns(s.Value, table)));
     }
+
+    /// <inheritdoc />
+    public override string RenderBatchedDelete(string quotedTable, string predicate, int batchSize, IReadOnlyList<string> quotedKeyColumns) =>
+        string.Create(System.Globalization.CultureInfo.InvariantCulture, $"DELETE FROM {quotedTable} WHERE {predicate} LIMIT {batchSize}");
 }
