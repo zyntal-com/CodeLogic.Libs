@@ -126,4 +126,19 @@ public abstract class AdminConformance(ProviderFixture fixture) : ConformanceSui
         Assert.Equal(2L, (await Db.Retention.PurgeAsync<TenantRetentionLog>()).ValueOrThrow());                   // the system-wide job
         Assert.Empty((await Db.ForTenant(2).Query<TenantRetentionLog>().ToListAsync()).ValueOrThrow());
     }
+
+    [SkippableFact]
+    public async Task A_dropped_table_is_recreated_by_the_next_sync()
+    {
+        // Regression: DropTableAsync kept the table's fingerprint in cl_data_schema, so a sync without Force
+        // reported the missing table as unchanged and never recreated it.
+        RequireProvider();
+        (await Db.Schema.SyncAsync<AdminItem>()).ValueOrThrow();
+        (await Db.Admin.DropTableAsync<AdminItem>()).ThrowIfFailure();
+
+        var report = (await Db.Schema.SyncAsync<AdminItem>()).ValueOrThrow();
+
+        Assert.True((await Db.Admin.TableExistsAsync<AdminItem>()).ValueOrThrow());
+        Assert.NotEqual(CL.Data.Schema.TableSyncOutcome.Unchanged, Assert.Single(report.Tables).Outcome);
+    }
 }

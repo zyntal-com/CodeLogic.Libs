@@ -33,6 +33,13 @@ public sealed record IndexSchema(string Name, bool Unique, IReadOnlyList<string>
     /// <summary>Covering columns.</summary>
     public IReadOnlyList<string> Include { get; init; } = [];
 
+    /// <summary>
+    /// Key columns that allow NULL. A unique index ignores rows with a NULL key column on MySQL, PostgreSQL and SQLite;
+    /// providers that would treat NULLs as equal (SQL Server) filter those rows out so the model means the same
+    /// everywhere. Not compared by the diff.
+    /// </summary>
+    public IReadOnlyList<string> NullableColumns { get; init; } = [];
+
     /// <summary>Structural equality on name-insensitive content (columns, uniqueness, directions, include).</summary>
     public bool SameShape(IndexSchema other) =>
         Unique == other.Unique &&

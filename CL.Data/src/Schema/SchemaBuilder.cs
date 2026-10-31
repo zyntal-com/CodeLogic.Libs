@@ -29,8 +29,7 @@ public static class SchemaBuilder
             PreviousName = c.PreviousName,
             Comment = c.Comment,
             Json = c.DataType == DataType.Json,
-            Collation = c.Hint<MySqlColumnAttribute>()?.Collation ?? c.Hint<PostgresColumnAttribute>()?.Collation
-                        ?? c.Hint<SqlServerColumnAttribute>()?.Collation ?? c.Hint<SqliteColumnAttribute>()?.Collation,
+            Collation = provider.GetColumnCollation(c),
         }).ToArray();
 
         var includeColumns = provider.Capabilities.IncludeColumns;
@@ -57,6 +56,7 @@ public static class SchemaBuilder
                 {
                     Descending = descending.Any(d => d) ? descending.ToArray() : [],
                     Include = include,
+                    NullableColumns = i.Columns.Where(c => c.Column.IsNullable).Select(c => names.Of(c.Column)).ToArray(),
                 };
             })
             .ToArray();

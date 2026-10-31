@@ -301,6 +301,22 @@ public sealed class SchemaSync
         return inserted.IsFailure ? inserted.Error! : Result.Success();
     }
 
+    /// <summary>
+    /// Forgets the fingerprint recorded for a table so the next sync inspects it again. Called when the table is dropped:
+    /// otherwise a sync would report the missing table as unchanged and never recreate it.
+    /// </summary>
+    internal async ValueTask<Result> ForgetAsync(string table, string? schema, CancellationToken ct)
+    {
+        if (_db.Provider.Introspector is not { } introspector) return Result.Success();
+        var state = SystemTables.Table(_db, StateTable, [], []);
+        var existing = await introspector.ReadTableAsync(_db, state.Name, state.Schema, ct).ConfigureAwait(false);
+        if (existing.IsFailure) return existing.Error!;
+        if (existing.Value is null) return Result.Success();
+        var key = schema is null ? table : schema + "." + table;
+        var deleted = await _db.ExecuteSqlAsync($"DELETE FROM {Table()} WHERE {SqlKit.Identifier("table_name")} = {key}", ct).ConfigureAwait(false);
+        return deleted.IsFailure ? deleted.Error! : Result.Success();
+    }
+
     private SqlIdentifier Table() => SqlKit.Identifier(StateTable);
 
     private TableSchema StateDefinition() => SystemTables.Table(_db, StateTable,

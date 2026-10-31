@@ -27,6 +27,27 @@ public sealed class DdlItem
     [ForeignKey<DdlOwner>(nameof(DdlOwner.Id), OnDelete = ForeignKeyAction.Cascade)] public long OwnerId { get; set; }
 }
 
+[Table(Name = "ddl_keys")]
+public sealed class DdlKey
+{
+    [Column(Primary = true, Size = 64)]
+    [MySqlColumn(Collation = "utf8mb4_bin")]
+    [PostgresColumn(Collation = "C")]
+    [SqlServerColumn(Collation = "Latin1_General_100_BIN2")]
+    [SqliteColumn(Collation = "BINARY")]
+    public string Key { get; set; } = "";
+
+    [Column(Size = 64)] public string Plain { get; set; } = "";
+}
+
+[Table(Name = "ddl_people")]
+public sealed class DdlPerson
+{
+    [Column(Primary = true, Size = 64)] public string Id { get; set; } = "";
+    [Column(Size = 320, Unique = true)] public string? Email { get; set; }
+    [Column(Size = 64, Unique = true)] public string Handle { get; set; } = "";
+}
+
 public sealed class DdlGoldenTests
 {
     private static TableSchema Desired(DataProvider provider)
@@ -233,5 +254,32 @@ public sealed class DdlGoldenTests
         Assert.Equal(2, script.Statements.Count);
 
         Assert.Equal("", new SchemaScript("mysql", SchemaSyncLevel.Full, [], [], []).ToSql());
+    }
+
+    [Fact]
+    public void Column_collation_comes_only_from_the_providers_own_hint()
+    {
+        // Regression: the first hint of any provider was used, so SQL Server got COLLATE utf8mb4_bin.
+        static string? Collation(DataProvider provider, string column) =>
+            SchemaBuilder.FromMap(EntityAccessorRegistry.Get<DdlKey>().ValueOrThrow().Map, provider, new DataConnectionConfig())
+                .ValueOrThrow().Columns.Single(c => c.Name == column).Collation;
+
+        Assert.Equal("utf8mb4_bin", Collation(MySqlDataProvider.Instance, "Key"));
+        Assert.Equal("C", Collation(PostgreSqlDataProvider.Instance, "Key"));
+        Assert.Equal("Latin1_General_100_BIN2", Collation(SqlServerDataProvider.Instance, "Key"));
+        Assert.Equal("BINARY", Collation(SqliteDataProvider.Instance, "Key"));
+        Assert.Null(Collation(SqlServerDataProvider.Instance, "Plain"));
+    }
+
+    [Fact]
+    public void Unique_index_over_a_nullable_column_allows_many_nulls_on_every_provider()
+    {
+        // Regression: SQL Server treats NULLs as equal in a unique index, so only one row could have no value.
+        static IReadOnlyList<string> Ddl(DataProvider provider) => provider.Ddl.Generate(new CreateTableChange(
+            SchemaBuilder.FromMap(EntityAccessorRegistry.Get<DdlPerson>().ValueOrThrow().Map, provider, new DataConnectionConfig()).ValueOrThrow()));
+
+        Assert.Contains("CREATE UNIQUE INDEX [ux_ddl_people_Email] ON [dbo].[ddl_people] ([Email]) WHERE [Email] IS NOT NULL", Ddl(SqlServerDataProvider.Instance));
+        Assert.Contains("CREATE UNIQUE INDEX [ux_ddl_people_Handle] ON [dbo].[ddl_people] ([Handle])", Ddl(SqlServerDataProvider.Instance));
+        Assert.Contains("CREATE UNIQUE INDEX `ux_ddl_people_Email` ON `ddl_people` (`Email`)", Ddl(MySqlDataProvider.Instance));
     }
 }
