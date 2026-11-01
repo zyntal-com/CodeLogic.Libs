@@ -41,6 +41,10 @@ public sealed class DataStrings : LocalizationModelBase
     [LocalizedString(Description = "Logged for a slow query. {0} = connection, {1} = milliseconds, {2} = SQL text.")]
     public string SlowQuery { get; set; } = "Slow query on '{0}' ({1} ms): {2}";
 
+    /// <summary>Slow query with its plan. {0} = connection, {1} = milliseconds, {2} = SQL, {3} = execution plan.</summary>
+    [LocalizedString(Description = "Logged for a slow query whose plan was captured. {0} = connection, {1} = milliseconds, {2} = SQL text, {3} = plan.")]
+    public string SlowQueryWithPlan { get; set; } = "Slow query on '{0}' ({1} ms): {2}\nPlan:\n{3}";
+
     /// <summary>Likely N+1. {0} = connection, {1} = count, {2} = SQL shape.</summary>
     [LocalizedString(Description = "Logged when the same query repeats many times. {0} = connection, {1} = count, {2} = SQL shape.")]
     public string NPlusOne { get; set; } = "Possible N+1 on '{0}': query ran {1} times in a short window: {2}";

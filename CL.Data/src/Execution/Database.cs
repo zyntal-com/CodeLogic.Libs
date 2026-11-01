@@ -380,6 +380,22 @@ public sealed partial class Database : IAsyncDisposable
     /// <summary>Runs a statement and returns the number of affected rows. Raw statements are treated as writes.</summary>
     public ValueTask<Result<int>> ExecuteSqlAsync(SqlText sql, CancellationToken ct = default) => ExecuteSqlAsync(sql, ct, invalidate: true);
 
+    /// <summary>
+    /// Runs a statement that changes only <paramref name="tables"/> and returns the number of affected rows. Only cached
+    /// results reading those tables are dropped, instead of the whole connection's (use it for batched maintenance such as
+    /// pruning, where a full cache flush on every batch would cost more than the statement).
+    /// </summary>
+    /// <param name="sql">The statement.</param>
+    /// <param name="tables">The tables the statement writes (database names, as in <c>[Table(Name = ...)]</c>).</param>
+    /// <param name="ct">Cancellation.</param>
+    public async ValueTask<Result<int>> ExecuteSqlAsync(SqlText sql, IReadOnlyList<string> tables, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(tables);
+        var result = await ExecuteSqlAsync(sql, ct, invalidate: false).ConfigureAwait(false);
+        InvalidateCache(tables.Count == 0 ? ["*"] : tables.Select(CL.Data.Writes.DataTags.Table).ToArray());
+        return result;
+    }
+
     /// <summary>Runs a raw statement; <paramref name="invalidate"/> false keeps the result cache (CL.Data's own bookkeeping writes).</summary>
     internal async ValueTask<Result<int>> ExecuteSqlAsync(SqlText sql, CancellationToken ct, bool invalidate)
     {

@@ -4,12 +4,20 @@
 
 ### Fixed
 
+- **Ordered and limited set-based deletes:** `Query<T>().Where(...).OrderBy(...).Take(n).DeleteAsync(hard: true)` deletes at most `n` rows in that order (MySQL `DELETE ... ORDER BY ... LIMIT`, SQL Server and the others through a key subquery). Before, `Take` and `OrderBy` were silently ignored and **every** matching row was deleted. `Skip`, and `Take` on a soft delete, now fail with `data.validation`.
+- **Set-based updates with `Take`/`Skip`** fail with `data.validation` instead of updating every matching row.
+- **Covering indexes on MySQL:** `[Index(Include = ...)]` columns are folded into the desired key where the database has no `INCLUDE` (MySQL), the same way the DDL creates the index. Before, every sync saw a missing index and planned to create it again.
+- **MySQL rebuilds a table once per sync, not once per column:** a table's added, modified and dropped columns go into one `ALTER TABLE` (NULL backfills first). Before, every column change was its own statement, and MySQL copied large tables once per column. New `DdlGenerator.GenerateAll(changes)` hook; scripts and sync both use it.
+- **Making a column NOT NULL** first replaces existing NULLs with the column's default (or an implicit one) in the same plan, so the `ALTER` no longer fails on tables that hold NULLs.
 - **Tenant isolation on writes (security):**
   - **No tenant:** updating, deleting (soft or hard, by entity or by key) or adjusting a counter on a `[TenantKey]` entity without a tenant now fails with `data.tenant_missing`, exactly like reads. Before, such writes ran unscoped and could change another tenant's row by key.
   - **Upserts:** an upsert can no longer update another tenant's row that has the same conflict key. Every dialect guards the conflict update by the tenant column (PostgreSQL/SQLite `DO UPDATE ... WHERE`, MySQL `IF(...)` per assignment, SQL Server join condition), and a pre-check reports `data.conflict` before anything is written.
   - **Inserts, upserts and bulk copy (breaking):** these also need a tenant now. Before, an entity whose tenant column was already set could be inserted for any tenant through an unscoped database. Write for a specific tenant through `db.ForTenant(id)`.
   - **Retention:** a purge from a tenant view deletes only that tenant's expired rows. Without a tenant, the purge stays the system-wide job for every tenant's rows.
 - **MySQL: saving an unchanged entity:** `UpdateAsync` of an entity whose values were already stored failed with `data.not_found` on MySQL. CL.Data turns on `UseAffectedRows`, which insert-ignore needs, and with it MySQL counts only rows that changed. An update reporting no rows is now confirmed with a `SELECT 1` using the same key, tenant and token conditions. This only happens on providers flagged `ProviderCapabilities.AffectedRowsCountChangesOnly`, and only in that case.
+- **Column collation hints are per provider:** a column's collation now comes only from the hint of the provider being synced (`[MySqlColumn]`, `[PostgresColumn]`, `[SqlServerColumn]`, `[SqliteColumn]`). Before, the first hint of any provider was used, so an entity with both a MySQL and a SQL Server collation sent `COLLATE utf8mb4_bin` to SQL Server. Providers implement `DataProvider.GetColumnCollation`.
+- **SQL Server: unique indexes over nullable columns:** they are created filtered (`WHERE col IS NOT NULL`), so many rows may leave the column empty, as on MySQL, PostgreSQL and SQLite. Before, SQL Server treated NULLs as equal and a second row without a value failed with `data.duplicate_key`. Existing indexes are matched by shape and left as they are; drop and re-sync to get the filtered form.
+- **Dropped tables are recreated by the next sync:** `Admin.DropTableAsync` forgets the table's fingerprint in `cl_data_schema`. Before, a sync without `Force` reported the dropped table as unchanged and never recreated it.
 - **Mixed identity upserts:** an `UpsertManyAsync` call mixing explicit and server-generated identities is split into two statements. Before, the identity column was dropped for every row and explicit identities were replaced.
 - **Streaming:** `AsAsyncEnumerable` runs through the command pipeline: interceptors, telemetry, read routing (replicas, `ReadFrom`) and retries of the open. Before, streams always opened a primary connection directly.
 - **Captured `SqlFn` calls:** a `SqlFn` call whose arguments are all captured values (for example `SqlFn.BucketUtc(at, 60)` in a projection) is translated to SQL. Before, it was evaluated on the client and failed.
@@ -28,6 +36,12 @@
 
 ### Added
 
+- **MySQL: index changes join the table's single ALTER:** `DROP INDEX` / `ADD [UNIQUE] INDEX` become clauses of the one `ALTER TABLE` per table (with the column changes), so a table copy no longer rebuilds an index that is dropped right after, and index-only changes are one in-place pass.
+- **Slow-query log includes the plan:** with `captureExplainOnSlowQuery` the captured EXPLAIN is written to the library log under the SQL (`SlowQueryWithPlan`), not only carried on `SlowQueryEvent.Plan`.
+- **Schema scripts:** `db.Schema.ScriptAsync(maps, level)` / `ScriptAsync<T>()` compares the models with the database and returns the DDL table sync would run, without running it (`SchemaScript`: per-table changes, pending items, `Statements`, `ToSql()`). Generate reviewed migration scripts from the models against a copy of production; an empty script means the database matches.
+- **Stale-while-refresh cache:** `CachePolicy.InvalidateOnWrite = false` keeps a result through writes to its tables and reloads it at the next refresh tick (CL.MySQL2 SmartCache pools behaved like this). `DataCache.RefreshAsync(tags)` reloads warm results in place and drops the rest. `WithCache` on `ProjectedQuery` and `GroupProjection` (after `Select`, also after `GroupBy(...).Select(...)`).
+- **Scoped raw SQL invalidation:** `ExecuteSqlAsync(sql, tables)` drops only the cached results reading those tables instead of the whole connection's.
+- **Whole-second time columns:** `[Column(Precision = 0)]` on a time type gives MySQL `DATETIME`, SQL Server `datetime2(0)`, PostgreSQL `timestamptz(0)`. `Precision` now defaults to `-1` (unset: the provider maximum for time types, 18 for decimals).
 - New package, part of the CL.Data database framework that replaces CL.MySQL2, CL.MSSQL, CL.PostgreSQL and
   CL.SQLite in the CodeLogic 5 line. Targets .NET 11 and CodeLogic 5.
 - **Errors:** `DataErrors` holds every `data.*` error code, each always paired with the same error kind

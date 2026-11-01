@@ -27,6 +27,27 @@ public sealed class DdlItem
     [ForeignKey<DdlOwner>(nameof(DdlOwner.Id), OnDelete = ForeignKeyAction.Cascade)] public long OwnerId { get; set; }
 }
 
+[Table(Name = "ddl_keys")]
+public sealed class DdlKey
+{
+    [Column(Primary = true, Size = 64)]
+    [MySqlColumn(Collation = "utf8mb4_bin")]
+    [PostgresColumn(Collation = "C")]
+    [SqlServerColumn(Collation = "Latin1_General_100_BIN2")]
+    [SqliteColumn(Collation = "BINARY")]
+    public string Key { get; set; } = "";
+
+    [Column(Size = 64)] public string Plain { get; set; } = "";
+}
+
+[Table(Name = "ddl_people")]
+public sealed class DdlPerson
+{
+    [Column(Primary = true, Size = 64)] public string Id { get; set; } = "";
+    [Column(Size = 320, Unique = true)] public string? Email { get; set; }
+    [Column(Size = 64, Unique = true)] public string Handle { get; set; } = "";
+}
+
 public sealed class DdlGoldenTests
 {
     private static TableSchema Desired(DataProvider provider)
@@ -110,5 +131,169 @@ public sealed class DdlGoldenTests
         Assert.Equal(["ALTER TABLE `t` DROP FOREIGN KEY `fk`"], MySqlDataProvider.Instance.Ddl.Generate(new DropForeignKeyChange("t", null, "fk", desired)));
         Assert.Equal(["ALTER TABLE [t] DROP CONSTRAINT [fk]"], SqlServerDataProvider.Instance.Ddl.Generate(new DropForeignKeyChange("t", null, "fk", desired)));
         Assert.Equal(4, SqliteDataProvider.Instance.Ddl.Generate(new DropForeignKeyChange("t", null, "fk", desired)).Count);   // rebuild
+    }
+
+    [Fact]
+    public void Making_a_column_not_null_backfills_existing_nulls_first()
+    {
+        var desired = new TableSchema("t", null, [new ColumnSchema("Name", "varchar(80)", false)], []);
+        var altered = new AlterColumnChange("t", null, new ColumnSchema("Name", "varchar(80)", true), new ColumnSchema("Name", "varchar(80)", false), desired);
+        Assert.Equal(
+        [
+            "UPDATE `t` SET `Name` = '' WHERE `Name` IS NULL",
+            "ALTER TABLE `t` MODIFY COLUMN `Name` varchar(80) NOT NULL",
+        ], MySqlDataProvider.Instance.Ddl.Generate(altered));
+        Assert.Equal("UPDATE \"t\" SET \"Name\" = '' WHERE \"Name\" IS NULL", PostgreSqlDataProvider.Instance.Ddl.Generate(altered)[0]);
+
+        // A declared default wins over the implicit one; text columns get MySQL's expression default.
+        var withDefault = altered with { To = new ColumnSchema("Name", "varchar(80)", false, DefaultSql: "'none'") };
+        Assert.Equal("UPDATE `t` SET `Name` = 'none' WHERE `Name` IS NULL", MySqlDataProvider.Instance.Ddl.Generate(withDefault)[0]);
+        var text = altered with { From = new ColumnSchema("Body", "longtext", true), To = new ColumnSchema("Body", "longtext", false) };
+        Assert.Equal("UPDATE `t` SET `Body` = ('') WHERE `Body` IS NULL", MySqlDataProvider.Instance.Ddl.Generate(text)[0]);
+
+        // Widening to NULL needs no backfill.
+        var widened = altered with { From = altered.To, To = altered.From };
+        Assert.Single(MySqlDataProvider.Instance.Ddl.Generate(widened));
+    }
+
+    [Table(Name = "ddl_times")]
+    [CompositeIndex("ix_ddl_times_server", nameof(ServerId), nameof(At))]
+    public sealed class DdlTimes
+    {
+        [Column(Primary = true, AutoIncrement = true)] public long Id { get; set; }
+        public int ServerId { get; set; }
+        [Column(Precision = 0)] public DateTime At { get; set; }
+        [Column(Precision = 3)] public DateTime Precise { get; set; }
+        public DateTime Default { get; set; }
+        [Index(Name = "ix_ddl_times_cover", Include = [nameof(Precise)])] public int Score { get; set; }
+        [Column(Precision = 10, Scale = 3)] public decimal Amount { get; set; }
+        public decimal DefaultAmount { get; set; }
+    }
+
+    [Fact]
+    public void Time_precision_zero_means_whole_seconds_and_unset_means_the_maximum()
+    {
+        var map = EntityAccessorRegistry.Get<DdlTimes>().ValueOrThrow().Map;
+        TableSchema For(DataProvider provider) => SchemaBuilder.FromMap(map, provider, new DataConnectionConfig()).ValueOrThrow();
+
+        var mysql = For(MySqlDataProvider.Instance);
+        Assert.Equal("datetime", mysql.Column("At")!.StoreType);
+        Assert.Equal("datetime(3)", mysql.Column("Precise")!.StoreType);
+        Assert.Equal("datetime(6)", mysql.Column("Default")!.StoreType);
+        Assert.Equal("decimal(10,3)", mysql.Column("Amount")!.StoreType);
+        Assert.Equal("decimal(18,2)", mysql.Column("DefaultAmount")!.StoreType);
+
+        Assert.Contains("(0)", For(PostgreSqlDataProvider.Instance).Column("At")!.StoreType, StringComparison.Ordinal);
+        Assert.Contains("(6)", For(PostgreSqlDataProvider.Instance).Column("Default")!.StoreType, StringComparison.Ordinal);
+        Assert.Equal("datetime2(0)", For(SqlServerDataProvider.Instance).Column("At")!.StoreType);
+    }
+
+    [Fact]
+    public void Covering_columns_fold_into_the_key_where_indexes_have_no_include()
+    {
+        var map = EntityAccessorRegistry.Get<DdlTimes>().ValueOrThrow().Map;
+        var mysql = SchemaBuilder.FromMap(map, MySqlDataProvider.Instance, new DataConnectionConfig()).ValueOrThrow();
+        var cover = Assert.Single(mysql.Indexes, i => i.Name == "ix_ddl_times_cover");
+        Assert.Equal(["Score", "Precise"], cover.Columns);
+        Assert.Empty(cover.Include);
+
+        // What MySQL reports back for that index has the same shape, so a sync finds nothing to do.
+        var introspected = new IndexSchema("ix_ddl_times_cover", false, ["Score", "Precise"]);
+        Assert.True(cover.SameShape(introspected));
+
+        var postgres = SchemaBuilder.FromMap(map, PostgreSqlDataProvider.Instance, new DataConnectionConfig()).ValueOrThrow();
+        var pgCover = Assert.Single(postgres.Indexes, i => i.Name == "ix_ddl_times_cover");
+        Assert.Equal(["Score"], pgCover.Columns);
+        Assert.Equal(["Precise"], pgCover.Include);
+    }
+
+    [Fact]
+    public void MySql_index_only_changes_become_one_alter_and_keep_unique_and_covering_columns()
+    {
+        SchemaChange[] changes =
+        [
+            new DropIndexChange("t", null, "ix_a"),
+            new DropIndexChange("t", null, "ix_b"),
+            new CreateIndexChange("t", null, new IndexSchema("ix_b", false, ["A", "B"]) { Include = ["C"] }),
+            new CreateIndexChange("t", null, new IndexSchema("ux_d", true, ["D"]) { Descending = [true] }),
+        ];
+        Assert.Equal(
+        [
+            "ALTER TABLE `t` DROP INDEX `ix_a`, DROP INDEX `ix_b`, ADD INDEX `ix_b` (`A`, `B`, `C`), ADD UNIQUE INDEX `ux_d` (`D` DESC)",
+        ], MySqlDataProvider.Instance.Ddl.GenerateAll(changes));
+    }
+
+    [Fact]
+    public void MySql_merges_a_tables_column_and_index_changes_into_one_alter_after_the_backfills()
+    {
+        var desired = new TableSchema("t", null, [new ColumnSchema("Name", "varchar(80)", false), new ColumnSchema("Body", "longtext", true)], []);
+        SchemaChange[] changes =
+        [
+            new DropIndexChange("t", null, "ix_old"),
+            new AddColumnChange("t", null, new ColumnSchema("Qty", "int", false)),
+            new AlterColumnChange("t", null, new ColumnSchema("Name", "varchar(80)", true), desired.Columns[0], desired),
+            new AlterColumnChange("t", null, new ColumnSchema("Body", "text", true), desired.Columns[1], desired),
+            new DropColumnChange("t", null, "Old", desired),
+            new CreateIndexChange("t", null, new IndexSchema("ix_new", false, ["Name"])),
+        ];
+        Assert.Equal(
+        [
+            "UPDATE `t` SET `Name` = '' WHERE `Name` IS NULL",
+            "ALTER TABLE `t` DROP INDEX `ix_old`, ADD COLUMN `Qty` int NOT NULL DEFAULT 0, MODIFY COLUMN `Name` varchar(80) NOT NULL, " +
+            "MODIFY COLUMN `Body` longtext NULL, DROP COLUMN `Old`, ADD INDEX `ix_new` (`Name`)",
+        ], MySqlDataProvider.Instance.Ddl.GenerateAll(changes));
+
+        // Other providers keep one statement list per change.
+        Assert.Equal(changes.SelectMany(PostgreSqlDataProvider.Instance.Ddl.Generate), PostgreSqlDataProvider.Instance.Ddl.GenerateAll(changes));
+    }
+
+    [Fact]
+    public void Script_renders_changes_with_comments_and_pending_items()
+    {
+        var desired = new TableSchema("t", null, [new ColumnSchema("Name", "varchar(80)", false)], []);
+        var alter = new AlterColumnChange("t", null, new ColumnSchema("Name", "varchar(80)", true), desired.Columns[0], desired);
+        var drop = new DropColumnChange("t", null, "Old", desired);
+        var ddl = MySqlDataProvider.Instance.Ddl;
+        var script = new SchemaScript("mysql", SchemaSyncLevel.Safe, ddl.SessionSetup, ddl.SessionTeardown,
+            [new SchemaScriptTable("t", [alter], [drop], ddl.Generate(alter))]);
+
+        Assert.False(script.IsEmpty);
+        Assert.True(script.HasPending);
+        var sql = script.ToSql();
+        Assert.Contains("-- t\n", sql.ReplaceLineEndings("\n"), StringComparison.Ordinal);
+        Assert.Contains("--   alter column t.Name: varchar(80) null -> varchar(80) not null", sql, StringComparison.Ordinal);
+        Assert.Contains("--   PENDING (not allowed at Safe): drop column t.Old", sql, StringComparison.Ordinal);
+        Assert.Contains("UPDATE `t` SET `Name` = '' WHERE `Name` IS NULL;", sql, StringComparison.Ordinal);
+        Assert.Contains("ALTER TABLE `t` MODIFY COLUMN `Name` varchar(80) NOT NULL;", sql, StringComparison.Ordinal);
+        Assert.Equal(2, script.Statements.Count);
+
+        Assert.Equal("", new SchemaScript("mysql", SchemaSyncLevel.Full, [], [], []).ToSql());
+    }
+
+    [Fact]
+    public void Column_collation_comes_only_from_the_providers_own_hint()
+    {
+        // Regression: the first hint of any provider was used, so SQL Server got COLLATE utf8mb4_bin.
+        static string? Collation(DataProvider provider, string column) =>
+            SchemaBuilder.FromMap(EntityAccessorRegistry.Get<DdlKey>().ValueOrThrow().Map, provider, new DataConnectionConfig())
+                .ValueOrThrow().Columns.Single(c => c.Name == column).Collation;
+
+        Assert.Equal("utf8mb4_bin", Collation(MySqlDataProvider.Instance, "Key"));
+        Assert.Equal("C", Collation(PostgreSqlDataProvider.Instance, "Key"));
+        Assert.Equal("Latin1_General_100_BIN2", Collation(SqlServerDataProvider.Instance, "Key"));
+        Assert.Equal("BINARY", Collation(SqliteDataProvider.Instance, "Key"));
+        Assert.Null(Collation(SqlServerDataProvider.Instance, "Plain"));
+    }
+
+    [Fact]
+    public void Unique_index_over_a_nullable_column_allows_many_nulls_on_every_provider()
+    {
+        // Regression: SQL Server treats NULLs as equal in a unique index, so only one row could have no value.
+        static IReadOnlyList<string> Ddl(DataProvider provider) => provider.Ddl.Generate(new CreateTableChange(
+            SchemaBuilder.FromMap(EntityAccessorRegistry.Get<DdlPerson>().ValueOrThrow().Map, provider, new DataConnectionConfig()).ValueOrThrow()));
+
+        Assert.Contains("CREATE UNIQUE INDEX [ux_ddl_people_Email] ON [dbo].[ddl_people] ([Email]) WHERE [Email] IS NOT NULL", Ddl(SqlServerDataProvider.Instance));
+        Assert.Contains("CREATE UNIQUE INDEX [ux_ddl_people_Handle] ON [dbo].[ddl_people] ([Handle])", Ddl(SqlServerDataProvider.Instance));
+        Assert.Contains("CREATE UNIQUE INDEX `ux_ddl_people_Email` ON `ddl_people` (`Email`)", Ddl(MySqlDataProvider.Instance));
     }
 }

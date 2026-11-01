@@ -17,7 +17,7 @@ public class DdlGenerator(SqlDialect dialect)
     {
         CreateTableChange c => CreateTable(c.Definition),
         AddColumnChange a => [AddColumn(a)],
-        AlterColumnChange a => AlterColumn(a),
+        AlterColumnChange a => [.. BackfillNulls(a), .. AlterColumn(a)],
         RenameColumnChange r => [RenameColumn(r)],
         DropColumnChange d => DropColumn(d),
         CreateIndexChange i => [CreateIndex(i.Table, i.Schema, i.Index)],
@@ -25,6 +25,12 @@ public class DdlGenerator(SqlDialect dialect)
         AddForeignKeyChange f => AddForeignKey(f),
         DropForeignKeyChange d => DropForeignKey(d),
     };
+
+    /// <summary>
+    /// The statements for one table's <paramref name="changes"/> (in plan order). Default: <see cref="Generate"/> for each
+    /// change. Providers whose ALTER TABLE takes several clauses override it so a table is rebuilt once, not once per column.
+    /// </summary>
+    public virtual IReadOnlyList<string> GenerateAll(IReadOnlyList<SchemaChange> changes) => changes.SelectMany(Generate).ToArray();
 
     /// <summary>True when DDL can run in a transaction (all but MySQL); a failed table plan then rolls back completely.</summary>
     public virtual bool TransactionalDdl => true;
@@ -101,13 +107,12 @@ public class DdlGenerator(SqlDialect dialect)
     // ── Columns ─────────────────────────────────────────────────────────────
 
     /// <summary>ALTER TABLE ADD COLUMN. A NOT NULL column without a default gets one, so existing rows stay valid.</summary>
-    protected virtual string AddColumn(AddColumnChange change)
-    {
-        var column = change.Column;
-        if (!column.Nullable && column.DefaultSql is null && !column.Identity)
-            column = column with { DefaultSql = ImplicitDefault(column) };
-        return $"ALTER TABLE {Table(change.Table, change.Schema)} {AddColumnKeyword} {ColumnDefinition(column, null)}";
-    }
+    protected virtual string AddColumn(AddColumnChange change) =>
+        $"ALTER TABLE {Table(change.Table, change.Schema)} {AddColumnKeyword} {ColumnDefinition(ColumnToAdd(change.Column), null)}";
+
+    /// <summary><paramref name="column"/> as added to a table that may have rows: NOT NULL without a default gets an implicit one.</summary>
+    protected ColumnSchema ColumnToAdd(ColumnSchema column) =>
+        !column.Nullable && column.DefaultSql is null && !column.Identity ? column with { DefaultSql = ImplicitDefault(column) } : column;
 
     /// <summary><c>ADD COLUMN</c> (<c>ADD</c> on SQL Server).</summary>
     protected virtual string AddColumnKeyword => "ADD COLUMN";
@@ -127,6 +132,17 @@ public class DdlGenerator(SqlDialect dialect)
         if (type.Contains("time", StringComparison.Ordinal)) return "'1970-01-01 00:00:00'";
         if (type.Contains("binary", StringComparison.Ordinal) || type.Contains("blob", StringComparison.Ordinal) || type == "bytea") return "''";
         return "''";
+    }
+
+    /// <summary>
+    /// Before a nullable column becomes NOT NULL: an UPDATE that replaces existing NULLs with the column's default (or an
+    /// implicit one), since every database refuses the change while NULLs remain (MySQL strict mode included).
+    /// </summary>
+    protected virtual IReadOnlyList<string> BackfillNulls(AlterColumnChange change)
+    {
+        if (!change.From.Nullable || change.To.Nullable || change.To.Identity) return [];
+        var value = change.To.DefaultSql ?? ImplicitDefault(change.To);
+        return [$"UPDATE {Table(change.Table, change.Schema)} SET {Q(change.To.Name)} = {value} WHERE {Q(change.To.Name)} IS NULL"];
     }
 
     /// <summary>Changes a column's type and nullability.</summary>
@@ -154,21 +170,23 @@ public class DdlGenerator(SqlDialect dialect)
     /// <summary>CREATE [UNIQUE] INDEX, with covering columns where supported.</summary>
     protected virtual string CreateIndex(string table, string? schema, IndexSchema index)
     {
-        var columns = index.Columns.Select((c, i) => Q(c) + (index.Descending.Count > i && index.Descending[i] ? " DESC" : "")).ToList();
         var sb = new StringBuilder("CREATE ").Append(index.Unique ? "UNIQUE " : "").Append("INDEX ").Append(IfNotExists).Append(Q(index.Name))
-            .Append(" ON ").Append(Table(table, schema)).Append(" (");
-        if (SupportsInclude)
-        {
-            sb.Append(string.Join(", ", columns)).Append(')');
-            if (index.Include.Count > 0) sb.Append(" INCLUDE (").Append(string.Join(", ", index.Include.Select(Q))).Append(')');
-        }
-        else
-        {
-            // No INCLUDE: append the covering columns to the key (still covering, slightly larger).
-            columns.AddRange(index.Include.Where(c => !index.Columns.Contains(c, StringComparer.OrdinalIgnoreCase)).Select(Q));
-            sb.Append(string.Join(", ", columns)).Append(')');
-        }
+            .Append(" ON ").Append(Table(table, schema)).Append(" (").Append(IndexKey(index)).Append(')');
+        if (SupportsInclude && index.Include.Count > 0)
+            sb.Append(" INCLUDE (").Append(string.Join(", ", index.Include.Select(Q))).Append(')');
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// The key column list of an index (with DESC flags). Without INCLUDE support the covering columns are appended to the
+    /// key (still covering, slightly larger).
+    /// </summary>
+    protected string IndexKey(IndexSchema index)
+    {
+        var columns = index.Columns.Select((c, i) => Q(c) + (index.Descending.Count > i && index.Descending[i] ? " DESC" : "")).ToList();
+        if (!SupportsInclude)
+            columns.AddRange(index.Include.Where(c => !index.Columns.Contains(c, StringComparer.OrdinalIgnoreCase)).Select(Q));
+        return string.Join(", ", columns);
     }
 
     /// <summary><c>IF NOT EXISTS </c> where CREATE INDEX supports it and a table rebuild may already have created the index.</summary>

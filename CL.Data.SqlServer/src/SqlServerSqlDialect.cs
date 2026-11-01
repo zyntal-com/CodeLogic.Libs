@@ -201,6 +201,12 @@ public sealed class SqlServerSqlDialect : SqlDialect
     /// <inheritdoc />
     public override void RenderDelete(SqlWriter w, DeleteStatement delete)
     {
+        // DELETE TOP (n) takes arbitrary rows; an ordered batch goes through the key subquery (SELECT TOP (n) ... ORDER BY).
+        if (delete.Limit is not null && delete.OrderBy.Count > 0)
+        {
+            base.RenderDelete(w, delete);
+            return;
+        }
         w.Append("DELETE ");
         if (delete.Limit is not null) w.Append("TOP (").Expr(delete.Limit).Append(") ");
         w.Append("FROM ").Table(delete.Table, withAlias: false);

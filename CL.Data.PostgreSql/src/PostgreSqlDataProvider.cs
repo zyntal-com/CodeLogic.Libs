@@ -61,6 +61,9 @@ public sealed class PostgreSqlDataProvider : DataProvider
     /// <inheritdoc />
     public override ITypeMapper Types { get; } = new PostgreSqlTypeMapper();
 
+    /// <inheritdoc/>
+    public override string? GetColumnCollation(ColumnMap column) => column.Hint<PostgresColumnAttribute>()?.Collation;
+
     /// <inheritdoc />
     public override IErrorClassifier Errors { get; } = new PostgreSqlErrorClassifier();
 
@@ -189,7 +192,7 @@ public sealed class PostgreSqlTypeMapper : ITypeMapper
         if (column.Hint<PostgresColumnAttribute>()?.Type is { } hinted) return hinted;
         if (column.NativeType is { } native) return native;
         var size = column.Size > 0 ? column.Size : config.DefaultStringSize;
-        var fraction = column.Precision is > 0 and <= 6 ? column.Precision : 6;
+        var fraction = column.Precision is >= 0 and <= 6 ? column.Precision : 6;
         var identity = column.Has(ColumnRoles.Identity);
         return column.DataType switch
         {

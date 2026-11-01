@@ -144,6 +144,26 @@ public abstract class QueryConformance(ProviderFixture fixture) : ConformanceSui
     }
 
     [SkippableFact]
+    public async Task Ordered_limited_delete_removes_a_batch_in_order()
+    {
+        RequireProvider();
+        await SeedAsync();
+        var q = Db.Query<Product>().IncludeDeleted();
+
+        // Batched prune: the two highest SKUs go first, the rest stay.
+        Assert.Equal(2, (await q.OrderByDescending(p => p.Sku).Take(2).DeleteAsync(hard: true)).ValueOrThrow());
+        Assert.Equal(["A1", "B2"], Sorted(await q.ToListAsync()));
+        Assert.Equal(1, (await q.Where(p => p.Price > 0m).OrderBy(p => p.Sku).Take(1).DeleteAsync(hard: true)).ValueOrThrow());
+        Assert.Equal(["B2"], Sorted(await q.ToListAsync()));
+
+        // Never silently widened: what cannot be honoured is refused.
+        Assert.Equal(DataErrors.ValidationCode, (await q.OrderBy(p => p.Sku).Skip(1).Take(1).DeleteAsync(hard: true)).Error!.Code);
+        Assert.Equal(DataErrors.ValidationCode, (await Db.Query<Product>().Take(1).DeleteAsync()).Error!.Code);        // soft delete
+        Assert.Equal(DataErrors.ValidationCode, (await q.Take(1).UpdateAsync(p => new Product { Stock = 1 })).Error!.Code);
+        Assert.Equal(["B2"], Sorted(await q.ToListAsync()));
+    }
+
+    [SkippableFact]
     public async Task Untranslatable_lambdas_fail_the_terminal_call()
     {
         RequireProvider();

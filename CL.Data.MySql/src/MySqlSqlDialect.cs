@@ -72,7 +72,13 @@ public sealed class MySqlSqlDialect : SqlDialect
         // MySQL rejects a subquery on the table being deleted from, but supports DELETE ... LIMIT directly.
         w.Append("DELETE FROM ").Table(delete.Table, withAlias: false);
         if (delete.Where is not null) w.Append(" WHERE ").Predicate(delete.Where);
-        if (delete.Limit is not null) w.Append(" LIMIT ").Expr(delete.Limit);
+        if (delete.Limit is null) return;
+        if (delete.OrderBy.Count > 0)
+        {
+            w.Append(" ORDER BY ");
+            w.List(delete.OrderBy, static (writer, o) => writer.Expr(o.Expression).Append(o.Descending ? " DESC" : ""));
+        }
+        w.Append(" LIMIT ").Expr(delete.Limit);
     }
 
     /// <inheritdoc />

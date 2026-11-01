@@ -64,11 +64,27 @@ db.Options.Cache!.Invalidate(["catalog"]);   // drop everything tagged "catalog"
 
 **Warm queries:** a warm query never makes a caller wait for the database. `DataLibrary` runs the refresh loop. Without the runtime, call `cache.StartRefreshing(scheduler)`, or call `RefreshDueAsync()` from your own scheduler.
 
+**Stale-while-refresh (`InvalidateOnWrite = false`):** for dashboards and leaderboards over tables that are written all
+the time, a cold read after every write costs more than a few seconds of staleness. With `InvalidateOnWrite = false` a
+write to the tables a result reads does not drop it: callers keep getting the current result, and the refresh loop reads
+it again at its next tick (so the lag is about one tick, not one `Refresh` period). Without `Refresh` the result simply
+lives until its `Ttl`. Invalidating one of the policy's own `Tags` still drops it.
+
+```csharp
+var board = new CachePolicy { Refresh = TimeSpan.FromSeconds(30), InvalidateOnWrite = false, Tags = ["leaderboard"] };
+var top = await db.Query<Player>().OrderByDescending(p => p.Score).Take(50).WithCache(board).ToListAsync();
+
+await db.Options.Cache!.RefreshAsync(["leaderboard"]);   // reload now, in place: readers never wait
+```
+
+`RefreshAsync(tags)` reloads warm and shielded results carrying the tags in place and drops the other results that carry
+them. `WithCache` also works after `Select` (`q.Select(...).WithCache(policy)`).
+
 ## Invalidation
 
 - **Automatic tags:** every cached result is tagged with each table it reads, including joined and sub-queried tables.
 - **Entity writes, upserts, set-based updates and deletes, and bulk copy** drop the tags of the tables they touch.
-- **Raw `ExecuteSqlAsync`** drops everything cached for that connection.
+- **Raw `ExecuteSqlAsync`** drops everything cached for that connection; `ExecuteSqlAsync(sql, tables)` drops only the results reading those tables.
 - **Transactions:** reads inside a transaction never use the cache. Invalidations wait for commit, and a rollback drops nothing.
 - **Races:** a write that happens while a query is loading keeps that (possibly stale) result out of the cache.
 

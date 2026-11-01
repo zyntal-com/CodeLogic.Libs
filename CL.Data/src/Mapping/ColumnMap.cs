@@ -61,8 +61,8 @@ public sealed class ColumnMap
     /// <summary>Length for text and binary (0 = default, -1 = unbounded).</summary>
     public int Size { get; init; }
 
-    /// <summary>Decimal precision or fractional-second digits (0 = default).</summary>
-    public int Precision { get; init; }
+    /// <summary>Decimal precision (-1 or 0 = default) or fractional-second digits (-1 = provider maximum, 0 = whole seconds).</summary>
+    public int Precision { get; init; } = -1;
 
     /// <summary>Decimal scale (-1 = default).</summary>
     public int Scale { get; init; } = -1;

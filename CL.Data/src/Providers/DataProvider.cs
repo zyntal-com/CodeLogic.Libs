@@ -189,6 +189,13 @@ public abstract class DataProvider
     public virtual string NormalizeStoreType(string storeType) =>
         string.Join(' ', storeType.Trim().ToLowerInvariant().Split(' ', StringSplitOptions.RemoveEmptyEntries)).Replace(", ", ",", StringComparison.Ordinal);
 
+    /// <summary>
+    /// The collation <paramref name="column"/> asks for on this provider (its own column hint, such as
+    /// <c>[MySqlColumn(Collation = ...)]</c>), or null for the table/database default. Hints for other providers
+    /// never apply: collation names are not portable.
+    /// </summary>
+    public virtual string? GetColumnCollation(ColumnMap column) => null;
+
     /// <summary>Provider table options for <paramref name="map"/> (engine, charset, ...), stored in <c>TableSchema.Options</c>.</summary>
     public virtual IReadOnlyDictionary<string, string> TableOptions(EntityMap map, DataConnectionConfig config) => new Dictionary<string, string>();
 

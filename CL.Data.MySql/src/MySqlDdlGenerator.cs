@@ -37,6 +37,59 @@ public sealed class MySqlDdlGenerator(SqlDialect dialect) : DdlGenerator(dialect
             ? "('')"     // TEXT/BLOB/JSON take only expression defaults
             : base.ImplicitDefault(column);
 
+    /// <summary>
+    /// One ALTER TABLE per table for the column and index changes (ADD/MODIFY/DROP COLUMN, DROP/ADD INDEX as clauses of a
+    /// single statement): MySQL copies the table for most column changes, so separate statements would rebuild a large
+    /// table once per column, and an index dropped after the copy would have been rebuilt for nothing. Index-only changes
+    /// become one in-place pass. NULL backfills run first; renames and foreign keys keep their own statements, in plan order.
+    /// </summary>
+    public override IReadOnlyList<string> GenerateAll(IReadOnlyList<SchemaChange> changes)
+    {
+        List<string> statements = [];
+        List<string> backfills = [];
+        List<string> clauses = [];
+        string? table = null;
+
+        void Flush()
+        {
+            if (clauses.Count > 0)
+            {
+                statements.AddRange(backfills);
+                statements.Add($"ALTER TABLE {table} {string.Join(", ", clauses)}");
+            }
+            backfills.Clear();
+            clauses.Clear();
+            table = null;
+        }
+
+        foreach (var change in changes)
+        {
+            var clause = change switch
+            {
+                AddColumnChange add => $"{AddColumnKeyword} {ColumnDefinition(ColumnToAdd(add.Column), null)}",
+                AlterColumnChange alter => $"MODIFY COLUMN {ColumnDefinition(alter.To, alter.Desired)}",
+                DropColumnChange drop => $"DROP COLUMN {Q(drop.Column)}",
+                DropIndexChange dropIndex => $"DROP INDEX {Q(dropIndex.Name)}",
+                CreateIndexChange create => $"ADD {(create.Index.Unique ? "UNIQUE " : "")}INDEX {Q(create.Index.Name)} ({IndexKey(create.Index)})",
+                _ => null,
+            };
+            var target = Table(change.Table, change.Schema);
+            if (clause is null || (table is not null && table != target))
+                Flush();
+            if (clause is null)
+            {
+                statements.AddRange(Generate(change));
+                continue;
+            }
+            table = target;
+            if (change is AlterColumnChange alterColumn)
+                backfills.AddRange(BackfillNulls(alterColumn));
+            clauses.Add(clause);
+        }
+        Flush();
+        return statements;
+    }
+
     /// <inheritdoc />
     protected override IReadOnlyList<string> AlterColumn(AlterColumnChange change) =>
         [$"ALTER TABLE {Table(change.Table, change.Schema)} MODIFY COLUMN {ColumnDefinition(change.To, change.Desired)}"];

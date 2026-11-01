@@ -89,6 +89,56 @@ public abstract class SyncConformance(ProviderFixture fixture) : ConformanceSuit
     }
 
     [SkippableFact]
+    public async Task Script_lists_the_changes_without_applying_them_and_is_empty_once_applied()
+    {
+        RequireProvider();
+        await ResetSchemaAsync();
+        var created = (await Db.Schema.ScriptAsync(Maps, SchemaSyncLevel.Safe)).ValueOrThrow();
+        Assert.Equal(2, created.Tables.Count);
+        Assert.EndsWith("sch_parent", created.Tables[0].Table);                   // referenced table first
+        Assert.All(created.Tables, t => Assert.IsType<CreateTableChange>(t.Changes[0]));
+        Assert.Contains("CREATE TABLE", created.ToSql(), StringComparison.Ordinal);
+        Assert.Null((await Db.Provider.Introspector!.ReadTableAsync(Db, "sch_parent")).ValueOrThrow());   // nothing ran
+
+        // Running the script is the same as syncing: afterwards the script is empty.
+        foreach (var statement in created.Statements)
+            (await Db.ExecuteSqlAsync(SqlText.Raw(statement))).ValueOrThrow();
+        Assert.True((await Db.Schema.ScriptAsync(Maps)).ValueOrThrow().IsEmpty);
+
+        // A hand-added column is drift: Safe lists it as pending only, Full scripts the drop.
+        var parent = await ParentAsync();
+        await RunAsync(new AddColumnChange("sch_parent", parent.Schema, new ColumnSchema("Extra", parent.Column("Count")!.StoreType, true)));
+        var safe = (await Db.Schema.ScriptAsync(Maps, SchemaSyncLevel.Safe)).ValueOrThrow();
+        Assert.True(safe.HasPending);
+        Assert.Empty(safe.Statements);
+        var full = (await Db.Schema.ScriptAsync(Maps, SchemaSyncLevel.Full)).ValueOrThrow();
+        Assert.False(full.HasPending);
+        Assert.IsType<DropColumnChange>(Assert.Single(Assert.Single(full.Tables).Changes));
+        Assert.NotEmpty(full.Statements);                                       // ALTER ... DROP, or a rebuild on SQLite
+    }
+
+    [SkippableFact]
+    public async Task Making_a_column_not_null_keeps_rows_that_held_null()
+    {
+        RequireProvider();
+        await ResetSchemaAsync();
+        (await Db.Schema.SyncAsync(Maps, At(SchemaSyncLevel.Safe))).ValueOrThrow();
+        (await Db.Repository<SchemaParent>().InsertAsync(new SchemaParent { Code = "N", Region = "eu", Ref = Guid.NewGuid(), Seen = DateTimeOffset.UtcNow, Note = null })).ValueOrThrow();
+
+        // The model says Note is NOT NULL now: Full backfills the NULL, then tightens the column.
+        var parent = await ParentAsync();
+        var note = parent.Column("Note")!;
+        var change = new AlterColumnChange("sch_parent", parent.Schema, note, note with { Nullable = false },
+            parent with { Columns = parent.Columns.Select(c => c.Name == "Note" ? c with { Nullable = false } : c).ToArray() });
+        await RunAsync(change);
+
+        var tightened = await ParentAsync();
+        Assert.False(tightened.Column("Note")!.Nullable);
+        var row = (await Db.Query<SchemaParent>().FirstOrDefaultAsync()).ValueOrThrow()!;
+        Assert.Equal("", row.Note);
+    }
+
+    [SkippableFact]
     public async Task Changes_keep_rows_in_parent_and_child_tables()
     {
         RequireProvider();
