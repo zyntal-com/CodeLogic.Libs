@@ -105,7 +105,7 @@ public sealed class SeedRunner
         var ensured = await SystemTables.EnsureAsync(_db, Definition(), ct).ConfigureAwait(false);
         if (ensured.IsFailure) return ensured.Error!;
         var recorded = await _db.SqlReadAsync($"SELECT {SqlKit.Identifier("id")}, {SqlKit.Identifier("version")} FROM {History()}",
-            static r => (Id: r.GetString(0), Version: Convert.ToInt32(r.GetValue(1), System.Globalization.CultureInfo.InvariantCulture)), ct).ConfigureAwait(false);
+            static r => (Id: r.GetString(0), Version: Convert.ToInt32(r.GetValue(1), System.Globalization.CultureInfo.InvariantCulture)), SqlIntent.ReadPrimary, ct).ConfigureAwait(false);
         if (recorded.IsFailure) return recorded.Error!;
         var versions = recorded.Value!.ToDictionary(r => r.Id, r => r.Version, StringComparer.Ordinal);
 

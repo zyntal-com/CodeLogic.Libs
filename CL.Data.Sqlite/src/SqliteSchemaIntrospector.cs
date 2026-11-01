@@ -1,6 +1,7 @@
 using System.Text.RegularExpressions;
 using CL.Data.Execution;
 using CL.Data.Schema;
+using CL.Data.Sql;
 using CodeLogic.Core.Results;
 
 namespace CL.Data.Sqlite;
@@ -14,18 +15,18 @@ public sealed partial class SqliteSchemaIntrospector : SchemaIntrospector
     /// <inheritdoc />
     public override async ValueTask<Result<TableSchema?>> ReadTableAsync(Database db, string table, string? schema = null, CancellationToken ct = default)
     {
-        var create = await db.SqlScalarAsync<string>($"SELECT sql FROM sqlite_master WHERE type = 'table' AND name = {table}", ct).ConfigureAwait(false);
+        var create = await db.SqlScalarAsync<string>($"SELECT sql FROM sqlite_master WHERE type = 'table' AND name = {table}", SqlIntent.ReadPrimary, ct).ConfigureAwait(false);
         if (create.IsFailure) return create.Error!;
         if (create.Value is not { } sql) return (TableSchema?)null;
 
         var columns = await db.SqlReadAsync($"SELECT name, type, \"notnull\", dflt_value, pk FROM pragma_table_info({table}) ORDER BY cid",
-            r => (Name: Text(r, 0)!, Type: Text(r, 1) ?? "", NotNull: Number(r, 2) != 0, Default: Text(r, 3), Pk: (int)Number(r, 4)), ct).ConfigureAwait(false);
+            r => (Name: Text(r, 0)!, Type: Text(r, 1) ?? "", NotNull: Number(r, 2) != 0, Default: Text(r, 3), Pk: (int)Number(r, 4)), SqlIntent.ReadPrimary, ct).ConfigureAwait(false);
         if (columns.IsFailure) return columns.Error!;
 
         var indexes = await db.SqlReadAsync(
             $"SELECT il.name, il.\"unique\", ii.seqno, ii.name, ii.\"desc\" FROM pragma_index_list({table}) il " +
             $"JOIN pragma_index_xinfo(il.name) ii WHERE il.origin <> 'pk' AND ii.\"key\" = 1 AND ii.cid >= 0",
-            r => new IndexColumnRow(Text(r, 0)!, Number(r, 1) != 0, (int)Number(r, 2), Text(r, 3)!, Number(r, 4) != 0, false), ct).ConfigureAwait(false);
+            r => new IndexColumnRow(Text(r, 0)!, Number(r, 1) != 0, (int)Number(r, 2), Text(r, 3)!, Number(r, 4) != 0, false), SqlIntent.ReadPrimary, ct).ConfigureAwait(false);
         if (indexes.IsFailure) return indexes.Error!;
 
         var names = ForeignKeyNames(sql);
@@ -36,7 +37,7 @@ public sealed partial class SqliteSchemaIntrospector : SchemaIntrospector
                 var from = Text(r, 3)!;
                 return (Id: Number(r, 0), Row: new ForeignKeyColumnRow("", (int)Number(r, 1), from, Text(r, 2)!, null, Text(r, 4) ?? from,
                     ParseAction(Text(r, 6)), ParseAction(Text(r, 5))));
-            }, ct).ConfigureAwait(false);
+            }, SqlIntent.ReadPrimary, ct).ConfigureAwait(false);
         if (foreignKeys.IsFailure) return foreignKeys.Error!;
         var fkRows = foreignKeys.Value!
             .GroupBy(f => f.Id)
@@ -68,7 +69,7 @@ public sealed partial class SqliteSchemaIntrospector : SchemaIntrospector
     public override async ValueTask<Result<IReadOnlyList<string>>> ListTablesAsync(Database db, string? schema = null, CancellationToken ct = default)
     {
         var tables = await db.SqlQueryAsync<string>(
-            $"SELECT name FROM sqlite_master WHERE type = 'table' AND substr(name, 1, 7) <> 'sqlite_' ORDER BY name", ct).ConfigureAwait(false);
+            $"SELECT name FROM sqlite_master WHERE type = 'table' AND substr(name, 1, 7) <> 'sqlite_' ORDER BY name", SqlIntent.ReadPrimary, ct).ConfigureAwait(false);
         return tables.IsFailure ? tables.Error! : tables.Value!;
     }
 

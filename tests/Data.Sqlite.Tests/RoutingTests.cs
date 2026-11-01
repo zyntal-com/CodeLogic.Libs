@@ -2,6 +2,7 @@ using CL.Data.Configuration;
 using CL.Data.Errors;
 using CL.Data.Execution;
 using CL.Data.Routing;
+using CL.Data.Sql;
 using CodeLogic.Core.Results;
 
 namespace Data.Sqlite.Tests;
@@ -165,5 +166,56 @@ public sealed class RoutingTests : IAsyncLifetime
         Assert.False(health["r1"].IsUsable(db.Config.MaxReplicaLagMs));     // reachable but too far behind
         Assert.False(health["r2"].Reachable);
         Assert.Equal(CL.Data.Errors.DataErrors.UnavailableCode, health["r2"].Error);
+    }
+
+    private static async Task<long> CountOn(DataNode node, string sql)
+    {
+        await using var connection = await node.DataSource.OpenConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        return Convert.ToInt64(await command.ExecuteScalarAsync());
+    }
+
+    [Fact]
+    public async Task Raw_statements_that_write_run_on_the_primary_and_primary_reads_pin_it()
+    {
+        var (db, _, _) = Create();
+        // INSERT ... RETURNING through the "read" API: classified as a write, so it runs on the primary.
+        var returned = (await db.SqlQueryAsync<string>($"INSERT INTO who VALUES ({"raw"}) RETURNING node")).ValueOrThrow();
+        Assert.Equal(["raw"], returned);
+        Assert.Equal(1L, await CountOn(db.Primary, "SELECT COUNT(*) FROM who WHERE node = 'raw'"));
+        foreach (var replica in db.Replicas) Assert.Equal(0L, await CountOn(replica, "SELECT COUNT(*) FROM who WHERE node = 'raw'"));
+
+        for (var i = 0; i < 20; i++)
+        {
+            Assert.Equal("primary", (await db.SqlScalarAsync<string>($"SELECT node FROM who", SqlIntent.ReadPrimary)).ValueOrThrow());
+            Assert.Equal("primary", (await db.SqlReadAsync($"SELECT node FROM who", r => r.GetString(0), SqlIntent.Write)).ValueOrThrow()[0]);
+        }
+        Assert.StartsWith("r", (await db.SqlScalarAsync<string>($"SELECT node FROM who", SqlIntent.Read)).ValueOrThrow());
+
+        var batch = db.Batch();
+        var written = batch.Sql<string>($"INSERT INTO who VALUES ({"batched"}) RETURNING node");
+        (await batch.ExecuteAsync()).ThrowIfFailure();
+        Assert.Equal(["batched"], written.Value);
+        Assert.Equal(1L, await CountOn(db.Primary, "SELECT COUNT(*) FROM who WHERE node = 'batched'"));
+    }
+
+    [CL.Data.Table(Name = "route_items")]
+    public sealed class RouteItem
+    {
+        [CL.Data.Column(Primary = true)] public long Id { get; set; }
+        public string Name { get; set; } = "";
+    }
+
+    [Fact]
+    public async Task Schema_sync_bookkeeping_reads_the_primary_even_when_reads_prefer_replicas()
+    {
+        var (db, _, _) = Create(ReadPreference.ReplicaOnly);
+        // The replicas never see the tables the primary creates (no replication here): every bookkeeping read must use the primary.
+        (await db.Schema.SyncAsync<RouteItem>()).ValueOrThrow();
+        (await db.Schema.SyncAsync<RouteItem>()).ValueOrThrow();
+        Assert.NotNull((await db.Provider.Introspector!.ReadTableAsync(db, "route_items")).ValueOrThrow());
+        foreach (var replica in db.Replicas)
+            Assert.Equal(0L, await CountOn(replica, "SELECT COUNT(*) FROM sqlite_master WHERE name = 'route_items'"));
     }
 }

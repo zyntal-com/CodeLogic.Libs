@@ -70,6 +70,11 @@ internal sealed class FaultyProvider : DataProvider
     public override IErrorClassifier Errors { get; } = new FaultyClassifier();
     public override object? ReadLastInsertId(DbCommand command) => Inner.ReadLastInsertId(command);
     public override CL.Data.Routing.ReplicaProbe ReplicaProbe { get; } = new TableProbe();
+    public override CL.Data.Schema.SchemaIntrospector? Introspector => Inner.Introspector;
+    public override CL.Data.Schema.DdlGenerator Ddl => Inner.Ddl;
+    public override string NormalizeStoreType(string storeType) => Inner.NormalizeStoreType(storeType);
+    public override IReadOnlyDictionary<string, string> TableOptions(CL.Data.Mapping.EntityMap map, DataConnectionConfig config) => Inner.TableOptions(map, config);
+    public override string? GetColumnCollation(CL.Data.Mapping.ColumnMap column) => Inner.GetColumnCollation(column);
 
     public override Result<string> BuildConnectionString(DataConnectionConfig config, NodeEndpoint node) =>
         new SqliteConnectionStringBuilder { DataSource = node.IsPrimary ? config.Database : $"{config.Database}.{node.Name}" }.ToString();

@@ -1,5 +1,6 @@
 using CL.Data.Execution;
 using CL.Data.Schema;
+using CL.Data.Sql;
 using CodeLogic.Core.Results;
 
 namespace CL.Data.MySql;
@@ -16,7 +17,7 @@ public sealed class MySqlSchemaIntrospector : SchemaIntrospector
 
         var info = await db.SqlReadAsync(
             $"SELECT ENGINE, TABLE_COLLATION, TABLE_COMMENT FROM information_schema.TABLES WHERE TABLE_SCHEMA = {name} AND TABLE_NAME = {table} AND TABLE_TYPE = 'BASE TABLE'",
-            r => (Engine: Text(r, 0), Collation: Text(r, 1), Comment: Text(r, 2)), ct).ConfigureAwait(false);
+            r => (Engine: Text(r, 0), Collation: Text(r, 1), Comment: Text(r, 2)), SqlIntent.ReadPrimary, ct).ConfigureAwait(false);
         if (info.IsFailure) return info.Error!;
         if (info.Value!.Count == 0) return (TableSchema?)null;
 
@@ -28,13 +29,13 @@ public sealed class MySqlSchemaIntrospector : SchemaIntrospector
             {
                 Comment = Text(r, 5) is { Length: > 0 } comment ? comment : null,
                 Collation = Text(r, 6),
-            }, ct).ConfigureAwait(false);
+            }, SqlIntent.ReadPrimary, ct).ConfigureAwait(false);
         if (columns.IsFailure) return columns.Error!;
 
         var statistics = await db.SqlReadAsync(
             $"SELECT INDEX_NAME, NON_UNIQUE, SEQ_IN_INDEX, COLUMN_NAME, COLLATION FROM information_schema.STATISTICS " +
             $"WHERE TABLE_SCHEMA = {name} AND TABLE_NAME = {table} AND COLUMN_NAME IS NOT NULL ORDER BY INDEX_NAME, SEQ_IN_INDEX",
-            r => new IndexColumnRow(Text(r, 0)!, Number(r, 1) == 0, (int)Number(r, 2), Text(r, 3)!, Text(r, 4) == "D", false), ct).ConfigureAwait(false);
+            r => new IndexColumnRow(Text(r, 0)!, Number(r, 1) == 0, (int)Number(r, 2), Text(r, 3)!, Text(r, 4) == "D", false), SqlIntent.ReadPrimary, ct).ConfigureAwait(false);
         if (statistics.IsFailure) return statistics.Error!;
 
         var foreignKeys = await db.SqlReadAsync(
@@ -44,7 +45,7 @@ public sealed class MySqlSchemaIntrospector : SchemaIntrospector
             $"WHERE k.TABLE_SCHEMA = {name} AND k.TABLE_NAME = {table} AND k.REFERENCED_TABLE_NAME IS NOT NULL",
             r => new ForeignKeyColumnRow(Text(r, 0)!, (int)Number(r, 1), Text(r, 2)!, Text(r, 3)!,
                 string.Equals(Text(r, 4), name, StringComparison.OrdinalIgnoreCase) ? null : Text(r, 4),
-                Text(r, 5)!, ParseAction(Text(r, 6)), ParseAction(Text(r, 7))), ct).ConfigureAwait(false);
+                Text(r, 5)!, ParseAction(Text(r, 6)), ParseAction(Text(r, 7))), SqlIntent.ReadPrimary, ct).ConfigureAwait(false);
         if (foreignKeys.IsFailure) return foreignKeys.Error!;
 
         var (engine, collation, tableComment) = info.Value[0];
@@ -72,14 +73,14 @@ public sealed class MySqlSchemaIntrospector : SchemaIntrospector
         var database = await DatabaseOf(db, schema, ct).ConfigureAwait(false);
         if (database.IsFailure) return database.Error!;
         var tables = await db.SqlQueryAsync<string>(
-            $"SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = {database.Value!} AND TABLE_TYPE = 'BASE TABLE' ORDER BY TABLE_NAME", ct).ConfigureAwait(false);
+            $"SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = {database.Value!} AND TABLE_TYPE = 'BASE TABLE' ORDER BY TABLE_NAME", SqlIntent.ReadPrimary, ct).ConfigureAwait(false);
         return tables.IsFailure ? tables.Error! : tables.Value!;
     }
 
     private static async ValueTask<Result<string>> DatabaseOf(Database db, string? schema, CancellationToken ct)
     {
         if (schema is not null) return schema;
-        var current = await db.SqlScalarAsync<string>($"SELECT DATABASE()", ct).ConfigureAwait(false);
+        var current = await db.SqlScalarAsync<string>($"SELECT DATABASE()", SqlIntent.ReadPrimary, ct).ConfigureAwait(false);
         if (current.IsFailure) return current.Error!;
         return current.Value is { } name ? name : CL.Data.Errors.DataErrors.Validation("The connection has no current database.");
     }

@@ -103,7 +103,7 @@ public sealed class DatabaseCacheBus : ICacheInvalidationBus
         if (_lastSeen < 0)
         {
             // Start after what is already there: older invalidations happened before this node cached anything.
-            var max = await _db.SqlScalarAsync<long?>($"SELECT MAX({SqlKit.Identifier("id")}) FROM {SqlKit.Identifier(Table)}", ct).ConfigureAwait(false);
+            var max = await _db.SqlScalarAsync<long?>($"SELECT MAX({SqlKit.Identifier("id")}) FROM {SqlKit.Identifier(Table)}", SqlIntent.ReadPrimary, ct).ConfigureAwait(false);
             if (max.IsFailure) return max.Error!;
             _lastSeen = max.Value ?? 0;
             return 0;
@@ -111,7 +111,7 @@ public sealed class DatabaseCacheBus : ICacheInvalidationBus
 
         var rows = await _db.SqlReadAsync(
             $"SELECT {SqlKit.Identifier("id")}, {SqlKit.Identifier("node")}, {SqlKit.Identifier("tags")} FROM {SqlKit.Identifier(Table)} WHERE {SqlKit.Identifier("id")} > {_lastSeen} ORDER BY {SqlKit.Identifier("id")}",
-            static r => (Id: Convert.ToInt64(r.GetValue(0), System.Globalization.CultureInfo.InvariantCulture), Node: r.GetString(1), Tags: r.GetString(2)), ct).ConfigureAwait(false);
+            static r => (Id: Convert.ToInt64(r.GetValue(0), System.Globalization.CultureInfo.InvariantCulture), Node: r.GetString(1), Tags: r.GetString(2)), SqlIntent.ReadPrimary, ct).ConfigureAwait(false);
         if (rows.IsFailure) return rows.Error!;
 
         var applied = 0;
