@@ -153,7 +153,7 @@ public sealed class DdlGoldenTests
 
         var dropped = SqlServerDataProvider.Instance.Ddl.Generate(new DropColumnChange("t", "dbo", "Old", new TableSchema("t", "dbo", [], [])));
         Assert.Contains("OBJECT_ID(N'[dbo].[t]')", dropped[0], StringComparison.Ordinal);
-        Assert.EndsWith("EXEC(N'ALTER TABLE [dbo].[t] DROP CONSTRAINT ' + QUOTENAME(@df))", dropped[0], StringComparison.Ordinal);
+        Assert.EndsWith("IF @df IS NOT NULL BEGIN DECLARE @dropdf nvarchar(max) = N'ALTER TABLE [dbo].[t] DROP CONSTRAINT ' + QUOTENAME(@df); EXEC sp_executesql @dropdf; END", dropped[0], StringComparison.Ordinal);
         Assert.Equal("ALTER TABLE [dbo].[t] DROP COLUMN [Old]", dropped[1]);
         Assert.Equal(["ALTER TABLE `t` RENAME COLUMN `Old` TO `New`"], MySqlDataProvider.Instance.Ddl.Generate(renamed with { Schema = null }));
     }

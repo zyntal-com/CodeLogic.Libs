@@ -63,7 +63,8 @@ public sealed class SqlServerDdlGenerator(SqlDialect dialect) : DdlGenerator(dia
         [
             $"DECLARE @df sysname = (SELECT dc.name FROM sys.default_constraints dc JOIN sys.columns c ON c.default_object_id = dc.object_id " +
             $"WHERE dc.parent_object_id = OBJECT_ID(N'{Escape(table)}') AND c.name = N'{Escape(change.Column)}'); " +
-            $"IF @df IS NOT NULL EXEC(N'ALTER TABLE {Escape(table)} DROP CONSTRAINT ' + QUOTENAME(@df))",
+            // EXEC(...) takes only literals and variables, so the statement is built in a variable first.
+            $"IF @df IS NOT NULL BEGIN DECLARE @dropdf nvarchar(max) = N'ALTER TABLE {Escape(table)} DROP CONSTRAINT ' + QUOTENAME(@df); EXEC sp_executesql @dropdf; END",
             $"ALTER TABLE {table} DROP COLUMN {Q(change.Column)}",
         ];
     }
