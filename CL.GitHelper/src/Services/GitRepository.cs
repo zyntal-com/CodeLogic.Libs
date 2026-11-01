@@ -28,16 +28,23 @@ public sealed class GitRepository : IDisposable
     private Repository? _repo;
     private bool _disposed;
     private readonly SemaphoreSlim _lock = new(1, 1);
+    private readonly int _timeoutSeconds;
 
     /// <summary>Initialises the repository service.</summary>
     /// <param name="config">Repository configuration entry.</param>
     /// <param name="resolvedPath">Absolute local path (pre-resolved by <see cref="GitManager"/>).</param>
     /// <param name="logger">Optional scoped logger.</param>
-    internal GitRepository(RepositoryConfiguration config, string resolvedPath, ILogger? logger = null)
+    /// <param name="defaultTimeoutSeconds">
+    /// Timeout for network operations when <see cref="RepositoryConfiguration.TimeoutSeconds"/> is 0
+    /// (<see cref="GitHelperConfig.DefaultTimeoutSeconds"/>).
+    /// </param>
+    internal GitRepository(RepositoryConfiguration config, string resolvedPath, ILogger? logger = null,
+        int defaultTimeoutSeconds = 300)
     {
         _config = config ?? throw new ArgumentNullException(nameof(config));
         _resolvedPath = resolvedPath;
         _logger = logger;
+        _timeoutSeconds = Math.Max(1, config.TimeoutSeconds > 0 ? config.TimeoutSeconds : defaultTimeoutSeconds);
 
         // SSH transport is not available in the LibGit2Sharp 0.30 managed binary. Warn loudly
         // rather than silently ignoring SSH config or failing with an opaque transport error later.
@@ -66,13 +73,16 @@ public sealed class GitRepository : IDisposable
     /// <returns>
     /// The cloned repository's info, or an error: <see cref="GitErrors.SshNotSupportedCode"/>,
     /// <see cref="GitErrors.DirectoryNotEmptyCode"/>, <see cref="GitErrors.AuthenticationFailedCode"/>,
-    /// <see cref="GitErrors.CancelledCode"/> or <see cref="GitErrors.CloneFailedCode"/>.
+    /// <see cref="GitErrors.CancelledCode"/>, <see cref="GitErrors.TimeoutCode"/> or
+    /// <see cref="GitErrors.CloneFailedCode"/>.
     /// </returns>
     public async Task<Result<RepositoryInfo>> CloneAsync(GitCloneOptions? options = null)
     {
         options ??= new GitCloneOptions();
         var diag = new GitDiagnostics();
         diag.AddMessage("Starting clone");
+        using var transfer = new Transfer(options.CancellationToken, _timeoutSeconds);
+        var createdDirectory = false;
 
         try
         {
@@ -90,24 +100,29 @@ public sealed class GitRepository : IDisposable
             else
             {
                 Directory.CreateDirectory(_resolvedPath);
+                createdDirectory = true;
                 diag.AddMessage($"Created directory: {_resolvedPath}");
             }
 
-            _logger?.Info($"Cloning {_config.RepositoryUrl} → {_resolvedPath}");
+            _logger?.Info($"Cloning {Redact(_config.RepositoryUrl)} → {_resolvedPath}");
 
             var libOptions = new LibGit2Sharp.CloneOptions
             {
                 BranchName = options.BranchName,
                 RecurseSubmodules = options.RecurseSubmodules,
-                IsBare = options.Bare
+                IsBare = options.Bare,
+                OnCheckoutProgress = (_, completed, total) => Report(options.OnProgress, new GitProgress
+                {
+                    Stage = "Checking out files",
+                    ProgressPercentage = Percent(completed, total),
+                    Message = $"{completed}/{total}"
+                })
             };
-            var credHandler = BuildCredentialsHandler();
-            if (credHandler is not null)
-                libOptions.FetchOptions.CredentialsProvider = credHandler;
+            ApplyFetchCallbacks(libOptions.FetchOptions, transfer, options.OnProgress, diag);
 
             await Task.Run(() =>
                 Repository.Clone(_config.RepositoryUrl, _resolvedPath, libOptions),
-                options.CancellationToken);
+                transfer.Token);
 
             diag.Complete();
             _logger?.Info($"Clone complete in {diag.Duration?.TotalSeconds:F2}s");
@@ -119,8 +134,9 @@ public sealed class GitRepository : IDisposable
         catch (Exception ex)
         {
             diag.Complete();
-            _logger?.Error($"Clone failed: {ex.Message}", ex);
-            return GitErrors.FromException(ex, $"Clone failed: {ex.Message}", GitErrors.CloneFailedCode);
+            // Leave no half-written clone behind: it would make every later clone fail with directory_not_empty.
+            if (createdDirectory) TryDeleteDirectory(_resolvedPath);
+            return Fail("Clone", ex, GitErrors.CloneFailedCode, transfer);
         }
     }
 
@@ -133,18 +149,19 @@ public sealed class GitRepository : IDisposable
     /// <returns>
     /// The transfer diagnostics (timing and messages) on success, or an error:
     /// <see cref="GitErrors.RepositoryNotFoundCode"/>, <see cref="GitErrors.RemoteNotFoundCode"/>,
-    /// <see cref="GitErrors.AuthenticationFailedCode"/>, <see cref="GitErrors.CancelledCode"/> or
-    /// <see cref="GitErrors.FetchFailedCode"/>.
+    /// <see cref="GitErrors.AuthenticationFailedCode"/>, <see cref="GitErrors.CancelledCode"/>,
+    /// <see cref="GitErrors.TimeoutCode"/> or <see cref="GitErrors.FetchFailedCode"/>.
     /// </returns>
     public async Task<Result<GitDiagnostics>> FetchAsync(GitFetchOptions? options = null)
     {
         options ??= new GitFetchOptions();
         var diag = new GitDiagnostics();
+        using var transfer = new Transfer(options.CancellationToken, _timeoutSeconds);
 
         try
         {
             await EnsureOpenAsync();
-            await _lock.WaitAsync(options.CancellationToken);
+            await _lock.WaitAsync(transfer.Token);
             try
             {
                 diag.AddMessage($"Fetching from {options.RemoteName}");
@@ -154,27 +171,18 @@ public sealed class GitRepository : IDisposable
                 if (remote is null)
                     return GitErrors.RemoteNotFound(options.RemoteName);
 
-                var refSpecs = remote.FetchRefSpecs.Select(s => s.Specification);
+                var refSpecs = remote.FetchRefSpecs.Select(s => s.Specification).ToList();
 
                 var fetchOpts = new LibGit2Sharp.FetchOptions
                 {
                     Prune = options.Prune,
-                    TagFetchMode = options.FetchTags ? TagFetchMode.Auto : TagFetchMode.None,
-                    // Record transfer stats so the returned diagnostics carry real numbers.
-                    OnTransferProgress = progress =>
-                    {
-                        diag.ObjectCount = progress.ReceivedObjects;
-                        diag.BytesTransferred = progress.ReceivedBytes;
-                        return true;
-                    }
+                    TagFetchMode = options.FetchTags ? TagFetchMode.Auto : TagFetchMode.None
                 };
-                var credHandler = BuildCredentialsHandler();
-                if (credHandler is not null)
-                    fetchOpts.CredentialsProvider = credHandler;
+                ApplyFetchCallbacks(fetchOpts, transfer, options.OnProgress, diag);
 
                 await Task.Run(() =>
                     Commands.Fetch(_repo, options.RemoteName, refSpecs, fetchOpts, null),
-                    options.CancellationToken);
+                    transfer.Token);
 
                 diag.Complete();
                 _logger?.Info($"Fetch complete in {diag.Duration?.TotalSeconds:F2}s");
@@ -188,42 +196,72 @@ public sealed class GitRepository : IDisposable
         catch (Exception ex)
         {
             diag.Complete();
-            _logger?.Error($"Fetch failed: {ex.Message}", ex);
-            return GitErrors.FromException(ex, $"Fetch failed: {ex.Message}", GitErrors.FetchFailedCode);
+            return Fail("Fetch", ex, GitErrors.FetchFailedCode, transfer);
         }
     }
 
     // ── Pull ──────────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Fetches and integrates remote changes.
+    /// Fetches from <see cref="GitPullOptions.RemoteName"/> and integrates the current branch's
+    /// upstream with <see cref="GitPullOptions.Strategy"/>.
     /// </summary>
     /// <param name="options">Optional pull settings.</param>
     /// <returns>
     /// The diagnostics of the pull (including the fetch step's messages) on success, or an error:
-    /// any error <see cref="FetchAsync"/> returns, <see cref="GitErrors.CheckoutConflictCode"/>,
+    /// any error <see cref="FetchAsync"/> returns, <see cref="GitErrors.BranchNotFoundCode"/> (no
+    /// upstream branch on the remote), <see cref="GitErrors.NonFastForwardCode"/>
+    /// (<see cref="MergeStrategy.FastForwardOnly"/> and the branches diverged),
+    /// <see cref="GitErrors.MergeConflictCode"/>, <see cref="GitErrors.CheckoutConflictCode"/>,
     /// <see cref="GitErrors.CancelledCode"/> or <see cref="GitErrors.PullFailedCode"/>.
     /// </returns>
+    /// <remarks>
+    /// A merge that stops on conflicts leaves the conflicted files in the working tree, as
+    /// <c>git pull</c> does; <see cref="ResetHardAsync"/> discards them. A rebase that stops on
+    /// conflicts is aborted, so the branch is left as it was before the pull.
+    /// </remarks>
     public async Task<Result<GitDiagnostics>> PullAsync(GitPullOptions? options = null)
     {
         options ??= new GitPullOptions();
         var diag = new GitDiagnostics();
+        var remoteName = ResolvePullRemote(options);
 
         try
         {
-            var fetchResult = await FetchAsync(options.FetchOptions);
+            var fetch = options.FetchOptions ?? new GitFetchOptions();
+            var fetchResult = await FetchAsync(new GitFetchOptions
+            {
+                RemoteName = remoteName,
+                Prune = fetch.Prune,
+                FetchTags = fetch.FetchTags,
+                OnProgress = fetch.OnProgress,
+                CancellationToken = fetch.CancellationToken.CanBeCanceled
+                    ? fetch.CancellationToken
+                    : options.CancellationToken
+            });
             if (fetchResult.IsFailure)
                 return fetchResult;
             diag.Messages.AddRange(fetchResult.Value!.Messages);
+            diag.ObjectCount = fetchResult.Value.ObjectCount;
+            diag.BytesTransferred = fetchResult.Value.BytesTransferred;
 
             await _lock.WaitAsync(options.CancellationToken);
             try
             {
-                diag.AddMessage("Merging fetched changes");
-                _logger?.Info($"Pulling '{_config.Id}'");
+                var repo = _repo!;
+                var upstream = ResolvePullUpstream(repo, remoteName);
+                if (upstream?.Tip is null)
+                    return Error.NotFound(GitErrors.BranchNotFoundCode,
+                        $"Branch '{repo.Head.FriendlyName}' has no upstream branch on remote '{remoteName}'.");
+
+                diag.AddMessage($"Integrating {upstream.FriendlyName} ({options.Strategy})");
+                _logger?.Info($"Pulling '{_config.Id}' from {upstream.FriendlyName} ({options.Strategy})");
 
                 var sig = GetSignature();
-                await Task.Run(() => Commands.Pull(_repo!, sig, null), options.CancellationToken);
+                var conflict = await Task.Run(() => Integrate(repo, upstream, sig, options.Strategy, diag),
+                    options.CancellationToken);
+                if (conflict is not null)
+                    return conflict;
 
                 diag.Complete();
                 _logger?.Info($"Pull complete in {diag.Duration?.TotalSeconds:F2}s");
@@ -237,32 +275,84 @@ public sealed class GitRepository : IDisposable
         catch (Exception ex)
         {
             diag.Complete();
-            _logger?.Error($"Pull failed: {ex.Message}", ex);
-            return GitErrors.FromException(ex, $"Pull failed: {ex.Message}", GitErrors.PullFailedCode);
+            return Fail("Pull", ex, GitErrors.PullFailedCode);
         }
+    }
+
+    /// <summary>
+    /// The remote a pull uses: <see cref="GitPullOptions.RemoteName"/>, or
+    /// <see cref="GitPullOptions.FetchOptions"/>' remote when <c>RemoteName</c> is left at "origin".
+    /// </summary>
+    internal static string ResolvePullRemote(GitPullOptions options)
+    {
+        const string defaultRemote = "origin";
+        var fetchRemote = options.FetchOptions?.RemoteName;
+        if (string.Equals(options.RemoteName, defaultRemote, StringComparison.Ordinal) &&
+            !string.IsNullOrWhiteSpace(fetchRemote))
+            return fetchRemote;
+        return string.IsNullOrWhiteSpace(options.RemoteName) ? defaultRemote : options.RemoteName;
+    }
+
+    private static Branch? ResolvePullUpstream(Repository repo, string remoteName)
+    {
+        var head = repo.Head;
+        if (head.IsTracking && string.Equals(head.TrackedBranch?.RemoteName, remoteName, StringComparison.Ordinal))
+            return head.TrackedBranch;
+        return repo.Branches[$"{remoteName}/{head.FriendlyName}"];
+    }
+
+    /// <summary>Merges or rebases onto <paramref name="upstream"/>. Returns an error on conflicts, null on success.</summary>
+    private static Error? Integrate(Repository repo, Branch upstream, Signature sig, MergeStrategy strategy, GitDiagnostics diag)
+    {
+        if (strategy == MergeStrategy.Rebase)
+        {
+            var result = repo.Rebase.Start(repo.Head, upstream, null, new Identity(sig.Name, sig.Email), new RebaseOptions());
+            diag.AddMetric("RebaseStatus", result.Status.ToString());
+            diag.CommitsProcessed = (int)result.CompletedStepCount;
+            if (result.Status == RebaseStatus.Complete)
+                return null;
+
+            repo.Rebase.Abort();
+            return Error.Conflict(GitErrors.MergeConflictCode,
+                $"Rebase onto {upstream.FriendlyName} stopped on conflicting changes and was aborted.");
+        }
+
+        var merge = repo.Merge(upstream, sig, new MergeOptions
+        {
+            FastForwardStrategy = strategy == MergeStrategy.FastForwardOnly
+                ? FastForwardStrategy.FastForwardOnly
+                : FastForwardStrategy.Default
+        });
+        diag.AddMetric("MergeStatus", merge.Status.ToString());
+        return merge.Status == MergeStatus.Conflicts
+            ? Error.Conflict(GitErrors.MergeConflictCode,
+                $"Merging {upstream.FriendlyName} left conflicting files in the working tree.")
+            : null;
     }
 
     // ── Push ──────────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Pushes local commits to the remote.
+    /// Pushes local commits to the remote, with the configured credentials.
     /// </summary>
     /// <param name="options">Optional push settings.</param>
     /// <returns>
     /// The transfer diagnostics on success, or an error: <see cref="GitErrors.RepositoryNotFoundCode"/>,
     /// <see cref="GitErrors.RemoteNotFoundCode"/>, <see cref="GitErrors.AuthenticationFailedCode"/>,
-    /// <see cref="GitErrors.NonFastForwardCode"/>, <see cref="GitErrors.CancelledCode"/> or
+    /// <see cref="GitErrors.NonFastForwardCode"/>, <see cref="GitErrors.PushRejectedCode"/>,
+    /// <see cref="GitErrors.CancelledCode"/>, <see cref="GitErrors.TimeoutCode"/> or
     /// <see cref="GitErrors.PushFailedCode"/>.
     /// </returns>
     public async Task<Result<GitDiagnostics>> PushAsync(GitPushOptions? options = null)
     {
         options ??= new GitPushOptions();
         var diag = new GitDiagnostics();
+        using var transfer = new Transfer(options.CancellationToken, _timeoutSeconds);
 
         try
         {
             await EnsureOpenAsync();
-            await _lock.WaitAsync(options.CancellationToken);
+            await _lock.WaitAsync(transfer.Token);
             try
             {
                 var branch = options.BranchName ?? _repo!.Head.FriendlyName;
@@ -273,13 +363,46 @@ public sealed class GitRepository : IDisposable
                 if (remote is null)
                     return GitErrors.RemoteNotFound(options.RemoteName);
 
-                var refSpec = options.Force
-                    ? $"+refs/heads/{branch}:refs/heads/{branch}"
-                    : $"refs/heads/{branch}:refs/heads/{branch}";
+                var refSpecs = BuildPushRefSpecs(branch, options.Force,
+                    options.PushTags ? _repo.Tags.Select(t => t.CanonicalName) : []);
 
-                await Task.Run(() =>
-                    _repo.Network.Push(remote, refSpec, (LibGit2Sharp.PushOptions?)null),
-                    options.CancellationToken);
+                var rejected = new List<string>();
+                var pushOpts = new LibGit2Sharp.PushOptions
+                {
+                    CredentialsProvider = BuildCredentialsHandler(),
+                    OnPushStatusError = error => rejected.Add($"{error.Reference}: {error.Message}"),
+                    OnPushTransferProgress = (current, total, bytes) =>
+                    {
+                        diag.ObjectCount = current;
+                        diag.BytesTransferred = bytes;
+                        Report(options.OnProgress, new GitProgress
+                        {
+                            Stage = "Writing objects",
+                            ProgressPercentage = Percent(current, total),
+                            ObjectsReceived = current,
+                            TotalObjects = total,
+                            BytesReceived = bytes
+                        });
+                        return transfer.Continue;
+                    },
+                    OnPackBuilderProgress = (stage, current, total) =>
+                    {
+                        Report(options.OnProgress, new GitProgress
+                        {
+                            Stage = stage == PackBuilderStage.Counting ? "Counting objects" : "Compressing objects",
+                            ProgressPercentage = Percent(current, total),
+                            ObjectsReceived = current,
+                            TotalObjects = total
+                        });
+                        return transfer.Continue;
+                    }
+                };
+
+                await Task.Run(() => _repo.Network.Push(remote, refSpecs, pushOpts), transfer.Token);
+
+                if (rejected.Count > 0)
+                    return Error.Conflict(GitErrors.PushRejectedCode,
+                        $"The remote rejected the push: {Redact(string.Join("; ", rejected))}");
 
                 diag.Complete();
                 _logger?.Info($"Push complete in {diag.Duration?.TotalSeconds:F2}s");
@@ -293,9 +416,20 @@ public sealed class GitRepository : IDisposable
         catch (Exception ex)
         {
             diag.Complete();
-            _logger?.Error($"Push failed: {ex.Message}", ex);
-            return GitErrors.FromException(ex, $"Push failed: {ex.Message}", GitErrors.PushFailedCode);
+            return Fail("Push", ex, GitErrors.PushFailedCode, transfer);
         }
+    }
+
+    /// <summary>
+    /// Refspecs for a push: the branch (forced with a leading <c>+</c> when <paramref name="force"/>)
+    /// and each tag. Tags are never forced, so a push cannot move a tag that exists on the remote.
+    /// </summary>
+    internal static List<string> BuildPushRefSpecs(string branch, bool force, IEnumerable<string> tagRefs)
+    {
+        var branchRef = branch.StartsWith("refs/", StringComparison.Ordinal) ? branch : $"refs/heads/{branch}";
+        List<string> specs = [$"{(force ? "+" : "")}{branchRef}:{branchRef}"];
+        specs.AddRange(tagRefs.Select(tag => $"{tag}:{tag}"));
+        return specs;
     }
 
     // ── Commit ────────────────────────────────────────────────────────────────
@@ -588,11 +722,7 @@ public sealed class GitRepository : IDisposable
     {
         branchName ??= string.IsNullOrWhiteSpace(_config.DefaultBranch) ? "main" : _config.DefaultBranch;
 
-        var alreadyCloned =
-            Directory.Exists(_resolvedPath) &&
-            Directory.Exists(Path.Combine(_resolvedPath, ".git"));
-
-        if (!alreadyCloned)
+        if (!IsCloned(_resolvedPath))
         {
             var cloneResult = await CloneAsync(new GitCloneOptions
             {
@@ -611,6 +741,10 @@ public sealed class GitRepository : IDisposable
         });
         if (fetch.IsFailure)
             return fetch.Error!;
+
+        // A bare repository has no working tree to reset: the fetch is the whole update.
+        if (_repo?.Info.IsBare == true)
+            return await GetRepositoryInfoAsync();
 
         // Guard against silent data loss: the hard reset below discards uncommitted work.
         if (!discardLocalChanges)
@@ -675,15 +809,138 @@ public sealed class GitRepository : IDisposable
     /// are preserved for future use but are not currently wired (the LibGit2Sharp 0.30 managed
     /// binary ships without the native SSH transport).
     /// </remarks>
-    private CredentialsHandler? BuildCredentialsHandler()
-    {
-        if (string.IsNullOrWhiteSpace(_config.Password)) return null;
+    private CredentialsHandler? BuildCredentialsHandler() => CreateCredentialsHandler(_config, _logger);
 
-        return (_, _, _) => new UsernamePasswordCredentials
+    /// <summary>
+    /// Credentials callback that hands out the configured user name and token only to the
+    /// configured repository's scheme, host and port (<see cref="GitSecurity.CredentialsAllowedFor"/>).
+    /// Any other host — a submodule elsewhere, a redirect, a second remote — gets empty credentials,
+    /// so the request fails with <see cref="GitErrors.AuthenticationFailedCode"/> instead of leaking the token.
+    /// Returns null when no token is configured (anonymous access).
+    /// </summary>
+    internal static CredentialsHandler? CreateCredentialsHandler(RepositoryConfiguration config, ILogger? logger = null)
+    {
+        if (string.IsNullOrWhiteSpace(config.Password)) return null;
+
+        var configuredUrl = config.RepositoryUrl;
+        var username = string.IsNullOrWhiteSpace(config.Username) ? "x-access-token" : config.Username!;
+        var password = config.Password;
+
+        // Never throw here: the callback runs inside a native libgit2 call.
+        return (url, _, _) =>
         {
-            Username = string.IsNullOrWhiteSpace(_config.Username) ? "x-access-token" : _config.Username!,
-            Password = _config.Password ?? ""
+            if (GitSecurity.CredentialsAllowedFor(configuredUrl, url))
+                return new UsernamePasswordCredentials { Username = username, Password = password };
+
+            logger?.Warning(
+                $"[GitHelper] Repository '{config.Id}': {GitSecurity.Redact(url, password)} asked for credentials, " +
+                "but they are configured for another host; none were sent.");
+            return new UsernamePasswordCredentials { Username = "", Password = "" };
         };
+    }
+
+    /// <summary>
+    /// True when <paramref name="path"/> holds a git repository: a working tree with <c>.git</c>
+    /// (directory or worktree file) or a bare repository.
+    /// </summary>
+    internal static bool IsCloned(string path) => Directory.Exists(path) && Repository.IsValid(path);
+
+    /// <summary>Wires credentials, progress reporting and cancellation into a fetch or clone.</summary>
+    private void ApplyFetchCallbacks(FetchOptionsBase target, Transfer transfer,
+        Action<GitProgress>? onProgress, GitDiagnostics diag)
+    {
+        target.CredentialsProvider = BuildCredentialsHandler();
+        target.OnTransferProgress = progress =>
+        {
+            diag.ObjectCount = progress.ReceivedObjects;
+            diag.BytesTransferred = progress.ReceivedBytes;
+            var receiving = progress.ReceivedObjects < progress.TotalObjects;
+            Report(onProgress, new GitProgress
+            {
+                Stage = receiving ? "Receiving objects" : "Indexing objects",
+                ProgressPercentage = Percent(receiving ? progress.ReceivedObjects : progress.IndexedObjects, progress.TotalObjects),
+                ObjectsReceived = progress.ReceivedObjects,
+                TotalObjects = progress.TotalObjects,
+                BytesReceived = progress.ReceivedBytes
+            });
+            // Returning false makes libgit2 abort the transfer (UserCancelledException).
+            return transfer.Continue;
+        };
+        target.OnProgress = serverText =>
+        {
+            Report(onProgress, new GitProgress { Stage = "Remote", Message = serverText.TrimEnd() });
+            return transfer.Continue;
+        };
+    }
+
+    private void Report(Action<GitProgress>? onProgress, GitProgress progress)
+    {
+        if (onProgress is null) return;
+        // The callback runs inside a native libgit2 call: an exception must not escape.
+        try { onProgress(progress); }
+        catch (Exception ex) { _logger?.Debug($"[GitHelper] OnProgress callback of '{_config.Id}' threw: {ex.Message}"); }
+    }
+
+    private static int Percent(long done, long total) =>
+        total <= 0 ? 0 : (int)Math.Clamp(done * 100 / total, 0, 100);
+
+    private string Redact(string? text) => GitSecurity.Redact(text, _config.Password);
+
+    /// <summary>
+    /// Logs a failed operation and maps the exception to an error. Credentials in URLs and the
+    /// configured token are redacted from both. A transfer stopped by the timeout becomes
+    /// <see cref="GitErrors.TimeoutCode"/>.
+    /// </summary>
+    private Error Fail(string operation, Exception ex, string fallbackCode, Transfer? transfer = null)
+    {
+        var message = Redact(ex.Message);
+        if (transfer?.TimedOut == true)
+        {
+            _logger?.Error($"{operation} of '{_config.Id}' timed out after {transfer.TimeoutSeconds}s");
+            return Error.Timeout(GitErrors.TimeoutCode,
+                $"{operation} timed out after {transfer.TimeoutSeconds}s.", ex.GetType().Name);
+        }
+
+        _logger?.Error($"{operation} failed: {message}");
+        _logger?.Debug($"{operation} failure detail: {Redact(ex.ToString())}");
+        return GitErrors.FromException(ex, $"{operation} failed: {message}", fallbackCode);
+    }
+
+    private static void TryDeleteDirectory(string path)
+    {
+        try
+        {
+            if (!Directory.Exists(path)) return;
+            // libgit2 writes read-only pack files; clear the flag so the delete succeeds on Windows.
+            foreach (var file in Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories))
+                File.SetAttributes(file, FileAttributes.Normal);
+            Directory.Delete(path, recursive: true);
+        }
+        catch (Exception) { /* best effort */ }
+    }
+
+    /// <summary>
+    /// Cancellation for one network operation: the caller's token plus the repository timeout.
+    /// libgit2 checks it in every progress callback, so a running transfer stops at the next one.
+    /// </summary>
+    private sealed class Transfer : IDisposable
+    {
+        private readonly CancellationTokenSource _cts;
+        private readonly CancellationToken _caller;
+
+        public Transfer(CancellationToken caller, int timeoutSeconds)
+        {
+            _caller = caller;
+            TimeoutSeconds = timeoutSeconds;
+            _cts = CancellationTokenSource.CreateLinkedTokenSource(caller);
+            _cts.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
+        }
+
+        public int TimeoutSeconds { get; }
+        public CancellationToken Token => _cts.Token;
+        public bool Continue => !_cts.IsCancellationRequested;
+        public bool TimedOut => _cts.IsCancellationRequested && !_caller.IsCancellationRequested;
+        public void Dispose() => _cts.Dispose();
     }
 
     /// <summary>
@@ -713,8 +970,7 @@ public sealed class GitRepository : IDisposable
     {
         if (_repo is not null) return;
 
-        if (!Directory.Exists(_resolvedPath) ||
-            !Directory.Exists(Path.Combine(_resolvedPath, ".git")))
+        if (!IsCloned(_resolvedPath))
             throw new RepositoryNotFoundException(
                 $"Repository not found at '{_resolvedPath}'. Clone it first.");
 
@@ -730,25 +986,29 @@ public sealed class GitRepository : IDisposable
 
     private RepositoryInfo BuildRepositoryInfo()
     {
-        var status = _repo!.RetrieveStatus();
+        var repo = _repo!;
+        var isBare = repo.Info.IsBare;
+        // A bare repository has no working tree, so it has no status to read.
+        var status = isBare ? null : repo.RetrieveStatus();
         return new RepositoryInfo
         {
             Id = _config.Id,
             Name = _config.Name,
             LocalPath = _resolvedPath,
-            RemoteUrl = _repo!.Network.Remotes.FirstOrDefault()?.Url ?? "",
-            CurrentBranch = _repo.Head.FriendlyName,
-            HeadCommitSha = _repo.Head.Tip?.Sha ?? "",
-            IsBare = _repo.Info.IsBare,
-            State = _repo.Info.CurrentOperation.ToString(),
-            LocalBranchCount = _repo.Branches.Count(b => !b.IsRemote),
-            RemoteBranchCount = _repo.Branches.Count(b => b.IsRemote),
-            TagCount = _repo.Tags.Count(),
-            StashCount = _repo.Stashes.Count(),
-            IsDirty = status.IsDirty,
-            ModifiedFiles = status.Modified.Count(),
-            StagedFiles = status.Staged.Count(),
-            UntrackedFiles = status.Untracked.Count()
+            // Remote URLs may carry user:token@; never hand those out.
+            RemoteUrl = Redact(repo.Network.Remotes.FirstOrDefault()?.Url),
+            CurrentBranch = repo.Head.FriendlyName,
+            HeadCommitSha = repo.Head.Tip?.Sha ?? "",
+            IsBare = isBare,
+            State = repo.Info.CurrentOperation.ToString(),
+            LocalBranchCount = repo.Branches.Count(b => !b.IsRemote),
+            RemoteBranchCount = repo.Branches.Count(b => b.IsRemote),
+            TagCount = repo.Tags.Count(),
+            StashCount = isBare ? 0 : repo.Stashes.Count(),
+            IsDirty = status?.IsDirty ?? false,
+            ModifiedFiles = status?.Modified.Count() ?? 0,
+            StagedFiles = status?.Staged.Count() ?? 0,
+            UntrackedFiles = status?.Untracked.Count() ?? 0
         };
     }
 
