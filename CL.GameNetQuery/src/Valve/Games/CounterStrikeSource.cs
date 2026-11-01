@@ -1,4 +1,5 @@
 using CL.GameNetQuery.Models;
+using CodeLogic.Core.Results;
 
 namespace CL.GameNetQuery.Valve.Games;
 
@@ -35,46 +36,77 @@ public sealed class CounterStrikeSource : IDisposable
         return ValveStatusParser.ParseStatusWithPlayers(raw);
     }
 
-    /// <summary>Changes the current map on the server.</summary>
-    /// <param name="mapName">The name of the map to change to.</param>
-    /// <returns>The server response.</returns>
-    public Task<string> ChangeMapAsync(string mapName) => _rcon.SendCommandAsync($"changelevel {mapName}");
-    /// <summary>Kicks a player from the server.</summary>
-    /// <param name="playerName">The name of the player to kick.</param>
-    /// <returns>The server response.</returns>
-    public Task<string> KickPlayerAsync(string playerName) => _rcon.SendCommandAsync($"kick {playerName}");
-    /// <summary>Permanently bans a player from the server.</summary>
-    /// <param name="playerName">The name of the player to ban.</param>
-    /// <returns>The server response.</returns>
-    public Task<string> BanPlayerAsync(string playerName) => _rcon.SendCommandAsync($"banid 0 {playerName}");
-    /// <summary>Removes a ban for a player.</summary>
-    /// <param name="playerName">The name of the player to unban.</param>
-    /// <returns>The server response.</returns>
-    public Task<string> UnbanPlayerAsync(string playerName) => _rcon.SendCommandAsync($"removeid {playerName}");
-    /// <summary>Sets the server hostname.</summary>
-    /// <param name="name">The new hostname.</param>
-    /// <returns>The server response.</returns>
-    public Task<string> SetHostnameAsync(string name) => _rcon.SendCommandAsync($"hostname \"{name}\"");
-    /// <summary>Executes a server config file.</summary>
-    /// <param name="configName">The config file name to execute.</param>
-    /// <returns>The server response.</returns>
-    public Task<string> ExecConfigAsync(string configName) => _rcon.SendCommandAsync($"exec {configName}");
-    /// <summary>Sets a console variable to the specified value.</summary>
-    /// <param name="cvar">The console variable name.</param>
-    /// <param name="value">The value to set.</param>
-    /// <returns>The server response.</returns>
-    public Task<string> SetCvarAsync(string cvar, string value) => _rcon.SendCommandAsync($"{cvar} {value}");
+    // Every command that splices in a caller-supplied value is built by SourceRconCommands, which rejects
+    // values that could end the command or add another one (';', '"', CR, LF, NUL, ...). A rejected value
+    // is a ValidationError (gamenetquery.invalid_rcon_argument) and nothing is sent.
+
+    /// <summary>Changes the current map on the server (<c>changelevel</c>).</summary>
+    /// <param name="mapName">The map, e.g. <c>de_dust2</c>: letters, digits and <c>_ - . /</c> only.</param>
+    /// <returns>The server response, or a <see cref="ValidationError"/> (<see cref="GameNetQueryErrorCodes.InvalidRconArgument"/>) for an invalid map name.</returns>
+    public Task<Result<string>> ChangeMapAsync(string mapName) => SendAsync(SourceRconCommands.ChangeMap(mapName));
+
+    /// <summary>
+    /// Kicks a player by name (<c>kick name</c>). Prefer <see cref="KickPlayerAsync(int, string?)"/>: a name
+    /// containing <c>;</c>, <c>"</c> or a control character is rejected, and names need not be unique.
+    /// </summary>
+    /// <param name="playerName">The player name.</param>
+    /// <returns>The server response, or a <see cref="ValidationError"/> (<see cref="GameNetQueryErrorCodes.InvalidRconArgument"/>) for an unsafe name.</returns>
+    public Task<Result<string>> KickPlayerAsync(string playerName) => SendAsync(SourceRconCommands.Kick(playerName));
+
+    /// <summary>Kicks a player by user id (<c>kickid userid [reason]</c>), as reported in <see cref="PlayerInfo.UserId"/>.</summary>
+    /// <param name="userId">The user id from <c>status</c>.</param>
+    /// <param name="reason">Optional message shown to the player; no <c>;</c>, <c>"</c> or control characters.</param>
+    /// <returns>The server response, or a <see cref="ValidationError"/> (<see cref="GameNetQueryErrorCodes.InvalidRconArgument"/>) for a negative id or unsafe reason.</returns>
+    public Task<Result<string>> KickPlayerAsync(int userId, string? reason = null) => SendAsync(SourceRconCommands.KickId(userId, reason));
+
+    /// <summary>Permanently bans a player (<c>banid 0 id</c>).</summary>
+    /// <param name="playerId">A user id or SteamID (<c>123</c>, <c>STEAM_1:0:123</c>, <c>[U:1:123]</c>, <c>7656119...</c>). <c>banid</c> does not take names.</param>
+    /// <returns>The server response, or a <see cref="ValidationError"/> (<see cref="GameNetQueryErrorCodes.InvalidRconArgument"/>) when <paramref name="playerId"/> is not an id.</returns>
+    public Task<Result<string>> BanPlayerAsync(string playerId) => SendAsync(SourceRconCommands.Ban(playerId));
+
+    /// <summary>Bans a player by user id (<c>banid minutes userid</c>).</summary>
+    /// <param name="userId">The user id from <c>status</c> (<see cref="PlayerInfo.UserId"/>).</param>
+    /// <param name="minutes">Ban length in minutes; <c>0</c> (default) is permanent.</param>
+    /// <returns>The server response, or a <see cref="ValidationError"/> (<see cref="GameNetQueryErrorCodes.InvalidRconArgument"/>) for a negative id or length.</returns>
+    public Task<Result<string>> BanPlayerAsync(int userId, int minutes = 0) => SendAsync(SourceRconCommands.BanId(userId, minutes));
+
+    /// <summary>Removes a ban (<c>removeid id</c>).</summary>
+    /// <param name="playerId">A user id or SteamID (<c>STEAM_1:0:123</c>, <c>[U:1:123]</c>, ...).</param>
+    /// <returns>The server response, or a <see cref="ValidationError"/> (<see cref="GameNetQueryErrorCodes.InvalidRconArgument"/>) when <paramref name="playerId"/> is not an id.</returns>
+    public Task<Result<string>> UnbanPlayerAsync(string playerId) => SendAsync(SourceRconCommands.Unban(playerId));
+
+    /// <summary>Sets the server hostname (<c>hostname "name"</c>).</summary>
+    /// <param name="name">The new hostname; no <c>;</c>, <c>"</c> or control characters.</param>
+    /// <returns>The server response, or a <see cref="ValidationError"/> (<see cref="GameNetQueryErrorCodes.InvalidRconArgument"/>) for an unsafe name.</returns>
+    public Task<Result<string>> SetHostnameAsync(string name) => SendAsync(SourceRconCommands.SetHostname(name));
+
+    /// <summary>Executes a server config file (<c>exec name</c>).</summary>
+    /// <param name="configName">The config, e.g. <c>gamemode_competitive</c>: letters, digits and <c>_ - . /</c>, no <c>..</c>.</param>
+    /// <returns>The server response, or a <see cref="ValidationError"/> (<see cref="GameNetQueryErrorCodes.InvalidRconArgument"/>) for an invalid name.</returns>
+    public Task<Result<string>> ExecConfigAsync(string configName) => SendAsync(SourceRconCommands.ExecConfig(configName));
+
+    /// <summary>Sets a console variable (<c>cvar "value"</c>).</summary>
+    /// <param name="cvar">The console variable name (letters, digits, <c>_</c> and <c>.</c>).</param>
+    /// <param name="value">The value; may be empty; no <c>;</c>, <c>"</c> or control characters.</param>
+    /// <returns>The server response, or a <see cref="ValidationError"/> (<see cref="GameNetQueryErrorCodes.InvalidRconArgument"/>) for an invalid name or unsafe value.</returns>
+    public Task<Result<string>> SetCvarAsync(string cvar, string value) => SendAsync(SourceRconCommands.SetCvar(cvar, value));
+
     /// <summary>Gets the current value of a console variable.</summary>
-    /// <param name="cvar">The console variable name.</param>
-    /// <returns>The server response containing the variable value.</returns>
-    public Task<string> GetCvarAsync(string cvar) => _rcon.SendCommandAsync(cvar);
+    /// <param name="cvar">The console variable name (letters, digits, <c>_</c> and <c>.</c>).</param>
+    /// <returns>The server response, or a <see cref="ValidationError"/> (<see cref="GameNetQueryErrorCodes.InvalidRconArgument"/>) for an invalid name.</returns>
+    public Task<Result<string>> GetCvarAsync(string cvar) => SendAsync(SourceRconCommands.GetCvar(cvar));
+
     /// <summary>Restarts the current map.</summary>
     /// <returns>The server response.</returns>
     public Task<string> RestartAsync() => _rcon.SendCommandAsync("restart");
-    /// <summary>Sends a chat message to all players on the server.</summary>
-    /// <param name="message">The message to send.</param>
-    /// <returns>The server response.</returns>
-    public Task<string> SayAsync(string message) => _rcon.SendCommandAsync($"say {message}");
+
+    /// <summary>Sends a chat message to all players (<c>say message</c>).</summary>
+    /// <param name="message">The message; no <c>;</c>, <c>"</c> or control characters.</param>
+    /// <returns>The server response, or a <see cref="ValidationError"/> (<see cref="GameNetQueryErrorCodes.InvalidRconArgument"/>) for an unsafe message.</returns>
+    public Task<Result<string>> SayAsync(string message) => SendAsync(SourceRconCommands.Say(message));
+
+    private async Task<Result<string>> SendAsync(Result<string> command) =>
+        command.IsFailure ? command.Error! : await _rcon.SendCommandAsync(command.Value!).ConfigureAwait(false);
 
     /// <summary>Disconnects from the RCON server.</summary>
     public void Disconnect() => _rcon.Disconnect();

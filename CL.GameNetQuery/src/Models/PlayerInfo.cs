@@ -8,6 +8,12 @@ public sealed class PlayerInfo
     /// <summary>Player name.</summary>
     public string Name { get; init; } = string.Empty;
 
+    /// <summary>
+    /// The server's user id for the player (the <c>userid</c> / <c>id</c> column of RCON <c>status</c>), for
+    /// <c>kickid</c> / <c>banid</c>. <see langword="null"/> when the source does not report one (A2S_PLAYER).
+    /// </summary>
+    public int? UserId { get; init; }
+
     /// <summary>Unique identifier (SteamID for Valve, UUID for Minecraft).</summary>
     public string UniqueId { get; init; } = string.Empty;
 
