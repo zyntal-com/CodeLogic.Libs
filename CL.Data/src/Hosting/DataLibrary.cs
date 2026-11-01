@@ -175,7 +175,12 @@ public sealed class DataLibrary : ILibrary, IConfigReloadable
         switch (e)
         {
             case QueryExecutedEvent x: bus.Publish(x); break;
-            case SlowQueryEvent x: bus.Publish(x); _context.Logger.Warning(Format(Strings.SlowQuery, x.ConnectionId, (long)x.Duration.TotalMilliseconds, x.Sql)); break;
+            case SlowQueryEvent x:
+                bus.Publish(x);
+                _context.Logger.Warning(string.IsNullOrWhiteSpace(x.Plan)
+                    ? Format(Strings.SlowQuery, x.ConnectionId, (long)x.Duration.TotalMilliseconds, x.Sql)
+                    : Format(Strings.SlowQueryWithPlan, x.ConnectionId, (long)x.Duration.TotalMilliseconds, x.Sql, x.Plan.Trim()));
+                break;
             case NPlusOneDetectedEvent x: bus.Publish(x); _context.Logger.Warning(Format(Strings.NPlusOne, x.ConnectionId, x.Count, x.QueryShape)); break;
             case CacheHitEvent x: bus.Publish(x); break;
             case CacheMissEvent x: bus.Publish(x); break;

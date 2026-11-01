@@ -36,6 +36,7 @@
 
 ### Added
 
+- **Slow-query log includes the plan:** with `captureExplainOnSlowQuery` the captured EXPLAIN is written to the library log under the SQL (`SlowQueryWithPlan`), not only carried on `SlowQueryEvent.Plan`.
 - **Schema scripts:** `db.Schema.ScriptAsync(maps, level)` / `ScriptAsync<T>()` compares the models with the database and returns the DDL table sync would run, without running it (`SchemaScript`: per-table changes, pending items, `Statements`, `ToSql()`). Generate reviewed migration scripts from the models against a copy of production; an empty script means the database matches.
 - **Stale-while-refresh cache:** `CachePolicy.InvalidateOnWrite = false` keeps a result through writes to its tables and reloads it at the next refresh tick (CL.MySQL2 SmartCache pools behaved like this). `DataCache.RefreshAsync(tags)` reloads warm results in place and drops the rest. `WithCache` on `ProjectedQuery` and `GroupProjection` (after `Select`, also after `GroupBy(...).Select(...)`).
 - **Scoped raw SQL invalidation:** `ExecuteSqlAsync(sql, tables)` drops only the cached results reading those tables instead of the whole connection's.
