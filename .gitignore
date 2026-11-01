@@ -20,3 +20,6 @@ docs/api/.manifest
 
 # Claude Code session data (agent worktrees, local settings)
 .claude/
+
+# BenchmarkDotNet output
+BenchmarkDotNet.Artifacts/
