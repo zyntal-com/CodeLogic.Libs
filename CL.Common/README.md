@@ -48,14 +48,14 @@ await CodeLogic.StartAsync();
 
 ## Features
 
-- **Security** — `Hashing` (SHA-256/512, PBKDF2 password hash/verify, HMAC) and `Encryption` (AES-256-GCM for strings and bytes, key generation).
+- **Security** — `Hashing` (SHA-256/512, self-describing PBKDF2 password hash/verify/rehash, HMAC) and `Encryption` (AES-256-GCM for strings and bytes, key generation).
 - **Generators** — `IdGenerator` (GUID, sequential, timestamp, NanoID, URL-safe, sortable) and `PasswordGenerator` (passwords, passphrases, PINs, strength estimation).
 - **Data & JSON** — `JsonHelper` serialize/deserialize (reflection or source-generated `JsonTypeInfo<T>` / `JsonSerializerContext` for AOT), file I/O, validation, merge, property extraction.
 - **Conversion** — `TypeConverter` safe `Result`-based conversion to int/long/double/bool/decimal/DateTime/Guid/enum.
-- **Compression** — `CompressionHelper` GZip, Brotli, Zstandard, and LZ4 for bytes, plus GZip-to-Base64 string helpers.
+- **Compression** — `CompressionHelper` GZip, Brotli, Zstandard, and LZ4 for bytes, plus GZip-to-Base64 string helpers; decompression is size-capped.
 - **Strings** — `StringHelper` (truncate, slug, case conversion, HTML strip) and `StringValidator` (email/URL/phone/IP/GUID checks).
 - **Time** — `DateTimeHelper` Unix timestamps, ISO 8601, age, business days, boundaries, relative strings.
-- **Web** — `HtmlHelper`, `HttpClientHelper`, `HttpHeaderHelper`, `UrlHelper` for HTML sanitization, typed HTTP requests, header/IP/UA parsing, and URL building.
+- **Web** — `HtmlHelper`, `HttpClientHelper`, `HttpHeaderHelper`, `UrlHelper` for HTML sanitization, typed HTTP requests, header/UA parsing, client IP resolution behind trusted proxies (`TrustedProxies`), and URL building.
 - **Networking** — `NetworkPing`, `NetworkDns`, `SubnetCalculator`, `TraceRoute`.
 - **Parser / Cron** — `CronParser` parse/validate 5-field cron and compute the next occurrence, in UTC or a time zone.
 - **Resilience** — `RetryPolicy` (constant/linear/exponential/decorrelated-jitter backoff) and `CircuitBreaker` (consecutive-failure or failure-ratio, half-open trials), both `Result`-based and `TimeProvider`-driven.

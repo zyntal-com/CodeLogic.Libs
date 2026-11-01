@@ -17,6 +17,8 @@ public record CronExpression(string Raw, string Minutes, string Hours, string Da
 /// <summary>
 /// Parses and evaluates cron expressions in standard 5-field format.
 /// Supports: <c>*</c>, <c>*/n</c> (step), <c>a-b</c> (range), <c>a,b,c</c> (list), and exact values.
+/// As in standard cron, when both day-of-month and day-of-week are restricted (neither starts with <c>*</c>),
+/// a day matches if either field matches; otherwise both must match.
 /// </summary>
 public static class CronParser
 {
@@ -58,11 +60,7 @@ public static class CronParser
 
         for (int i = 0; i < 525_600; i++) // max 1 year = 525,600 minutes
         {
-            if (Matches(expr.Minutes,     start.Minute,          0, 59) &&
-                Matches(expr.Hours,       start.Hour,            0, 23) &&
-                Matches(expr.DayOfMonth,  start.Day,             1, 31) &&
-                Matches(expr.Month,       start.Month,           1, 12) &&
-                Matches(expr.DayOfWeek,   (int)start.DayOfWeek,  0,  6))
+            if (MatchesTime(expr, start))
             {
                 return start;
             }
@@ -94,11 +92,7 @@ public static class CronParser
         for (int i = 0; i < 527_040; i++) // a leap year of minutes
         {
             var local = zone == TimeZoneInfo.Utc ? start : TimeZoneInfo.ConvertTimeFromUtc(start, zone);
-            if (Matches(expr.Minutes,     local.Minute,          0, 59) &&
-                Matches(expr.Hours,       local.Hour,            0, 23) &&
-                Matches(expr.DayOfMonth,  local.Day,             1, 31) &&
-                Matches(expr.Month,       local.Month,           1, 12) &&
-                Matches(expr.DayOfWeek,   (int)local.DayOfWeek,  0,  6))
+            if (MatchesTime(expr, local))
             {
                 return new DateTimeOffset(start, TimeSpan.Zero);
             }
@@ -109,6 +103,26 @@ public static class CronParser
     }
 
     // ── Field matching ────────────────────────────────────────────────────────
+
+    private static bool MatchesTime(CronExpression expr, DateTime t)
+    {
+        if (!Matches(expr.Minutes, t.Minute, 0, 59) ||
+            !Matches(expr.Hours,   t.Hour,   0, 23) ||
+            !Matches(expr.Month,   t.Month,  1, 12))
+            return false;
+
+        var dom = Matches(expr.DayOfMonth, t.Day,            1, 31);
+        var dow = Matches(expr.DayOfWeek,  (int)t.DayOfWeek, 0,  6);
+
+        // Standard (Vixie) cron: when both day fields are restricted (neither starts with '*'),
+        // a day matches if EITHER matches ("0 0 1 * 1" = the 1st of the month and every Monday).
+        // Otherwise both must match, which reduces to the restricted one.
+        return IsRestricted(expr.DayOfMonth) && IsRestricted(expr.DayOfWeek)
+            ? dom || dow
+            : dom && dow;
+    }
+
+    private static bool IsRestricted(string field) => !field.StartsWith('*');
 
     private static bool Matches(string field, int value, int min, int max)
     {
