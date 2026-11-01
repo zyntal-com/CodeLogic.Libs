@@ -5,10 +5,22 @@ namespace CL.Data.SqlServer;
 
 /// <summary>
 /// SQL Server DDL: <c>IDENTITY(1,1)</c>, <c>ADD</c> without <c>COLUMN</c>, single-statement <c>ALTER COLUMN</c>,
-/// <c>sp_rename</c>, <c>DROP INDEX ... ON</c>, and default constraints dropped before their column.
+/// <c>sp_rename</c>, <c>DROP INDEX ... ON</c>, default constraints dropped before their column, and the
+/// <c>[SqlServerTable]</c> options (<c>ON filegroup</c>, <c>DATA_COMPRESSION</c>) when a table is created.
 /// </summary>
 public sealed class SqlServerDdlGenerator(SqlDialect dialect) : DdlGenerator(dialect)
 {
+    /// <inheritdoc />
+    protected override string TableSuffix(TableSchema table)
+    {
+        var suffix = "";
+        if (table.Options.TryGetValue(SqlServerTableOptions.FileGroup, out var fileGroup) && fileGroup.Length > 0)
+            suffix += " ON " + Q(fileGroup);
+        if (table.Options.TryGetValue(SqlServerTableOptions.DataCompression, out var compression))
+            suffix += " WITH (DATA_COMPRESSION = " + compression + ")";
+        return suffix;
+    }
+
     /// <inheritdoc />
     protected override string IdentityClause(ColumnSchema column) => " IDENTITY(1,1)";
 
@@ -76,4 +88,22 @@ public sealed class SqlServerDdlGenerator(SqlDialect dialect) : DdlGenerator(dia
         action == ForeignKeyAction.Restrict ? "NO ACTION" : base.Action(action);   // SQL Server has no RESTRICT
 
     private static string Escape(string value) => value.Replace("'", "''", StringComparison.Ordinal);
+}
+
+/// <summary>Table options of SQL Server tables, from <c>[SqlServerTable]</c>.</summary>
+internal static class SqlServerTableOptions
+{
+    public const string FileGroup = "filegroup";
+    public const string DataCompression = "data_compression";
+
+    public static IReadOnlyDictionary<string, string> For(CL.Data.Mapping.EntityMap map)
+    {
+        var result = new Dictionary<string, string>();
+        if (map.Hint<SqlServerTableAttribute>() is not { } hint) return result;
+        if (!string.IsNullOrWhiteSpace(hint.FileGroup)) result[FileGroup] = hint.FileGroup;
+        // Only the documented values reach the DDL; anything else is ignored rather than spliced into it.
+        var compression = hint.DataCompression?.Trim().ToUpperInvariant();
+        if (compression is "NONE" or "ROW" or "PAGE") result[DataCompression] = compression;
+        return result;
+    }
 }

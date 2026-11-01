@@ -82,7 +82,10 @@ public sealed class DataConnectionConfig
     [ConfigField(Label = "SSL Mode", RequiresRestart = true, Group = "Security", Order = 20)]
     public DataSslMode SslMode { get; set; } = DataSslMode.Default;
 
-    /// <summary>CA certificate file used with <see cref="DataSslMode.VerifyCA"/> and <see cref="DataSslMode.VerifyFull"/>.</summary>
+    /// <summary>
+    /// CA certificate file used with <see cref="DataSslMode.VerifyCA"/> and <see cref="DataSslMode.VerifyFull"/> (MySQL, PostgreSQL).
+    /// SQL Server rejects it at validation: SqlClient trusts the machine's certificate store only.
+    /// </summary>
     [ConfigField(Label = "SSL CA Certificate Path", RequiresRestart = true, Group = "Security", Order = 21)]
     public string? SslCaCertificatePath { get; set; }
 

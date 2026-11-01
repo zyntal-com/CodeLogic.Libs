@@ -61,7 +61,7 @@ public class DdlGenerator(SqlDialect dialect)
     /// <summary>CREATE TABLE, then its indexes and foreign keys.</summary>
     protected virtual IReadOnlyList<string> CreateTable(TableSchema table)
     {
-        var sb = new StringBuilder("CREATE TABLE ").Append(Table(table.Name, table.Schema)).Append(" (");
+        var sb = new StringBuilder(CreateTableKeyword(table)).Append(Table(table.Name, table.Schema)).Append(" (");
         var parts = table.Columns.Select(c => ColumnDefinition(c, table)).ToList();
         if (table.PrimaryKey.Count > 0 && !InlinePrimaryKey(table))
             parts.Add("PRIMARY KEY (" + string.Join(", ", table.PrimaryKey.Select(Q)) + ")");
@@ -83,6 +83,9 @@ public class DdlGenerator(SqlDialect dialect)
     /// <summary>Statements after CREATE TABLE and its indexes. Default: one ALTER TABLE ADD CONSTRAINT per foreign key.</summary>
     protected virtual IEnumerable<string> PostCreateTable(TableSchema table) =>
         table.ForeignKeys.Select(f => AddForeignKeySql(table.Name, table.Schema, f));
+
+    /// <summary>The words before the table name: <c>CREATE TABLE </c> (PostgreSQL: <c>CREATE UNLOGGED TABLE </c>), with the trailing space.</summary>
+    protected virtual string CreateTableKeyword(TableSchema table) => "CREATE TABLE ";
 
     /// <summary>Text after the closing parenthesis of CREATE TABLE (MySQL engine and charset). Default: nothing.</summary>
     protected virtual string TableSuffix(TableSchema table) => "";

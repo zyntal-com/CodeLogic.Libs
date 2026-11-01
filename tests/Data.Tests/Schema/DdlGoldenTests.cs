@@ -48,8 +48,42 @@ public sealed class DdlPerson
     [Column(Size = 64, Unique = true)] public string Handle { get; set; } = "";
 }
 
+[Table(Name = "ddl_hinted")]
+[PostgresTable(Unlogged = true, FillFactor = 70, Tablespace = "fast")]
+[SqlServerTable(FileGroup = "FG1", DataCompression = "page")]
+public sealed class DdlHinted
+{
+    [Column(Primary = true)] public long Id { get; set; }
+}
+
+[Table(Name = "ddl_badhint")]
+[SqlServerTable(DataCompression = "PAGE); DROP TABLE x; --")]
+public sealed class DdlBadHint
+{
+    [Column(Primary = true)] public long Id { get; set; }
+}
+
 public sealed class DdlGoldenTests
 {
+    [Fact]
+    public void Table_hints_shape_create_table()
+    {
+        var map = EntityAccessorRegistry.Get<DdlHinted>().ValueOrThrow().Map;
+        string CreateOn(DataProvider provider) =>
+            provider.Ddl.Generate(new CreateTableChange(SchemaBuilder.FromMap(map, provider, new DataConnectionConfig()).ValueOrThrow()))[0];
+
+        var pg = CreateOn(PostgreSqlDataProvider.Instance);
+        Assert.StartsWith("CREATE UNLOGGED TABLE \"public\".\"ddl_hinted\" (", pg, StringComparison.Ordinal);
+        Assert.EndsWith(") WITH (fillfactor = 70) TABLESPACE \"fast\"", pg, StringComparison.Ordinal);
+        Assert.EndsWith(") ON [FG1] WITH (DATA_COMPRESSION = PAGE)", CreateOn(SqlServerDataProvider.Instance), StringComparison.Ordinal);
+        Assert.DoesNotContain("UNLOGGED", CreateOn(SqliteDataProvider.Instance), StringComparison.Ordinal);
+
+        var bad = EntityAccessorRegistry.Get<DdlBadHint>().ValueOrThrow().Map;
+        var sql = SqlServerDataProvider.Instance.Ddl.Generate(new CreateTableChange(
+            SchemaBuilder.FromMap(bad, SqlServerDataProvider.Instance, new DataConnectionConfig()).ValueOrThrow()))[0];
+        Assert.DoesNotContain("DROP", sql, StringComparison.Ordinal);
+    }
+
     private static TableSchema Desired(DataProvider provider)
     {
         EntityAccessorRegistry.Get<DdlOwner>().ValueOrThrow();

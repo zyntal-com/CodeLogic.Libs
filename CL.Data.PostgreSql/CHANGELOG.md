@@ -12,3 +12,4 @@
 
 - `NotifyAsync` (`pg_notify`) and `VacuumAnalyzeAsync` run on the primary as a side effect (`SqlIntent.SideEffect`). Before, they went through the read path: a notification could be sent on a replica (where it fails) or sent twice after a transient error.
 - The schema introspector always reads the primary.
+- `[PostgresTable]` hints are applied when a table is created: `Unlogged` gives `CREATE UNLOGGED TABLE`, `FillFactor` gives `WITH (fillfactor = n)`, `Tablespace` gives `TABLESPACE`. Before, they were ignored.

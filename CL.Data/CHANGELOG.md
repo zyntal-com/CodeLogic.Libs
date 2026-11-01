@@ -14,6 +14,7 @@
 
 ### Fixed
 
+- **Provider table hints are applied:** `[PostgresTable(Unlogged, FillFactor, Tablespace)]` and `[SqlServerTable(FileGroup, DataCompression)]` now shape `CREATE TABLE` (new `DdlGenerator.CreateTableKeyword` hook). They apply when sync creates a table; existing tables are not altered. `[SqlServerColumn(Sparse)]` and `[MySqlColumn(Charset)]` are still not applied and are marked `[Obsolete]` (set `Collation`, which implies the MySQL character set). Before, all of them were declared and documented but ignored.
 - **Compiled queries keep `WithCache()` and `ReadFrom()`:** a compiled chain's cache policy and read preference apply to every call. Before, both were dropped silently, so a compiled query was never cached and always followed the connection's read preference.
 - **`SeedAppliedEvent` is published** for every seed a `SeedRunner` applies (and forwarded to the CodeLogic event bus by `DataLibrary`). Before, it was declared and documented but never raised.
 - **Replicas configured by `host` keep the primary's database and credentials** when the primary uses `connectionString` (the documented pattern): the replica starts from the primary's connection string and puts its own host, port and credentials on top. Before, such a replica connected without a database, user or password.

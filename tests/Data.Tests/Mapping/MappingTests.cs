@@ -19,7 +19,7 @@ public class TestUser
     [SoftDelete] public DateTimeOffset? DeletedAt { get; set; }
     [Index(Name = "ix_users_score", Order = 1, Direction = SortOrder.Descending)] public decimal Score { get; set; }
     [ForeignKey<TestGroup>(nameof(TestGroup.Id), OnDelete = ForeignKeyAction.SetNull)] public int? GroupId { get; set; }
-    [Column(Name = "role_code")] [MySqlColumn(Charset = "ascii")] public TestRole Role { get; set; }
+    [Column(Name = "role_code")] [MySqlColumn(Collation = "ascii_bin")] public TestRole Role { get; set; }
     [Ignore] public string Computed => Email.ToUpperInvariant();
     public Guid ExternalId { get; set; }
 }
@@ -86,7 +86,7 @@ public sealed class MappingTests
         Assert.Equal(320, map.Property(nameof(TestUser.Email)).Size);
         Assert.Equal(DataType.Int, map.Property(nameof(TestUser.Role)).DataType);   // enum → underlying int
         Assert.Equal(DataType.Guid, map.Property(nameof(TestUser.ExternalId)).DataType);
-        Assert.Equal("ascii", map.Property(nameof(TestUser.Role)).Hint<MySqlColumnAttribute>()!.Charset);
+        Assert.Equal("ascii_bin", map.Property(nameof(TestUser.Role)).Hint<MySqlColumnAttribute>()!.Collation);
         Assert.Equal("InnoDB", map.Hint<MySqlTableAttribute>()!.Engine);
     }
 
