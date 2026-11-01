@@ -41,8 +41,11 @@ public sealed class LocalConnectionConfig
     [ConfigField(Label = "Enabled", Description = "Enable this local storage connection.", Group = "General", Order = 0)]
     public bool Enabled { get; set; } = true;
 
-    /// <summary>Gets or sets the absolute filesystem root exposed by the connection.</summary>
-    [ConfigField(Label = "Root Path", Required = true, Description = "Local path or mounted UNC root exposed by this connection.", Placeholder = "C:\\data or \\\\server\\share", RequiresRestart = true, Group = "Connection", Order = 10)]
+    /// <summary>
+    /// Gets or sets the absolute filesystem root exposed by the connection. A relative path is a validation error:
+    /// it would resolve against the process's current directory, which a service host does not keep stable.
+    /// </summary>
+    [ConfigField(Label = "Root Path", Required = true, Description = "Absolute local path or mounted UNC root exposed by this connection.", Placeholder = "C:\\data or \\\\server\\share", RequiresRestart = true, Group = "Connection", Order = 10)]
     public string RootPath { get; set; } = string.Empty;
 
     /// <summary>Gets or sets whether links resolving within the configured root may be followed.</summary>
@@ -59,6 +62,8 @@ public sealed class LocalConnectionConfig
         var errors = new List<string>();
         if (Enabled && string.IsNullOrWhiteSpace(RootPath))
             errors.Add("RootPath is required for an enabled local connection");
+        else if (Enabled && !Path.IsPathFullyQualified(RootPath))
+            errors.Add("RootPath must be an absolute path (a relative root would depend on the process's working directory)");
         return errors.Count == 0 ? ConfigValidationResult.Valid() : ConfigValidationResult.Invalid(errors);
     }
 }
