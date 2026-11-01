@@ -2,6 +2,12 @@
 
 ## 5.0 (unreleased)
 
+### Security
+
+- **Bookkeeping reads use the primary:** schema sync state, migration and seed history, the database cache bus and every schema introspector (`ReadTableAsync`, `ListTablesAsync`) read the primary, whatever the read preference. Before, with replicas and the default `PreferReplica`, a lagging replica made startup sync try to create `cl_data_schema` a second time and let a second node re-apply migrations despite the advisory lock.
+- **Raw SQL that writes runs as a write:** `SqlQueryAsync`, `SqlReadAsync`, `SqlScalarAsync` and `DataBatch.Sql` classify the statement conservatively (`SqlIntent.Auto`). Only a single plain `SELECT`, `WITH ... SELECT`, `VALUES` or `SHOW` is a read; anything else (`INSERT ... RETURNING`, data-modifying CTEs, `SELECT ... INTO`, `FOR UPDATE`, `EXEC`, several statements, ...) runs on the primary, is not retried once sent (no duplicate inserts after a transient error), and drops the connection's cached results. New overloads take an explicit `SqlIntent` (`Read`, `ReadPrimary`, `Write`, `SideEffect`); mark a `SELECT` that calls a function with side effects (`nextval`, `GET_LOCK`) as `Write` or `SideEffect`. **Behaviour change:** a raw non-`SELECT` statement through these APIs no longer goes to a replica and now clears the connection's cache.
+- **Slow-query plans never re-run statements:** `captureExplainOnSlowQuery` only explains a single plain read. Before, a slow `DataBatch` (or a multi-statement raw query) had `EXPLAIN` put in front of its first statement only, so the following statements ran a second time on the background connection.
+
 ### Fixed
 
 - **Ordered and limited set-based deletes:** `Query<T>().Where(...).OrderBy(...).Take(n).DeleteAsync(hard: true)` deletes at most `n` rows in that order (MySQL `DELETE ... ORDER BY ... LIMIT`, SQL Server and the others through a key subquery). Before, `Take` and `OrderBy` were silently ignored and **every** matching row was deleted. `Skip`, and `Take` on a soft delete, now fail with `data.validation`.
