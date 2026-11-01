@@ -169,6 +169,8 @@ static readonly CompiledQuery<Product, decimal> Above =
 var hits = await Above.ToListAsync(db, 25m);
 ```
 
+`WithCache(...)` and `ReadFrom(...)` in the chain apply to every call, as on a regular query.
+
 ## Auditing, concurrency, tenancy, filters
 
 - **Audit columns:** `[CreatedAt]`/`[UpdatedAt]` take UTC time from `DatabaseOptions.Time`. `[CreatedBy]`/`[UpdatedBy]` come from `DatabaseOptions.UserAccessor`. All four are stamped on inserts, updates, upserts, set-based updates and bulk copy.

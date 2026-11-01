@@ -218,4 +218,21 @@ public sealed class RoutingTests : IAsyncLifetime
         foreach (var replica in db.Replicas)
             Assert.Equal(0L, await CountOn(replica, "SELECT COUNT(*) FROM sqlite_master WHERE name = 'route_items'"));
     }
+
+    [CL.Data.Table(Name = "who")]
+    public sealed class WhoRow
+    {
+        [CL.Data.Column(Primary = true)] public string Node { get; set; } = "";
+    }
+
+    private static readonly CL.Data.Query.CompiledQuery<WhoRow, int> FromPrimary =
+        CL.Data.Query.CompiledQuery.For<WhoRow, int>((q, _) => q.ReadFrom(ReadPreference.Primary));
+
+    [Fact]
+    public async Task Compiled_queries_keep_their_read_preference()
+    {
+        var (db, _, _) = Create(ReadPreference.ReplicaOnly);
+        for (var i = 0; i < 10; i++)
+            Assert.Equal("primary", (await FromPrimary.FirstOrDefaultAsync(db, 0)).ValueOrThrow()!.Node);
+    }
 }

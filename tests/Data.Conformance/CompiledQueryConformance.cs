@@ -22,6 +22,30 @@ public abstract class CompiledQueryConformance(ProviderFixture fixture) : Confor
     private static readonly CompiledQuery<Product, int> BadTake =
         CompiledQuery.For<Product, int>((q, n) => q.Take(n));
 
+    private static readonly CompiledQuery<Product, string> CachedBySku =
+        CompiledQuery.For<Product, string>((q, sku) => q.Where(p => p.Sku == sku).WithCache());
+
+    [SkippableFact]
+    public async Task Compiled_queries_keep_their_cache_policy()
+    {
+        RequireProvider();
+        await SeedAsync();
+        await using var db = Fixture.CreateDatabase(new CL.Data.Execution.DatabaseOptions { Cache = new CL.Data.Caching.DataCache() });
+        Assert.Equal(1L, (await CachedBySku.CountAsync(db, "CQ-3")).ValueOrThrow());
+        Assert.Equal(30m, (await CachedBySku.FirstOrDefaultAsync(db, "CQ-3")).ValueOrThrow()!.Price);
+
+        // Changed behind the cache's back (no invalidation): the cached results are served.
+        (await db.WithConnectionAsync(async (connection, _, token) =>
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = $"DELETE FROM {db.Provider.Dialect.QuoteIdentifier("conf_products")} WHERE {db.Provider.Dialect.QuoteIdentifier("Sku")} = 'CQ-3'";
+            return await command.ExecuteNonQueryAsync(token);
+        })).ValueOrThrow();
+        Assert.Equal(1L, (await CachedBySku.CountAsync(db, "CQ-3")).ValueOrThrow());
+        Assert.NotNull((await CachedBySku.FirstOrDefaultAsync(db, "CQ-3")).ValueOrThrow());
+        Assert.Equal(0L, (await db.Query<Product>().Where(p => p.Sku == "CQ-3").CountAsync()).ValueOrThrow());
+    }
+
     private async Task<List<Product>> SeedAsync()
     {
         var rows = Enumerable.Range(1, 6).Select(i => new Product { Sku = $"CQ-{i}", Name = i % 2 == 0 ? "even" : "odd", Price = i * 10m, Stock = i }).ToList();
