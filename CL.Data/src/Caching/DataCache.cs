@@ -27,6 +27,16 @@ public sealed record CachePolicy
     /// <summary>Refresh periods without a hit after which a warm query is dropped (default 3).</summary>
     public int IdleRefreshes { get; init; } = 3;
 
+    /// <summary>
+    /// When false, writes to the tables the result reads do not drop it (stale-while-refresh): hits keep the current
+    /// result, and the refresh loop reads it again soon after the write (with <see cref="Refresh"/>; without it the result
+    /// simply lives until <see cref="Ttl"/>). For dashboards and leaderboards over tables that are written constantly,
+    /// where a cold read on every write would cost more than a few seconds of staleness. Invalidating one of the
+    /// policy's own <see cref="Tags"/> still drops it, and <see cref="DataCache.RefreshAsync"/> reloads it in place.
+    /// Default true.
+    /// </summary>
+    public bool InvalidateOnWrite { get; init; } = true;
+
     /// <summary>A policy with the cache's default lifetime.</summary>
     public static CachePolicy Default { get; } = new();
 
@@ -51,7 +61,10 @@ public sealed class DataCache : IDisposable
     private long _refreshes;
     private IDisposable? _refreshJob;
 
-    /// <summary>A result kept warm: how to read it again, and when it was last used.</summary>
+    /// <summary>
+    /// A result kept warm (<see cref="CachePolicy.Refresh"/>) or shielded from writes (<see cref="CachePolicy.InvalidateOnWrite"/>
+    /// false): how to read it again, when it was last used, and the write tags it would otherwise carry.
+    /// </summary>
     private sealed class WarmEntry(CachePolicy policy, Func<CancellationToken, ValueTask<Result<(object Value, long Size, IReadOnlyList<string> Tags)>>> load)
     {
         public CachePolicy Policy { get; } = policy;
@@ -59,6 +72,11 @@ public sealed class DataCache : IDisposable
         public long LastHit;
         public long NextRefresh;
         public int Running;
+        /// <summary>Set when a write touched the result's tables (shielded entries): reload at the next loop tick.</summary>
+        public int Dirty;
+        /// <summary>Tags of the last stored result (tables read plus the policy's tags).</summary>
+        public volatile IReadOnlyList<string> Tags = [];
+        public bool Shielded => !Policy.InvalidateOnWrite;
     }
 
     /// <summary>Creates a cache with <paramref name="config"/> limits (defaults when null).</summary>
@@ -122,7 +140,70 @@ public sealed class DataCache : IDisposable
         if (tags.Count == 0) return;
         Interlocked.Increment(ref _generation);   // loads that started before this write must not store their result
         foreach (var tag in tags) _store.RemoveByTag(tag);
+        MarkShielded(tags);
         if (notify) Invalidated?.Invoke(tags);
+    }
+
+    /// <summary>Shielded results whose tables were written: due for a reload at the next refresh tick (they keep serving meanwhile).</summary>
+    private void MarkShielded(IReadOnlyList<string> tags)
+    {
+        if (_warm.IsEmpty) return;
+        var now = Now();
+        foreach (var warm in _warm.Values)
+        {
+            if (!warm.Shielded || !Intersects(warm.Tags, tags)) continue;
+            Interlocked.Exchange(ref warm.Dirty, 1);
+            Interlocked.Exchange(ref warm.NextRefresh, now);
+        }
+    }
+
+    private static bool Intersects(IReadOnlyList<string> a, IReadOnlyList<string> b)
+    {
+        foreach (var x in a)
+        foreach (var y in b)
+            if (string.Equals(x, y, StringComparison.Ordinal)) return true;
+        return false;
+    }
+
+    /// <summary>
+    /// Reloads, in place, the warm and shielded results carrying any of <paramref name="tags"/> (readers keep the current
+    /// result until the new one is stored, so they never wait for the database), and drops the other results carrying them.
+    /// Use it after changes CL.Data does not see (another process, raw SQL) or to push fresh data into a dashboard right
+    /// away. Other nodes (invalidation bus) treat it as an invalidation. Returns how many results were reloaded.
+    /// </summary>
+    public async ValueTask<int> RefreshAsync(IReadOnlyList<string> tags, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(tags);
+        if (tags.Count == 0) return 0;
+
+        List<(UInt128 Key, WarmEntry Warm, object Value, long Size, IReadOnlyList<string> Tags)> fresh = [];
+        foreach (var (key, warm) in _warm)
+        {
+            if (!Intersects(warm.Tags, tags) || Interlocked.Exchange(ref warm.Running, 1) == 1) continue;
+            try
+            {
+                var loaded = await warm.Load(ct).ConfigureAwait(false);
+                if (loaded.IsSuccess) fresh.Add((key, warm, loaded.Value.Value, loaded.Value.Size, loaded.Value.Tags));
+            }
+            finally
+            {
+                Interlocked.Exchange(ref warm.Running, 0);
+            }
+        }
+
+        // Drop the rest, then put the reloaded results straight back.
+        Interlocked.Increment(ref _generation);
+        foreach (var tag in tags) _store.RemoveByTag(tag);
+        var now = Now();
+        foreach (var (key, warm, value, size, resultTags) in fresh)
+        {
+            Store(key, warm.Policy, resultTags, value, size);
+            Interlocked.Exchange(ref warm.Dirty, 0);
+            if (warm.Policy.Refresh is { } period) Interlocked.Exchange(ref warm.NextRefresh, now + Ticks(period));
+            Interlocked.Increment(ref _refreshes);
+        }
+        Invalidated?.Invoke(tags);
+        return fresh.Count;
     }
 
     /// <summary>Drops everything.</summary>
@@ -137,9 +218,12 @@ public sealed class DataCache : IDisposable
     internal async ValueTask<Result<object>> GetOrLoadAsync(UInt128 key, CachePolicy policy,
         Func<CancellationToken, ValueTask<Result<(object Value, long Size, IReadOnlyList<string> Tags)>>> load, CancellationToken ct, Action<bool>? hit = null)
     {
-        if (policy.Refresh is not null)
+        if (policy.Refresh is not null || !policy.InvalidateOnWrite)
         {
-            var warm = _warm.GetOrAdd(key, _ => new WarmEntry(policy, load) { NextRefresh = Now() + Ticks(policy.Refresh.Value) });
+            var warm = _warm.GetOrAdd(key, _ => new WarmEntry(policy, load)
+            {
+                NextRefresh = policy.Refresh is { } period ? Now() + Ticks(period) : long.MaxValue,
+            });
             Interlocked.Exchange(ref warm.LastHit, Now());
         }
 
@@ -173,7 +257,8 @@ public sealed class DataCache : IDisposable
         if (loaded.IsFailure) return loaded.Error!;
 
         var (value, size, tags) = loaded.Value;
-        if (Interlocked.Read(ref _generation) == generation) Store(key, policy, tags, value, size);
+        // A shielded result is stored even when a write raced the load: the write marked it for a reload anyway.
+        if (!policy.InvalidateOnWrite || Interlocked.Read(ref _generation) == generation) Store(key, policy, tags, value, size);
         return Result<object>.Success(value);
     }
 
@@ -181,11 +266,15 @@ public sealed class DataCache : IDisposable
     {
         var ttl = policy.Ttl ?? TimeSpan.FromSeconds(Config.DefaultTtlSeconds);
         if (policy.Refresh is { } refresh && refresh * 2 > ttl) ttl = refresh * 2;   // a warm entry outlives its refresh period
+        IReadOnlyList<string> allTags = [.. tags, .. policy.Tags];
+        if (_warm.TryGetValue(key, out var warm)) warm.Tags = allTags;
         _store.Set(key, value, new CacheEntryOptions
         {
             AbsoluteExpiration = policy.Sliding ? null : ttl,
             SlidingExpiration = policy.Sliding ? ttl : null,
-            Tags = [.. tags, .. policy.Tags],
+            // Shielded results carry only the policy's own tags in the store: writes (table/entity/connection tags) mark
+            // them for a reload instead of dropping them.
+            Tags = policy.InvalidateOnWrite ? allTags : policy.Tags,
             Size = Math.Max(1, size),
         });
     }
@@ -205,24 +294,40 @@ public sealed class DataCache : IDisposable
         var refreshed = 0;
         foreach (var (key, warm) in _warm)
         {
-            var period = Ticks(warm.Policy.Refresh!.Value);
-            if (now - Interlocked.Read(ref warm.LastHit) > period * Math.Max(1, warm.Policy.IdleRefreshes))
+            if (warm.Policy.Refresh is { } refresh)
             {
+                if (now - Interlocked.Read(ref warm.LastHit) > Ticks(refresh) * Math.Max(1, warm.Policy.IdleRefreshes))
+                {
+                    _warm.TryRemove(key, out _);
+                    continue;
+                }
+            }
+            else if (!_store.TryGet<object>(key, out _))
+            {
+                // Shielded without a refresh period: tracked only while its result is cached.
                 _warm.TryRemove(key, out _);
                 continue;
             }
+            else if (Volatile.Read(ref warm.Dirty) == 0)
+            {
+                continue;   // reloaded only after a write
+            }
+
             if (now < Interlocked.Read(ref warm.NextRefresh) || Interlocked.Exchange(ref warm.Running, 1) == 1) continue;
             try
             {
                 var generation = Interlocked.Read(ref _generation);
+                Interlocked.Exchange(ref warm.Dirty, 0);   // a write during the load marks it again
                 var loaded = await warm.Load(ct).ConfigureAwait(false);
-                if (loaded.IsSuccess && Interlocked.Read(ref _generation) == generation)
+                if (loaded.IsSuccess && (warm.Shielded || Interlocked.Read(ref _generation) == generation))
                 {
                     Store(key, warm.Policy, loaded.Value.Tags, loaded.Value.Value, loaded.Value.Size);
                     Interlocked.Increment(ref _refreshes);
                     refreshed++;
                 }
-                Interlocked.Exchange(ref warm.NextRefresh, Now() + period);
+                var next = warm.Policy.Refresh is { } period ? Now() + Ticks(period) : long.MaxValue;
+                // Written again while loading: come back at the next tick rather than a full period later.
+                Interlocked.Exchange(ref warm.NextRefresh, Volatile.Read(ref warm.Dirty) == 1 ? Now() : next);
             }
             finally
             {

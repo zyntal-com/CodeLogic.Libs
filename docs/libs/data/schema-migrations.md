@@ -36,6 +36,21 @@ var plan = (await db.Schema.PlanAsync<Product>()).ValueOrThrow();   // what woul
 
 **Backup before altering:** set `backupDirectory`, and sync writes a backup of a table before altering it.
 
+**NOT NULL on existing data:** making a column NOT NULL first replaces its NULLs with the column's default (or an
+implicit one: `''`, `0`, the epoch), in the same plan.
+
+**Scripts instead of live changes:** `db.Schema.ScriptAsync(maps, level)` plans the same changes without running
+anything and returns them as a `SchemaScript` (`Statements`, `ToSql()`, pending items as comments). Generate a
+migration from the models against a copy of production, review and commit it, run it at cut-over, and run the
+production app with `syncMode: Migration`. After the migration the script is empty, so the same call works as a
+drift check at startup.
+
+```csharp
+var maps = new[] { EntityAccessorRegistry.Get<Order>().ValueOrThrow().Map, /* ... */ };
+var script = (await db.Schema.ScriptAsync(maps, SchemaSyncLevel.Full)).ValueOrThrow();
+File.WriteAllText("01-schema.sql", script.ToSql());
+```
+
 ## Migrations
 
 ```csharp

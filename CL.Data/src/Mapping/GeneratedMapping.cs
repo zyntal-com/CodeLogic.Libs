@@ -68,7 +68,7 @@ public static class GeneratedMapping
             IsNullable = nullable,
             DataType = dataType,
             Size = column?.Size ?? 0,
-            Precision = column?.Precision ?? 0,
+            Precision = column?.Precision ?? -1,
             Scale = column?.Scale ?? -1,
             KeyOrder = column?.KeyOrder ?? 0,
             Unique = column?.Unique ?? false,

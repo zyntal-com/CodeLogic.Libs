@@ -26,6 +26,12 @@ public sealed class ProjectedQuery<T, TResult>
     /// <summary>Removes duplicate results (<c>SELECT DISTINCT</c>).</summary>
     public ProjectedQuery<T, TResult> Distinct() => new(_source, _selector, distinct: true);
 
+    /// <summary>Caches the projected results (same as <c>WithCache</c> on the source query, before <c>Select</c>).</summary>
+    public ProjectedQuery<T, TResult> WithCache(CL.Data.Caching.CachePolicy? policy = null) => new(_source.WithCache(policy), _selector, _distinct);
+
+    /// <summary>Caches the projected results for <paramref name="ttl"/>.</summary>
+    public ProjectedQuery<T, TResult> WithCache(TimeSpan ttl) => new(_source.WithCache(ttl), _selector, _distinct);
+
     /// <summary>Runs the query and returns every result.</summary>
     public async ValueTask<Result<List<TResult>>> ToListAsync(CancellationToken ct = default)
     {

@@ -277,6 +277,7 @@ public abstract class SqlDialect
         {
             Projection = keys.Select(k => new ProjectionItem(new ColumnExpr(k))).ToArray(),
             Where = delete.Where,
+            OrderBy = delete.OrderBy,
             Limit = delete.Limit,
         });
         w.Append(')');

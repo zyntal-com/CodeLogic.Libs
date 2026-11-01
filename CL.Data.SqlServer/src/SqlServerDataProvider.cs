@@ -192,7 +192,7 @@ public sealed class SqlServerTypeMapper : ITypeMapper
         if (column.Hint<SqlServerColumnAttribute>()?.Type is { } hinted) return hinted;
         if (column.NativeType is { } native) return native;
         var size = column.Size > 0 ? column.Size : config.DefaultStringSize;
-        var fraction = column.Precision is > 0 and <= 7 ? column.Precision : 7;
+        var fraction = column.Precision is >= 0 and <= 7 ? column.Precision : 7;
         return column.DataType switch
         {
             DataType.Boolean => "bit",

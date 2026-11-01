@@ -132,6 +132,44 @@ public sealed class SchemaSync
         return SchemaDiff.Compare(desired.Value, actual.Value, level);
     }
 
+    /// <summary>Scripts the changes for <typeparamref name="T"/> at <paramref name="level"/>; see <see cref="ScriptAsync(IReadOnlyList{EntityMap}, SchemaSyncLevel, CancellationToken)"/>.</summary>
+    public ValueTask<Result<SchemaScript>> ScriptAsync<T>(SchemaSyncLevel level = SchemaSyncLevel.Full, CancellationToken ct = default)
+    {
+        var accessor = EntityAccessorRegistry.Get<T>();
+        return accessor.IsFailure
+            ? ValueTask.FromResult<Result<SchemaScript>>(accessor.Error!)
+            : ScriptAsync([accessor.Value!.Map], level, ct);
+    }
+
+    /// <summary>
+    /// Compares the tables of <paramref name="maps"/> with the database and returns the DDL that would bring them in line
+    /// at <paramref name="level"/>, without running it: the statements table sync would run, in the same order
+    /// (referenced tables first). Use it to generate reviewed migration scripts from the models against a copy of
+    /// production; an empty script means the database matches the models. Changes outside the level are listed as
+    /// pending. Takes no lock and writes nothing (not even the state table).
+    /// </summary>
+    public async ValueTask<Result<SchemaScript>> ScriptAsync(IReadOnlyList<EntityMap> maps, SchemaSyncLevel level = SchemaSyncLevel.Full, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(maps);
+        var provider = _db.Provider;
+        if (provider.Introspector is not { } introspector) return DataErrors.Unsupported($"{provider.Name} has no schema introspector.");
+        var ddl = provider.Ddl;
+
+        List<SchemaScriptTable> tables = [];
+        foreach (var map in Order(maps))
+        {
+            var desired = SchemaBuilder.FromMap(map, provider, _db.Config);
+            if (desired.IsFailure) return desired.Error!;
+            var actual = await introspector.ReadTableAsync(_db, desired.Value!.Name, desired.Value.Schema, ct).ConfigureAwait(false);
+            if (actual.IsFailure) return actual.Error!;
+            var plan = SchemaDiff.Compare(desired.Value, actual.Value, level);
+            if (plan.IsEmpty) continue;
+            var key = desired.Value.Schema is null ? desired.Value.Name : desired.Value.Schema + "." + desired.Value.Name;
+            tables.Add(new SchemaScriptTable(key, plan.Apply, plan.Pending, ddl.GenerateAll(plan.Apply)));
+        }
+        return new SchemaScript(provider.Name, level, ddl.SessionSetup, ddl.SessionTeardown, tables);
+    }
+
     private async ValueTask<Result<TableSyncResult>> SyncTableAsync(EntityMap map, SchemaSyncLevel level, bool force,
         Dictionary<string, string> state, SchemaIntrospector introspector, CancellationToken ct)
     {
@@ -209,14 +247,13 @@ public sealed class SchemaSync
                 if (begun.IsFailure) return begun.Error!;
             }
 
-            foreach (var change in changes)
-            foreach (var statement in ddl.Generate(change))
+            foreach (var statement in ddl.GenerateAll(changes))
             {
                 var executed = await session.ExecuteAsync(SqlText.Raw(statement), ct).ConfigureAwait(false);
                 if (executed.IsFailure)
                 {
                     await session.RollbackAsync().ConfigureAwait(false);
-                    return DataErrors.SchemaSyncFailed(table, $"{change.Describe()}: {statement}", executed.Error);
+                    return DataErrors.SchemaSyncFailed(table, statement, executed.Error);
                 }
             }
 

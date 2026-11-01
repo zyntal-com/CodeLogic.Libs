@@ -83,6 +83,10 @@ The 4.x code remains on `support/4.x`, and CodeLogic.MySQL2 4.9 stays on nuget.o
 - **Dates:** `DateTimeOffset` and UTC are the default. On SQLite, `DateTime` and `DateTimeOffset` are stored as UTC ISO-8601 text.
 - **SQLite storage:** decimals use NUMERIC affinity, and GUIDs are stored as 16-byte BLOBs.
 - **MySQL row counts:** CL.Data connects with `UseAffectedRows`, so MySQL counts rows *changed*, not rows matched. Entity saves are unaffected: an unchanged save is confirmed with a match check. But set-based `UpdateAsync` returns only the rows whose values changed, and `AdjustAsync(..., 0)` returns false.
+- **Schema sync reports drift as success:** `SyncAsync` returns a successful `SchemaSyncReport` when changes were held back by the sync level. Check `report.HasDrift` (or listen for `SchemaDriftDetectedEvent`); CL.MySQL2 callers that only checked for failure miss it.
+- **Schema DDL differs from CL.MySQL2:** time types are `DATETIME(6)` unless `[Column(Precision = 0)]`; `DataType.Text` is `LONGTEXT`; a non-nullable `string` is `NOT NULL` (CL.MySQL2 made strings NULL unless `NotNull`). Existing databases need a migration: generate it with `db.Schema.ScriptAsync(maps)` against a copy and review it.
+- **Retention is not automatic:** `[RetainDays]` moves to the property, and purges run only through `db.Retention.PurgeAsync`/`Schedule` (CL.MySQL2 ran a 24-hour worker).
+- **Set-based writes refuse what they cannot honour:** `DeleteAsync` with `Skip`, a limited soft delete, and `UpdateAsync` with `Take`/`Skip` fail with `data.validation`.
 - **Config, state tables and errors:**
   - Config moves to the `data` and `data.cache` sections.
   - State tables are renamed: `cl_data_schema`, `cl_data_migrations`, `cl_data_seeds` and `cl_data_cache_bus`.
