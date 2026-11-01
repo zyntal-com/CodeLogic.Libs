@@ -8,24 +8,52 @@
   4.9.x. CodeLogic 5 makes `Result<T>` / `Result` C# 15 unions and `Error` a closed record with
   kind subtypes (`NotFoundError`, `ValidationError`, ...). This library's API is unchanged, and
   its results can now be matched exhaustively with `switch`.
+- **`LocalConnectionConfig.RootPath` must be absolute** for an enabled connection; a relative root is a
+  validation error (`RootPath must be an absolute path`). It used to resolve against the process's current
+  directory, which a service host does not keep stable, so the same configuration could expose a different tree.
+- **Storage paths reject every control character** (U+0000 to U+001F and U+007F, not only NUL) with
+  `storage.invalid_path`. An existing object whose name contains one can no longer be addressed through the library.
 - `StorageConnectionConfigBase` is a C# 15 `closed` class. The seven provider connection types are its only
   direct subtypes, so a `switch` over a connection is checked for exhaustiveness. Deriving your own
   connection type from it outside CL.Storage is no longer possible; use `RegisterBackend` for custom backends.
 
 ### Documentation
 
+- `StorageFeature.ResumableUpload` is reserved: Azure Blob and Google Cloud Storage no longer report it, because
+  nothing in the library reads it (staged resume is driven by `Append`). Check `Append` instead.
 - Configuration examples in the README and the docs use the camelCase keys the CodeLogic loader reads.
   The PascalCase keys shown before are matched case-sensitively and were ignored, leaving defaults active.
 - Local connections: the root-path checks are documented as traversal protection for caller-supplied paths, not a sandbox. A process that can modify the tree under the root at the same time can swap a checked path for a link before it is opened.
 
 ### Security
 
+- **FTP command injection through paths.** `StoragePath.Normalize` rejected only NUL and `..`, so a CR/LF in a
+  caller-supplied name reached the FTP control connection unescaped (`RMD {path}`, `AVBL {path}` and the commands
+  FluentFTP sends): `x\r\nDELE /other/file` ran a second command outside the root. Every control character is now
+  rejected (see Breaking), the FTP provider checks again before splicing a path into a raw command, and
+  `ExecuteCommandAsync` refuses any control character in a raw command, not only CR/LF.
+- **Secret fields.** `StorageProxyConfig.Password` and `SftpJumpHostConfig.Password`, `PrivateKeyContent` and
+  `PrivateKeyPassphrase` are now `[ConfigField(Secret = true)]`, so masked configuration schemas no longer show them
+  in clear text. A test checks that every credential-like configuration field is marked.
+- **Windows reserved device names.** Local connections on Windows reject a path segment that names a device
+  (`CON`, `PRN`, `AUX`, `NUL`, `COM0`-`COM9`, `LPT0`-`LPT9`, `CONIN$`, `CONOUT$`, also with an extension or trailing
+  dots and spaces, such as `nul.txt`) with `storage.invalid_path`; such a name opened the device instead of a file
+  under the root.
+- **Resumable part-file lock markers no longer disclose the host.** A `<part>.lock` marker named the machine, the
+  process id and its start time in clear text on the destination. It now holds a random owner id and salted SHA-256
+  tags of those values (format `cl-storage-part-lock/2`); only the owner's machine can recognise its markers.
+  Markers in the old format are still read and taken over as before.
 - **Local connections on Windows reject paths containing `:`** with `storage.invalid_path`. A segment such as
   `file.txt:hidden` addresses an NTFS alternate data stream and passed the root containment check, so a caller
   could read, probe and delete hidden streams of files inside the root. A drive-relative path such as `C:name`
   resolved against the process's current directory on that drive instead of the root (contained only by
   chance when that directory lies under the root). Colons stay valid on other operating systems and for the
   remote providers (`StoragePath.Normalize` is unchanged).
+
+### Fixed
+
+- **Google Cloud Storage flat listings** send a `/` delimiter, so the server returns one level (sub-folders as
+  prefixes) instead of the client scanning every descendant object of the folder.
 
 ### Tests
 

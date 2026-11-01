@@ -347,7 +347,8 @@ destination is replaced only once that object is complete, so it is never half-w
   the staged prefix from the source again; without it the copy is not resumable and writes from the start.
 - **One writer.** A resumable staging object is held by one transfer at a time, across processes too:
   beside it the transfer creates a lock marker (`<part file>.lock`, also a `.cl-storage-part-…` name)
-  create-only, naming its machine, process, and start time, and reads it back to confirm it won (on FTP
+  create-only, holding a random owner id and salted hashes of its machine, process, and start time (never
+  the names or ids themselves), and reads it back to confirm it won (on FTP
   and SFTP, where create-only is checked before the write, after a 1 s pause, so a racing writer's marker
   has landed and wins). The hold
   lasts until the staged file has been promoted (or settled), so nobody appends between the last write
