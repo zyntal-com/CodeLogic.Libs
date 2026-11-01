@@ -62,6 +62,11 @@ internal sealed class LocalPathResolver
             return Result<ResolvedLocalPath>.Failure(StorageErrors.InvalidPath(
                 "A local path cannot contain ':' on Windows (alternate data streams and drive-relative paths are not allowed)."));
 
+        // "CON", "nul.txt", "COM1.log" and the like open a device instead of a file under the root.
+        if (OperatingSystem.IsWindows() && normalized.Value!.Split('/').Any(StoragePath.IsWindowsReservedName))
+            return Result<ResolvedLocalPath>.Failure(StorageErrors.InvalidPath(
+                "A local path cannot use a Windows reserved device name (CON, PRN, AUX, NUL, COM0-9, LPT0-9)."));
+
         try
         {
             var fullPath = normalized.Value!.Length == 0

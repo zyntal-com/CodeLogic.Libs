@@ -194,15 +194,18 @@ public sealed class SftpJumpHostConfig
     public string Username { get; set; } = string.Empty;
 
     /// <summary>Gets or sets the jump host password, when password authentication is used.</summary>
+    [ConfigField(Label = "Jump host password", Secret = true, InputType = ConfigInputType.Password)]
     public string? Password { get; set; }
 
     /// <summary>Gets or sets an absolute private-key path for the jump host.</summary>
     public string? PrivateKeyPath { get; set; }
 
     /// <summary>Gets or sets a private key for the jump host supplied as text.</summary>
+    [ConfigField(Label = "Jump host private key (inline)", Secret = true, InputType = ConfigInputType.Password)]
     public string? PrivateKeyContent { get; set; }
 
     /// <summary>Gets or sets the jump host private-key passphrase.</summary>
+    [ConfigField(Label = "Jump host private key passphrase", Secret = true, InputType = ConfigInputType.Password)]
     public string? PrivateKeyPassphrase { get; set; }
 
     /// <summary>Gets or sets whether to trust any jump host key; development use only.</summary>
