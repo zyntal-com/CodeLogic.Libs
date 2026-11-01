@@ -83,6 +83,10 @@ internal static class Encoder
             if (keepExif)
             {
                 exifToWrite = (byte[])exif!.Clone();
+                // The thumbnail and the MakerNote describe the source pixels (MakerNotes can embed a preview and a vendor
+                // GPS copy): written back next to edited pixels they would undo a blur, crop or RemoveGps.
+                ExifReader.TryRemoveThumbnail(exifToWrite);
+                ExifReader.TryRemoveMakerNote(exifToWrite);
                 if (resetOrientation) ExifReader.TrySetOrientation(exifToWrite, ImageOrientation.Normal);
                 if (options.RemoveGps) ExifReader.TryRemoveGps(exifToWrite);
             }
