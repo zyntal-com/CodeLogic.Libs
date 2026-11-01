@@ -8,7 +8,6 @@ using MailKit.Security;
 using MimeKit;
 using System.Net.Sockets;
 using MkFlags  = MailKit.MessageFlags;
-using MkFolder = MailKit.MailFolder;
 // Our model types that collide with MailKit names
 using ModelMailFolder  = CL.Mail.Models.MailFolder;
 using ModelMsgFlags    = CL.Mail.Models.MessageFlags;
@@ -30,15 +29,28 @@ public sealed class NewMailEventArgs : EventArgs
 /// <summary>
 /// Reads and manages e-mail via IMAP using <see href="https://github.com/jstedfast/MailKit">MailKit</see>.
 /// Supports message fetching, search, flag operations, folder management, and RFC 2177 IDLE push.
+/// <para>
+/// One IMAP connection serves every call. Calls are serialized, so the service is safe to use from several
+/// threads; while IDLE is running, a call interrupts it, runs, and IDLE resumes afterwards.
+/// </para>
 /// </summary>
 public sealed class ImapService : IDisposable
 {
     private readonly ImapConfig _config;
     private readonly ILogger? _logger;
     private ImapClient? _client;
-    private bool _disposed;
+    private volatile bool _disposed;
 
-    private CancellationTokenSource? _idleCts;
+    // Serializes every use of _client: public calls and the IDLE loop.
+    private readonly SemaphoreSlim _gate = new(1, 1);
+    // Public calls waiting for (or holding) the gate; the IDLE loop does not start an IDLE while any are waiting.
+    private int _pendingCalls;
+    // Ends the IDLE command in progress gracefully (DONE) so a waiting call can take the connection.
+    private CancellationTokenSource? _idleDone;
+
+    private readonly Lock _idleLock = new();
+    private CancellationTokenSource? _idleCts;    // stop requested
+    private CancellationTokenSource? _idleAbort;  // hard abort when a graceful stop does not finish in time
     private Task? _idleTask;
 
     /// <summary>Fired when new mail is detected during IDLE monitoring.</summary>
@@ -55,37 +67,20 @@ public sealed class ImapService : IDisposable
 
     // ── Connection ────────────────────────────────────────────────────────────
 
-    /// <summary>Connects and authenticates to the IMAP server.</summary>
+    /// <summary>
+    /// Connects and authenticates to the IMAP server. An existing connection is closed and replaced.
+    /// </summary>
     public async Task<Result> ConnectAsync(CancellationToken cancellationToken = default)
     {
         try
         {
-            _client = new ImapClient { Timeout = _config.TimeoutSeconds * 1000 };
-            await _client.ConnectAsync(_config.Host, _config.Port, MapSecurity(_config.SecurityMode), cancellationToken).ConfigureAwait(false);
-            await _client.AuthenticateAsync(_config.Username, _config.Password, cancellationToken).ConfigureAwait(false);
-            _logger?.Info($"Connected to IMAP {_config.Host}:{_config.Port}");
+            using var _ = await LockAsync(cancellationToken).ConfigureAwait(false);
+            await ConnectCoreAsync(cancellationToken).ConfigureAwait(false);
             return Result.Success();
-        }
-        catch (AuthenticationException ex)
-        {
-            _logger?.Error("IMAP authentication failed", ex);
-            return MailErrors.Unauthorized(MailErrorCodes.ImapAuthenticationFailed, "Authentication failed");
-        }
-        catch (TimeoutException ex)
-        {
-            _logger?.Error("IMAP connection timed out", ex);
-            return MailErrors.Timeout(MailErrorCodes.ImapTimeout, "Connection timed out");
-        }
-        catch (SocketException ex)
-        {
-            _logger?.Error($"IMAP server {_config.Host}:{_config.Port} unreachable", ex);
-            return MailErrors.Unavailable(MailErrorCodes.ImapConnectionFailed,
-                $"Could not connect to IMAP server {_config.Host}:{_config.Port}", ex);
         }
         catch (Exception ex)
         {
-            _logger?.Error("IMAP connection error", ex);
-            return MailErrors.Internal(MailErrorCodes.ImapError, ex);
+            return Fail(ex, "IMAP connection error");
         }
     }
 
@@ -95,6 +90,7 @@ public sealed class ImapService : IDisposable
         try
         {
             StopIdle();
+            using var _ = await LockAsync(cancellationToken).ConfigureAwait(false);
             if (_client is { IsConnected: true })
             {
                 await _client.DisconnectAsync(true, cancellationToken).ConfigureAwait(false);
@@ -104,8 +100,7 @@ public sealed class ImapService : IDisposable
         }
         catch (Exception ex)
         {
-            _logger?.Error("Error disconnecting from IMAP", ex);
-            return MailErrors.Internal(MailErrorCodes.ImapError, ex);
+            return Fail(ex, "Error disconnecting from IMAP");
         }
     }
 
@@ -116,15 +111,15 @@ public sealed class ImapService : IDisposable
     {
         try
         {
-            await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+            using var _ = await LockAsync(cancellationToken).ConfigureAwait(false);
+            var client = await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
 
-            var personal = _client!.GetFolder(_client.PersonalNamespaces[0]);
+            var personal = client.GetFolder(client.PersonalNamespaces[0]);
             var subfolders = await personal.GetSubfoldersAsync(true, cancellationToken).ConfigureAwait(false);
             var folders = new List<ModelMailFolder>();
 
             // INBOX
-            var inbox = _client.Inbox;
-            if (inbox is null) throw new InvalidOperationException("IMAP client Inbox is null");
+            var inbox = client.Inbox ?? throw new InvalidOperationException("IMAP client Inbox is null");
             await inbox.StatusAsync(StatusItems.Count | StatusItems.Unread, cancellationToken).ConfigureAwait(false);
             folders.Add(new ModelMailFolder { Name = inbox.Name, FullName = inbox.FullName, MessageCount = inbox.Count, UnreadCount = inbox.Unread, CanSelect = true });
 
@@ -141,15 +136,17 @@ public sealed class ImapService : IDisposable
                     }
                     folders.Add(new ModelMailFolder { Name = f.Name, FullName = f.FullName, MessageCount = msgCount, UnreadCount = unread, CanSelect = canSelect });
                 }
-                catch (Exception ex) { _logger?.Warning($"Could not stat folder '{f.FullName}': {ex.Message}"); }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger?.Warning($"Could not stat folder '{f.FullName}': {ex.Message}");
+                }
             }
 
             return Result<IReadOnlyList<ModelMailFolder>>.Success(folders.AsReadOnly());
         }
         catch (Exception ex)
         {
-            _logger?.Error("Error listing folders", ex);
-            return MailErrors.Internal(MailErrorCodes.ImapError, ex);
+            return Fail(ex, "Error listing folders");
         }
     }
 
@@ -158,16 +155,16 @@ public sealed class ImapService : IDisposable
     {
         try
         {
-            await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
-            var personal = _client!.GetFolder(_client.PersonalNamespaces[0]);
+            using var _ = await LockAsync(cancellationToken).ConfigureAwait(false);
+            var client = await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+            var personal = client.GetFolder(client.PersonalNamespaces[0]);
             await personal.CreateAsync(name, true, cancellationToken).ConfigureAwait(false);
             _logger?.Info($"Created folder: {name}");
             return Result.Success();
         }
         catch (Exception ex)
         {
-            _logger?.Error($"Error creating folder '{name}'", ex);
-            return MailErrors.Internal(MailErrorCodes.ImapError, ex);
+            return Fail(ex, $"Error creating folder '{name}'");
         }
     }
 
@@ -176,8 +173,9 @@ public sealed class ImapService : IDisposable
     {
         try
         {
-            await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
-            var folder = await GetImapFolderAsync(fullName, FolderAccess.None, cancellationToken).ConfigureAwait(false);
+            using var _ = await LockAsync(cancellationToken).ConfigureAwait(false);
+            var client = await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+            var folder = await GetImapFolderAsync(client, fullName, FolderAccess.None, cancellationToken).ConfigureAwait(false);
             if (folder is null) return MailErrors.NotFound(MailErrorCodes.FolderNotFound, $"Folder '{fullName}' not found");
             await folder.DeleteAsync(cancellationToken).ConfigureAwait(false);
             _logger?.Info($"Deleted folder: {fullName}");
@@ -185,8 +183,7 @@ public sealed class ImapService : IDisposable
         }
         catch (Exception ex)
         {
-            _logger?.Error($"Error deleting folder '{fullName}'", ex);
-            return MailErrors.Internal(MailErrorCodes.ImapError, ex);
+            return Fail(ex, $"Error deleting folder '{fullName}'");
         }
     }
 
@@ -195,8 +192,9 @@ public sealed class ImapService : IDisposable
     {
         try
         {
-            await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
-            var folder = await GetImapFolderAsync(oldName, FolderAccess.None, cancellationToken).ConfigureAwait(false);
+            using var _ = await LockAsync(cancellationToken).ConfigureAwait(false);
+            var client = await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+            var folder = await GetImapFolderAsync(client, oldName, FolderAccess.None, cancellationToken).ConfigureAwait(false);
             if (folder is null) return MailErrors.NotFound(MailErrorCodes.FolderNotFound, $"Folder '{oldName}' not found");
             if (folder.ParentFolder is null) return MailErrors.Internal(MailErrorCodes.ImapError, $"Folder '{oldName}' has no parent folder");
             await folder.RenameAsync(folder.ParentFolder, newName, cancellationToken).ConfigureAwait(false);
@@ -205,8 +203,7 @@ public sealed class ImapService : IDisposable
         }
         catch (Exception ex)
         {
-            _logger?.Error($"Error renaming folder '{oldName}'", ex);
-            return MailErrors.Internal(MailErrorCodes.ImapError, ex);
+            return Fail(ex, $"Error renaming folder '{oldName}'");
         }
     }
 
@@ -226,8 +223,9 @@ public sealed class ImapService : IDisposable
     {
         try
         {
-            await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
-            var imapFolder = await GetImapFolderAsync(folder, FolderAccess.ReadOnly, cancellationToken).ConfigureAwait(false);
+            using var _ = await LockAsync(cancellationToken).ConfigureAwait(false);
+            var client = await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+            var imapFolder = await GetImapFolderAsync(client, folder, FolderAccess.ReadOnly, cancellationToken).ConfigureAwait(false);
             if (imapFolder is null)
                 return MailErrors.NotFound(MailErrorCodes.FolderNotFound, $"Folder '{folder}' not found");
 
@@ -251,8 +249,7 @@ public sealed class ImapService : IDisposable
         }
         catch (Exception ex)
         {
-            _logger?.Error($"Error fetching messages from '{folder}'", ex);
-            return MailErrors.Internal(MailErrorCodes.ImapError, ex);
+            return Fail(ex, $"Error fetching messages from '{folder}'");
         }
     }
 
@@ -262,8 +259,9 @@ public sealed class ImapService : IDisposable
     {
         try
         {
-            await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
-            var imapFolder = await GetImapFolderAsync(folder, FolderAccess.ReadOnly, cancellationToken).ConfigureAwait(false);
+            using var _ = await LockAsync(cancellationToken).ConfigureAwait(false);
+            var client = await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+            var imapFolder = await GetImapFolderAsync(client, folder, FolderAccess.ReadOnly, cancellationToken).ConfigureAwait(false);
             if (imapFolder is null)
                 return MailErrors.NotFound(MailErrorCodes.FolderNotFound, $"Folder '{folder}' not found");
 
@@ -314,8 +312,7 @@ public sealed class ImapService : IDisposable
         }
         catch (Exception ex)
         {
-            _logger?.Error($"Error getting message UID {uid} from '{folder}'", ex);
-            return MailErrors.Internal(MailErrorCodes.ImapError, ex);
+            return Fail(ex, $"Error getting message UID {uid} from '{folder}'");
         }
     }
 
@@ -332,8 +329,9 @@ public sealed class ImapService : IDisposable
     {
         try
         {
-            await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
-            var imapFolder = await GetImapFolderAsync(folder, FolderAccess.ReadOnly, cancellationToken).ConfigureAwait(false);
+            using var _ = await LockAsync(cancellationToken).ConfigureAwait(false);
+            var client = await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+            var imapFolder = await GetImapFolderAsync(client, folder, FolderAccess.ReadOnly, cancellationToken).ConfigureAwait(false);
             if (imapFolder is null)
                 return MailErrors.NotFound(MailErrorCodes.FolderNotFound, $"Folder '{folder}' not found");
 
@@ -357,8 +355,7 @@ public sealed class ImapService : IDisposable
         }
         catch (Exception ex)
         {
-            _logger?.Error($"Error searching '{folder}'", ex);
-            return MailErrors.Internal(MailErrorCodes.ImapError, ex);
+            return Fail(ex, $"Error searching '{folder}'");
         }
     }
 
@@ -367,10 +364,11 @@ public sealed class ImapService : IDisposable
     {
         try
         {
-            await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
-            var src = await GetImapFolderAsync(source, FolderAccess.ReadWrite, cancellationToken).ConfigureAwait(false);
+            using var _ = await LockAsync(cancellationToken).ConfigureAwait(false);
+            var client = await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+            var src = await GetImapFolderAsync(client, source, FolderAccess.ReadWrite, cancellationToken).ConfigureAwait(false);
             if (src is null) return MailErrors.NotFound(MailErrorCodes.FolderNotFound, $"Source '{source}' not found");
-            var dst = await GetImapFolderAsync(destination, FolderAccess.None, cancellationToken).ConfigureAwait(false);
+            var dst = await GetImapFolderAsync(client, destination, FolderAccess.None, cancellationToken).ConfigureAwait(false);
             if (dst is null) return MailErrors.NotFound(MailErrorCodes.FolderNotFound, $"Destination '{destination}' not found");
 
             await src.MoveToAsync(new UniqueId(uid), dst, cancellationToken).ConfigureAwait(false);
@@ -379,8 +377,7 @@ public sealed class ImapService : IDisposable
         }
         catch (Exception ex)
         {
-            _logger?.Error($"Error moving message UID {uid}", ex);
-            return MailErrors.Internal(MailErrorCodes.ImapError, ex);
+            return Fail(ex, $"Error moving message UID {uid}");
         }
     }
 
@@ -389,10 +386,11 @@ public sealed class ImapService : IDisposable
     {
         try
         {
-            await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
-            var src = await GetImapFolderAsync(source, FolderAccess.ReadOnly, cancellationToken).ConfigureAwait(false);
+            using var _ = await LockAsync(cancellationToken).ConfigureAwait(false);
+            var client = await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+            var src = await GetImapFolderAsync(client, source, FolderAccess.ReadOnly, cancellationToken).ConfigureAwait(false);
             if (src is null) return MailErrors.NotFound(MailErrorCodes.FolderNotFound, $"Source '{source}' not found");
-            var dst = await GetImapFolderAsync(destination, FolderAccess.None, cancellationToken).ConfigureAwait(false);
+            var dst = await GetImapFolderAsync(client, destination, FolderAccess.None, cancellationToken).ConfigureAwait(false);
             if (dst is null) return MailErrors.NotFound(MailErrorCodes.FolderNotFound, $"Destination '{destination}' not found");
 
             await src.CopyToAsync(new UniqueId(uid), dst, cancellationToken).ConfigureAwait(false);
@@ -401,8 +399,7 @@ public sealed class ImapService : IDisposable
         }
         catch (Exception ex)
         {
-            _logger?.Error($"Error copying message UID {uid}", ex);
-            return MailErrors.Internal(MailErrorCodes.ImapError, ex);
+            return Fail(ex, $"Error copying message UID {uid}");
         }
     }
 
@@ -411,8 +408,9 @@ public sealed class ImapService : IDisposable
     {
         try
         {
-            await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
-            var imapFolder = await GetImapFolderAsync(folder, FolderAccess.ReadWrite, cancellationToken).ConfigureAwait(false);
+            using var _ = await LockAsync(cancellationToken).ConfigureAwait(false);
+            var client = await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+            var imapFolder = await GetImapFolderAsync(client, folder, FolderAccess.ReadWrite, cancellationToken).ConfigureAwait(false);
             if (imapFolder is null) return MailErrors.NotFound(MailErrorCodes.FolderNotFound, $"Folder '{folder}' not found");
 
             await imapFolder.AddFlagsAsync(new UniqueId(uid), MkFlags.Deleted, true, cancellationToken).ConfigureAwait(false);
@@ -422,8 +420,7 @@ public sealed class ImapService : IDisposable
         }
         catch (Exception ex)
         {
-            _logger?.Error($"Error deleting message UID {uid}", ex);
-            return MailErrors.Internal(MailErrorCodes.ImapError, ex);
+            return Fail(ex, $"Error deleting message UID {uid}");
         }
     }
 
@@ -439,8 +436,9 @@ public sealed class ImapService : IDisposable
     {
         try
         {
-            await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
-            var imapFolder = await GetImapFolderAsync(folder, FolderAccess.ReadWrite, cancellationToken).ConfigureAwait(false);
+            using var _ = await LockAsync(cancellationToken).ConfigureAwait(false);
+            var client = await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+            var imapFolder = await GetImapFolderAsync(client, folder, FolderAccess.ReadWrite, cancellationToken).ConfigureAwait(false);
             if (imapFolder is null) return MailErrors.NotFound(MailErrorCodes.FolderNotFound, $"Folder '{folder}' not found");
 
             var mkFlags = ToMailKitFlags(flags);
@@ -454,8 +452,7 @@ public sealed class ImapService : IDisposable
         }
         catch (Exception ex)
         {
-            _logger?.Error($"Error setting flags on UID {uid}", ex);
-            return MailErrors.Internal(MailErrorCodes.ImapError, ex);
+            return Fail(ex, $"Error setting flags on UID {uid}");
         }
     }
 
@@ -464,129 +461,335 @@ public sealed class ImapService : IDisposable
     /// <summary>
     /// Starts RFC 2177 IDLE monitoring on the given folder.
     /// Fires <see cref="NewMailReceived"/> when new messages arrive.
+    /// <para>
+    /// Requires <see cref="ImapConfig.EnableIdle"/>; when it is <c>false</c> the call fails with
+    /// <see cref="MailErrorCodes.ImapConfigInvalid"/>. The loop reconnects after a dropped connection and
+    /// re-opens the folder on the new connection. Other calls on this service interrupt IDLE while they run.
+    /// </para>
     /// </summary>
     /// <param name="folder">IMAP folder to monitor (typically "INBOX").</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     public async Task<Result> StartIdleAsync(string folder, CancellationToken cancellationToken = default)
     {
-        if (_idleTask is not null)
-            return MailErrors.Internal(MailErrorCodes.ImapError, "IDLE already running — call StopIdle() first");
+        if (!_config.EnableIdle)
+            return MailErrors.Validation(MailErrorCodes.ImapConfigInvalid, "IDLE is disabled: set Imap.EnableIdle to true");
 
+        lock (_idleLock)
+        {
+            if (_idleTask is not null)
+                return MailErrors.Internal(MailErrorCodes.ImapError, "IDLE already running — call StopIdle() first");
+            _idleTask = Task.CompletedTask; // reserve; replaced below or cleared on failure
+        }
+
+        var started = false;
         try
         {
-            await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
-
-            if (!_client!.Capabilities.HasFlag(ImapCapabilities.Idle))
+            int initialCount;
+            using (await LockAsync(cancellationToken).ConfigureAwait(false))
             {
-                _logger?.Warning("IMAP server does not support IDLE");
-                return MailErrors.Internal(MailErrorCodes.ImapError, "Server does not support IDLE");
-            }
+                var client = await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
 
-            var imapFolder = await GetImapFolderAsync(folder, FolderAccess.ReadOnly, cancellationToken).ConfigureAwait(false);
-            if (imapFolder is null)
-                return MailErrors.NotFound(MailErrorCodes.FolderNotFound, $"Folder '{folder}' not found");
-
-            _idleCts = new CancellationTokenSource();
-            var idleToken = _idleCts.Token;
-            var refresh = TimeSpan.FromMinutes(_config.IdleRefreshMinutes);
-
-            _idleTask = Task.Run(async () =>
-            {
-                while (!idleToken.IsCancellationRequested)
+                if (!client.Capabilities.HasFlag(ImapCapabilities.Idle))
                 {
-                    try
-                    {
-                        await EnsureConnectedAsync(idleToken).ConfigureAwait(false);
-                        if (!imapFolder.IsOpen)
-                            await imapFolder.OpenAsync(FolderAccess.ReadOnly, idleToken).ConfigureAwait(false);
-
-                        var prevCount = imapFolder.Count;
-
-                        using var doneCts = new CancellationTokenSource(refresh);
-                        using var linked = CancellationTokenSource.CreateLinkedTokenSource(idleToken, doneCts.Token);
-
-                        try { await _client!.IdleAsync(doneCts.Token, linked.Token).ConfigureAwait(false); }
-                        catch (OperationCanceledException) when (doneCts.IsCancellationRequested && !idleToken.IsCancellationRequested) { /* refresh — normal */ }
-
-                        if (imapFolder.Count > prevCount)
-                        {
-                            _logger?.Info($"New mail in '{folder}': {imapFolder.Count} messages");
-                            NewMailReceived?.Invoke(this, new NewMailEventArgs { FolderName = folder, MessageCount = imapFolder.Count });
-                        }
-                    }
-                    catch (OperationCanceledException) when (idleToken.IsCancellationRequested) { break; }
-                    catch (Exception ex)
-                    {
-                        _logger?.Error($"IDLE error, retrying: {ex.Message}");
-                        try { await Task.Delay(5_000, idleToken).ConfigureAwait(false); }
-                        catch (OperationCanceledException) { break; }
-                    }
+                    _logger?.Warning("IMAP server does not support IDLE");
+                    return MailErrors.Internal(MailErrorCodes.ImapError, "Server does not support IDLE");
                 }
 
-                _logger?.Info("IDLE monitoring stopped");
-            }, idleToken);
+                var imapFolder = await GetImapFolderAsync(client, folder, FolderAccess.ReadOnly, cancellationToken).ConfigureAwait(false);
+                if (imapFolder is null)
+                    return MailErrors.NotFound(MailErrorCodes.FolderNotFound, $"Folder '{folder}' not found");
+                initialCount = imapFolder.Count;
+            }
+
+            var stop = new CancellationTokenSource();
+            var abort = new CancellationTokenSource();
+            lock (_idleLock)
+            {
+                _idleCts = stop;
+                _idleAbort = abort;
+                _idleTask = Task.Run(() => IdleLoopAsync(folder, initialCount, stop.Token, abort.Token), CancellationToken.None);
+            }
+            started = true;
 
             _logger?.Info($"Started IDLE on '{folder}'");
             return Result.Success();
         }
         catch (Exception ex)
         {
-            _logger?.Error("Error starting IDLE", ex);
-            return MailErrors.Internal(MailErrorCodes.ImapError, ex);
+            return Fail(ex, "Error starting IDLE");
+        }
+        finally
+        {
+            if (!started)
+                lock (_idleLock) { _idleTask = null; }
         }
     }
 
-    /// <summary>Stops the IDLE background loop and waits for it to complete (up to 5 s).</summary>
+    private async Task IdleLoopAsync(string folder, int lastCount, CancellationToken stopToken, CancellationToken abortToken)
+    {
+        var refresh = TimeSpan.FromMinutes(_config.IdleRefreshMinutes);
+        ImapClient? boundClient = null;
+        IMailFolder? imapFolder = null;
+
+        while (!stopToken.IsCancellationRequested)
+        {
+            int? newCount = null;
+            try
+            {
+                await _gate.WaitAsync(stopToken).ConfigureAwait(false);
+                try
+                {
+                    var client = await EnsureConnectedAsync(stopToken).ConfigureAwait(false);
+
+                    // A reconnect replaces the client: the folder object of the old one is dead, so resolve it again.
+                    if (imapFolder is null || !ReferenceEquals(boundClient, client))
+                    {
+                        imapFolder = await GetImapFolderAsync(client, folder, FolderAccess.None, stopToken).ConfigureAwait(false)
+                            ?? throw new FolderNotFoundException(folder);
+                        boundClient = client;
+                    }
+
+                    // A call on another folder closes this one (IMAP selects one folder at a time).
+                    if (!imapFolder.IsOpen)
+                        await imapFolder.OpenAsync(FolderAccess.ReadOnly, stopToken).ConfigureAwait(false);
+                    newCount = CheckNewMail(imapFolder, ref lastCount);
+
+                    if (newCount is null)
+                    {
+                        var done = new CancellationTokenSource();
+                        Interlocked.Exchange(ref _idleDone, done);
+                        try
+                        {
+                            // Only idle when no call is waiting for the connection (re-checked after publishing
+                            // _idleDone, so a call that arrives now either sees it or is seen here).
+                            if (Volatile.Read(ref _pendingCalls) == 0)
+                            {
+                                done.CancelAfter(refresh);
+                                using var stopReg = stopToken.Register(static d => ((CancellationTokenSource)d!).Cancel(), done);
+                                await client.IdleAsync(done.Token, abortToken).ConfigureAwait(false);
+                            }
+                        }
+                        finally
+                        {
+                            Interlocked.Exchange(ref _idleDone, null);
+                            done.Dispose();
+                        }
+
+                        newCount = CheckNewMail(imapFolder, ref lastCount);
+                    }
+                }
+                finally
+                {
+                    _gate.Release();
+                }
+            }
+            catch (OperationCanceledException) when (stopToken.IsCancellationRequested) { break; }
+            catch (Exception ex)
+            {
+                _logger?.Error($"IDLE error, retrying: {ex.Message}");
+                imapFolder = null;
+                try { await Task.Delay(5_000, stopToken).ConfigureAwait(false); }
+                catch (OperationCanceledException) { break; }
+                continue;
+            }
+
+            // Raised outside the lock, so a handler may call this service.
+            if (newCount is { } count)
+            {
+                _logger?.Info($"New mail in '{folder}': {count} messages");
+                try { NewMailReceived?.Invoke(this, new NewMailEventArgs { FolderName = folder, MessageCount = count }); }
+                catch (Exception ex) { _logger?.Error("NewMailReceived handler threw", ex); }
+            }
+        }
+
+        _logger?.Info("IDLE monitoring stopped");
+    }
+
+    private static int? CheckNewMail(IMailFolder folder, ref int lastCount)
+    {
+        var count = folder.Count;
+        var grew = count > lastCount;
+        lastCount = count;
+        return grew ? count : null;
+    }
+
+    /// <summary>
+    /// Stops the IDLE background loop and waits for it to complete (up to 5 s; an IDLE that does not end
+    /// gracefully in that time is aborted).
+    /// </summary>
     public void StopIdle()
     {
-        if (_idleCts is null) return;
-        _idleCts.Cancel();
-        try { _idleTask?.Wait(TimeSpan.FromSeconds(5)); } catch (AggregateException) { }
-        _idleCts.Dispose();
-        _idleCts = null;
-        _idleTask = null;
+        CancellationTokenSource? stop, abort;
+        Task? task;
+        lock (_idleLock)
+        {
+            stop = _idleCts;
+            abort = _idleAbort;
+            task = _idleTask;
+            _idleCts = null;
+            _idleAbort = null;
+            _idleTask = null;
+        }
+        if (stop is null) return;
+
+        stop.Cancel();
+        try
+        {
+            if (task is not null && !task.Wait(TimeSpan.FromSeconds(5)))
+            {
+                abort?.Cancel();
+                task.Wait(TimeSpan.FromSeconds(2));
+            }
+        }
+        catch (AggregateException) { }
+
+        stop.Dispose();
+        abort?.Dispose();
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    private async Task EnsureConnectedAsync(CancellationToken cancellationToken)
+    /// <summary>
+    /// Takes the connection for one call. A running IDLE is ended gracefully first, and resumes when the call
+    /// releases the connection.
+    /// </summary>
+    private async Task<Releaser> LockAsync(CancellationToken cancellationToken)
     {
-        if (_client is { IsConnected: true, IsAuthenticated: true }) return;
-        _logger?.Info("IMAP reconnecting...");
-        _client?.Dispose();
-        var result = await ConnectAsync(cancellationToken).ConfigureAwait(false);
-        if (!result.IsSuccess)
-            throw new InvalidOperationException($"IMAP reconnect failed: {result.Error!.Code}: {result.Error.Message}");
-    }
-
-    private async Task<IMailFolder?> GetImapFolderAsync(string name, FolderAccess access, CancellationToken ct)
-    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        Interlocked.Increment(ref _pendingCalls);
         try
         {
-            IMailFolder? folder = string.Equals(name, "INBOX", StringComparison.OrdinalIgnoreCase)
-                ? _client!.Inbox
-                : await _client!.GetFolderAsync(name, ct).ConfigureAwait(false);
-
-            if (folder is null) return null;
-
-            if (access != FolderAccess.None)
+            var done = Volatile.Read(ref _idleDone);
+            if (done is not null)
             {
-                if (!folder.IsOpen)
-                    await folder.OpenAsync(access, ct).ConfigureAwait(false);
-                else if (folder.Access < access)
-                {
-                    await folder.CloseAsync(false, ct).ConfigureAwait(false);
-                    await folder.OpenAsync(access, ct).ConfigureAwait(false);
-                }
+                try { done.Cancel(); }
+                catch (ObjectDisposedException) { /* the IDLE already ended */ }
             }
+            await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            Interlocked.Decrement(ref _pendingCalls);
+        }
+        return new Releaser(_gate);
+    }
 
-            return folder;
+    private readonly struct Releaser(SemaphoreSlim gate) : IDisposable
+    {
+        public void Dispose() => gate.Release();
+    }
+
+    /// <summary>Opens a new connection, replacing (and disposing) the current one. Caller holds the gate.</summary>
+    private async Task<ImapClient> ConnectCoreAsync(CancellationToken cancellationToken)
+    {
+        var security = MapSecurity(_config.SecurityMode);
+
+        var previous = _client;
+        _client = null;
+        if (previous is not null)
+        {
+            try
+            {
+                if (previous.IsConnected)
+                    await previous.DisconnectAsync(true, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger?.Debug($"Closing the previous IMAP connection failed: {ex.Message}");
+            }
+            finally
+            {
+                previous.Dispose();
+            }
+        }
+
+        var client = new ImapClient { Timeout = _config.TimeoutSeconds * 1000 };
+        try
+        {
+            await client.ConnectAsync(_config.Host, _config.Port, security, cancellationToken).ConfigureAwait(false);
+            await client.AuthenticateAsync(_config.Username, _config.Password, cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            client.Dispose();
+            throw;
+        }
+
+        _client = client;
+        _logger?.Info($"Connected to IMAP {_config.Host}:{_config.Port}");
+        return client;
+    }
+
+    /// <summary>Returns a connected, authenticated client, reconnecting when needed. Caller holds the gate.</summary>
+    private async Task<ImapClient> EnsureConnectedAsync(CancellationToken cancellationToken)
+    {
+        if (_client is { IsConnected: true, IsAuthenticated: true } client) return client;
+        if (_client is not null) _logger?.Info("IMAP reconnecting...");
+        return await ConnectCoreAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<IMailFolder?> GetImapFolderAsync(ImapClient client, string name, FolderAccess access, CancellationToken ct)
+    {
+        IMailFolder? folder;
+        try
+        {
+            folder = string.Equals(name, "INBOX", StringComparison.OrdinalIgnoreCase)
+                ? client.Inbox
+                : await client.GetFolderAsync(name, ct).ConfigureAwait(false);
         }
         catch (FolderNotFoundException) { return null; }
-        catch (Exception ex)
+
+        if (folder is null) return null;
+
+        if (access != FolderAccess.None)
         {
-            _logger?.Warning($"Error resolving folder '{name}': {ex.Message}");
-            return null;
+            if (!folder.IsOpen)
+                await folder.OpenAsync(access, ct).ConfigureAwait(false);
+            else if (folder.Access < access)
+            {
+                await folder.CloseAsync(false, ct).ConfigureAwait(false);
+                await folder.OpenAsync(access, ct).ConfigureAwait(false);
+            }
+        }
+
+        return folder;
+    }
+
+    /// <summary>
+    /// Maps an exception from an IMAP operation to an <see cref="Error"/> of the matching kind and logs it.
+    /// </summary>
+    private Error Fail(Exception ex, string what)
+    {
+        switch (ex)
+        {
+            case OperationCanceledException:
+                _logger?.Warning($"{what}: cancelled");
+                return MailErrors.Cancelled();
+            case ImapConfigException:
+                _logger?.Error($"{what}: {ex.Message}");
+                return MailErrors.Validation(MailErrorCodes.ImapConfigInvalid, ex.Message);
+            case AuthenticationException:
+                _logger?.Error($"{what}: authentication failed", ex);
+                return MailErrors.Unauthorized(MailErrorCodes.ImapAuthenticationFailed, "Authentication failed");
+            case TimeoutException:
+                _logger?.Error($"{what}: timed out", ex);
+                return MailErrors.Timeout(MailErrorCodes.ImapTimeout, "IMAP operation timed out");
+            case SocketException or IOException or ServiceNotConnectedException or SslHandshakeException:
+                _logger?.Error($"{what}: IMAP server {_config.Host}:{_config.Port} unreachable", ex);
+                return MailErrors.Unavailable(MailErrorCodes.ImapConnectionFailed,
+                    $"Could not connect to IMAP server {_config.Host}:{_config.Port}", ex);
+            case FolderNotFoundException:
+                _logger?.Warning($"{what}: {ex.Message}");
+                return MailErrors.NotFound(MailErrorCodes.FolderNotFound, ex.Message);
+            case MessageNotFoundException:
+                _logger?.Warning($"{what}: {ex.Message}");
+                return MailErrors.NotFound(MailErrorCodes.MessageNotFound, ex.Message);
+            case ImapCommandException command:
+                _logger?.Warning($"{what}: server answered {command.Response}: {command.ResponseText}");
+                return MailErrors.Validation(MailErrorCodes.ImapRejected, ex.Message, $"IMAP {command.Response}");
+            default:
+                _logger?.Error(what, ex);
+                return MailErrors.Internal(MailErrorCodes.ImapError, ex);
         }
     }
 
@@ -607,7 +810,10 @@ public sealed class ImapService : IDisposable
                     if (att is MimePart part)
                         attachments.Add(new ReceivedAttachment { FileName = part.FileName, ContentType = part.ContentType.MimeType });
             }
-            catch (Exception ex) { _logger?.Warning($"Could not fetch body for UID {summary.UniqueId}: {ex.Message}"); }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger?.Warning($"Could not fetch body for UID {summary.UniqueId}: {ex.Message}");
+            }
         }
 
         var env = summary.Envelope;
@@ -683,13 +889,19 @@ public sealed class ImapService : IDisposable
         return q;
     }
 
-    private static SecureSocketOptions MapSecurity(MailSecurityMode mode) => mode switch
+    /// <summary>
+    /// Maps the configured security mode. An unknown value fails closed: it is a configuration error, never a
+    /// silent fallback to opportunistic TLS.
+    /// </summary>
+    internal static SecureSocketOptions MapSecurity(MailSecurityMode mode) => mode switch
     {
         MailSecurityMode.None     => SecureSocketOptions.None,
         MailSecurityMode.StartTls => SecureSocketOptions.StartTls,
         MailSecurityMode.SslTls   => SecureSocketOptions.SslOnConnect,
-        _                         => SecureSocketOptions.Auto
+        _                         => throw new ImapConfigException($"Imap.SecurityMode '{mode}' is not a known security mode")
     };
+
+    private sealed class ImapConfigException(string message) : Exception(message);
 
     // ── IDisposable ───────────────────────────────────────────────────────────
 
@@ -701,6 +913,5 @@ public sealed class ImapService : IDisposable
         StopIdle();
         _client?.Dispose();
         _client = null;
-        GC.SuppressFinalize(this);
     }
 }

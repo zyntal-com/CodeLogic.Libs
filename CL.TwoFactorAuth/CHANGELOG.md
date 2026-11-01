@@ -29,6 +29,11 @@ All notable changes to **CodeLogic.TwoFactorAuth** are documented here. Versions
 
 ### Fixed
 
+- **Validation errors no longer leak exception text.** `ValidateTotp` returned `"TOTP validation error: <exception
+  message>"` as `ErrorMessage` and `GenerateTotpCode` put the exception message and type in its `Error`. Both now return a
+  generic message (`TotpValidationResult.ValidationErrorMessage`, new constant) and log the details.
+- **`ProvisioningUri` escapes the secret.** The issuer and user were escaped but the secret was spliced raw, so a
+  padded (`=`) or hostile secret could add or override query parameters. It is now percent-encoded too.
 - **The provisioning URI carries the time step.** `ProvisioningUri` omitted `period`, so with a
   non-default `TimeStepSeconds` the authenticator app generated 30-second codes the server rejected.
   `GenerateNewKey` now sets `PeriodSeconds` from the configuration and the URI always ends in

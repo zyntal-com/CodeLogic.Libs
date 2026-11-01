@@ -13,6 +13,9 @@ public static class BlurHash
     private const string Alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz#$%*+,-.:;=?@[]^_{|}~";
     private const int MaxDecodeSide = 2048;
 
+    /// <summary>The most pixels <see cref="Decode"/> produces (for example 1024 x 1024 or 2048 x 512).</summary>
+    public const int MaxDecodePixels = 1024 * 1024;
+
     /// <summary>Encodes an image (analysed at up to 64 pixels on the longest side).</summary>
     /// <param name="image">The image.</param>
     /// <param name="xComponents">Horizontal detail, 1–9. Default 4.</param>
@@ -91,6 +94,8 @@ public static class BlurHash
         if (hash is null || hash.Length < 6) return false;
         foreach (var ch in hash) if (Alphabet.IndexOf(ch) < 0) return false;
         var sizeFlag = Decode83(hash.AsSpan(0, 1));
+        // 1-9 components per axis (size flag 0-80); the two digits above 80 would mean ten rows.
+        if (sizeFlag > 80) return false;
         var (nx, ny) = (sizeFlag % 9 + 1, sizeFlag / 9 + 1);
         return hash.Length == 4 + 2 * nx * ny;
     }
@@ -98,7 +103,7 @@ public static class BlurHash
     /// <summary>Decodes a hash into a placeholder image.</summary>
     /// <param name="hash">The BlurHash.</param>
     /// <param name="width">Output width, 1–2048 (32 is plenty; scale it up in the browser).</param>
-    /// <param name="height">Output height, 1–2048.</param>
+    /// <param name="height">Output height, 1–2048; width x height at most <see cref="MaxDecodePixels"/>.</param>
     /// <param name="punch">Contrast boost, greater than 0. Default 1.</param>
     /// <returns>The image, or <c>imaging.invalid_argument</c> for a malformed hash or size.</returns>
     public static Result<ImageDocument> Decode(string hash, int width, int height, double punch = 1)
@@ -106,6 +111,8 @@ public static class BlurHash
         if (!IsValid(hash)) return ImagingErrors.InvalidArgument("The text is not a valid BlurHash.");
         if (width is < 1 or > MaxDecodeSide || height is < 1 or > MaxDecodeSide)
             return ImagingErrors.InvalidArgument($"BlurHash output size must be 1–{MaxDecodeSide} per side.");
+        if ((long)width * height > MaxDecodePixels)
+            return ImagingErrors.InvalidArgument($"BlurHash output size must be at most {MaxDecodePixels:N0} pixels; decode small and scale up.");
         if (!(punch > 0) || !double.IsFinite(punch)) return ImagingErrors.InvalidArgument("BlurHash punch must be greater than 0.");
 
         var sizeFlag = Decode83(hash.AsSpan(0, 1));
@@ -126,23 +133,42 @@ public static class BlurHash
 
         try
         {
+            // The cosine basis is separable: tabulate it once per axis, then mix each row's components down to nx
+            // colours, so a pixel costs nx multiply-adds instead of nx * ny cosines.
+            var cosX = new double[nx * width];
+            for (var i = 0; i < nx; i++)
+                for (var x = 0; x < width; x++)
+                    cosX[i * width + x] = Math.Cos(Math.PI * x * i / width);
+            var cosY = new double[ny * height];
+            for (var j = 0; j < ny; j++)
+                for (var y = 0; y < height; y++)
+                    cosY[j * height + y] = Math.Cos(Math.PI * y * j / height);
+
             var pixels = new byte[width * height * 4];
+            var row = new double[nx * 3];
             for (var y = 0; y < height; y++)
             {
+                Array.Clear(row);
+                for (var j = 0; j < ny; j++)
+                {
+                    var cy = cosY[j * height + y];
+                    for (var i = 0; i < nx; i++)
+                    {
+                        var c = (j * nx + i) * 3;
+                        row[i * 3] += colors[c] * cy;
+                        row[i * 3 + 1] += colors[c + 1] * cy;
+                        row[i * 3 + 2] += colors[c + 2] * cy;
+                    }
+                }
                 for (var x = 0; x < width; x++)
                 {
                     double r = 0, g = 0, b = 0;
-                    for (var j = 0; j < ny; j++)
+                    for (var i = 0; i < nx; i++)
                     {
-                        var cy = Math.Cos(Math.PI * y * j / height);
-                        for (var i = 0; i < nx; i++)
-                        {
-                            var basis = Math.Cos(Math.PI * x * i / width) * cy;
-                            var c = (j * nx + i) * 3;
-                            r += colors[c] * basis;
-                            g += colors[c + 1] * basis;
-                            b += colors[c + 2] * basis;
-                        }
+                        var basis = cosX[i * width + x];
+                        r += row[i * 3] * basis;
+                        g += row[i * 3 + 1] * basis;
+                        b += row[i * 3 + 2] * basis;
                     }
                     var p = (y * width + x) * 4;
                     pixels[p] = (byte)LinearToSrgb(r);

@@ -40,7 +40,7 @@ jobs:
 
     steps:
       - name: Checkout CodeLogic.Libs
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
           # The immutable commit of this run, not the branch name: if the branch moves while the suite runs, packing,
@@ -49,7 +49,7 @@ jobs:
 
       # SDK version comes from global.json (11.0 line; prerelease allowed until GA).
       - name: Setup .NET 11
-        uses: actions/setup-dotnet@v6
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
         with:
           global-json-file: global.json
 
@@ -314,7 +314,7 @@ jobs:
       - name: NuGet login (OIDC)
         if: steps.changes.outputs.has_changes == 'True'
         id: nuget-login
-        uses: NuGet/login@v1
+        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0
         with:
           user: ${{ vars.NUGET_USER }}
 
@@ -334,7 +334,7 @@ jobs:
 
       - name: Create GitHub release
         if: steps.changes.outputs.has_changes == 'True'
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
         with:
           # Tag the commit that was built. Without this a new tag lands on the default branch.
           target_commitish: ${{ github.sha }}

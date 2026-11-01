@@ -45,7 +45,7 @@ Connection-pool metrics come from the drivers' own meters: MySqlConnector, Npgsq
 | Setting | Event | What happens |
 |---|---|---|
 | `slowQueryThresholdMs` (default 1000) | `SlowQueryEvent` | Commands slower than the threshold are reported with their SQL and duration. |
-| `captureExplainOnSlowQuery` | `SlowQueryEvent.Plan` | For slow reads outside transactions, the plan is captured on a separate connection in the background, without running the statement. The caller never waits for it. |
+| `captureExplainOnSlowQuery` | `SlowQueryEvent.Plan` | For slow reads outside transactions, the plan is captured on a separate connection in the background, without running the statement. Only a single plain read is explained: batches and raw statements that are not plain `SELECT`s get no plan, since putting `EXPLAIN` in front would run the rest again. The caller never waits for it. |
 | `nPlusOneThreshold` | `NPlusOneDetectedEvent` | The same parameterized query running this many times within a second is reported once per window. |
 | `publishQueryEvents` | `QueryExecutedEvent` | Every command is reported, with operation, table, duration, rows and success. This is frequent, so it's off by default. |
 | `data.cache.publishEvents` | `CacheHitEvent` / `CacheMissEvent` | Every cached read is reported. |

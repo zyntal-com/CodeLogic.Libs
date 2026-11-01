@@ -88,6 +88,21 @@ public sealed class ResilienceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Raw_queries_that_write_are_not_retried_once_sent()
+    {
+        var (db, source) = Create(retries: 2);
+        var before = source.Opens;
+        var returning = await db.SqlQueryAsync<string>($"INSERT INTO res_items (v) VALUES ({"transient"}) RETURNING v");
+        Assert.Equal(DataErrors.ProviderErrorCode, returning.Error!.Code);
+        Assert.Equal(before + 1, source.Opens);                              // outcome unknown: a retry could insert twice
+
+        before = source.Opens;
+        var marked = await db.SqlScalarAsync<long>($"SELECT COUNT(*) FROM cl_fault_transient", SqlIntent.Write);
+        Assert.True(marked.IsFailure);
+        Assert.Equal(before + 1, source.Opens);                              // marked as a write: same rule
+    }
+
+    [Fact]
     public async Task Transient_read_failures_retry_but_permanent_ones_do_not()
     {
         var (db, source) = Create(retries: 2);

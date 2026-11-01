@@ -36,9 +36,9 @@ public readonly struct MySqlFeatures(Database db)
         if (db.Provider is not MySqlDataProvider) return DataErrors.Unsupported($"{statement} TABLE needs MySQL; this connection uses {db.Provider.Name}.");
         var table = db.Admin.QuotedTable<T>();
         if (table.IsFailure) return table.Error!;
-        // A read (not ExecuteSql): maintenance changes no rows, so cached results stay valid.
+        // A side effect on the primary (never a replica, never retried once sent); maintenance changes no rows, so cached results stay valid.
         var rows = await db.SqlReadAsync(SqlText.Raw($"{statement} TABLE {table.Value}"),
-            static r => new MySqlTableMessage(r.GetString(0), r.GetString(1), r.GetString(2), r.GetString(3)), ct).ConfigureAwait(false);
+            static r => new MySqlTableMessage(r.GetString(0), r.GetString(1), r.GetString(2), r.GetString(3)), SqlIntent.SideEffect, ct).ConfigureAwait(false);
         if (rows.IsFailure) return rows.Error!;
         return rows.Value!.FirstOrDefault(m => m.Type == "error") is { } failed
             ? DataErrors.ProviderError($"{statement} TABLE failed.", failed.Text)

@@ -93,7 +93,10 @@ public sealed class DataBackup
 
     /// <summary>
     /// Restores the backup in <paramref name="directory"/>: drops the backed-up tables (children first), recreates
-    /// them and reinserts their rows. Each table is filled in one transaction.
+    /// them and reinserts their rows. Each table is filled in one transaction. The manifest is checked first: store types,
+    /// collations, defaults and table options must be plain values (a default may only be a literal or a known function
+    /// such as <c>CURRENT_TIMESTAMP</c>), and every rows file must lie inside <paramref name="directory"/>; otherwise nothing
+    /// is touched and <c>data.validation</c> is returned. Restore only backups you trust: the rows are inserted as they are.
     /// </summary>
     public async ValueTask<Result<BackupManifest>> RestoreAsync(string directory, CancellationToken ct = default)
     {
@@ -106,6 +109,9 @@ public sealed class DataBackup
             return DataErrors.Validation($"'{manifestPath}' is not a CL.Data backup (format {FormatVersion}).");
         if (!string.Equals(manifest.Provider, _db.Provider.Name, StringComparison.OrdinalIgnoreCase))
             return DataErrors.Unsupported($"The backup was written by {manifest.Provider}; restore it to the same provider.");
+        if (manifest.Tables is null) return DataErrors.Validation($"'{manifestPath}' lists no tables.");
+        // Types, collations, defaults and options become DDL text: refuse anything but plain values before dropping a table.
+        if (BackupValidator.Check(manifest, directory) is { } unsafeManifest) return unsafeManifest;
 
         var ddl = _db.Provider.Ddl;
         foreach (var entry in manifest.Tables.Reverse())

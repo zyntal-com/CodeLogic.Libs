@@ -14,11 +14,11 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       # SDK version comes from global.json (11.0 line; prerelease allowed until GA).
       - name: Setup .NET 11
-        uses: actions/setup-dotnet@v6
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
         with:
           global-json-file: global.json
 
@@ -67,10 +67,10 @@ jobs:
       CL_DATA_MYSQL_CS: Server=127.0.0.1;Port=3306;Database=cl_data;User ID=root;Password=;AllowUserVariables=true
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Setup .NET 11
-        uses: actions/setup-dotnet@v6
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
         with:
           global-json-file: global.json
 
@@ -89,10 +89,10 @@ jobs:
       CL_DATA_REPLICAS: '1'
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Setup .NET 11
-        uses: actions/setup-dotnet@v6
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
         with:
           global-json-file: global.json
 
@@ -135,10 +135,10 @@ jobs:
       CL_DATA_MYSQL_CS: Server=127.0.0.1;Port=3306;Database=cl_data;User ID=root;Password=;AllowLoadLocalInfile=true
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Setup .NET 11
-        uses: actions/setup-dotnet@v6
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
         with:
           global-json-file: global.json
 
@@ -168,10 +168,10 @@ jobs:
       CL_DATA_PG_CS: Host=127.0.0.1;Port=5432;Database=cl_data;Username=postgres;Password=cl_data_pw
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Setup .NET 11
-        uses: actions/setup-dotnet@v6
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
         with:
           global-json-file: global.json
 
@@ -186,10 +186,10 @@ jobs:
       CL_DATA_MSSQL_CS: Server=127.0.0.1,1433;Database=cl_data;User ID=sa;Password=Your_strong_password123!;Encrypt=False;TrustServerCertificate=True
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Setup .NET 11
-        uses: actions/setup-dotnet@v6
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
         with:
           global-json-file: global.json
 
@@ -218,9 +218,9 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Setup .NET 11
-        uses: actions/setup-dotnet@v6
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
         with:
           global-json-file: global.json
       - name: Native toolchain
@@ -247,13 +247,16 @@ jobs:
       CL_STORAGE_TEST_WEBDAV_PASS: cltest-pw
       # Not named RCLONE_*: rclone reads every RCLONE_<NAME> variable as its --<name> flag.
       WEBDAV_SERVER_RCLONE: v1.75.1
+      # SHA-256 of rclone-<version>-windows-amd64.zip from the release's SHA256SUMS (downloads.rclone.org
+      # and the GitHub release agree). Update it together with the version.
+      WEBDAV_SERVER_RCLONE_SHA256: 200eb602c126d82aa38b51e0f6b9ae837473ff99b51278d3f6f837574c494d6e
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       # SDK version comes from global.json (11.0 line; prerelease allowed until GA).
       - name: Setup .NET 11
-        uses: actions/setup-dotnet@v6
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
         with:
           global-json-file: global.json
 
@@ -263,6 +266,7 @@ jobs:
         run: |
           set -e
           curl -sSLo rclone.zip "https://downloads.rclone.org/$WEBDAV_SERVER_RCLONE/rclone-$WEBDAV_SERVER_RCLONE-windows-amd64.zip"
+          echo "$WEBDAV_SERVER_RCLONE_SHA256  rclone.zip" | sha256sum -c -
           unzip -q rclone.zip
           mkdir -p "$RUNNER_TEMP/dav"
           MSYS_NO_PATHCONV=1 openssl req -x509 -newkey rsa:2048 -nodes -days 2 -subj "/CN=localhost" \
@@ -318,11 +322,11 @@ jobs:
       CL_STORAGE_TEST_WEBDAV_MTLS_URL: https://localhost:8444/
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       # SDK version comes from global.json (11.0 line; prerelease allowed until GA).
       - name: Setup .NET 11
-        uses: actions/setup-dotnet@v6
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
         with:
           global-json-file: global.json
 

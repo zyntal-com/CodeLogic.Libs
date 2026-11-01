@@ -64,8 +64,10 @@ Each connection mounts one security boundary:
 - an FTP, SFTP, or WebDAV directory.
 
 API paths are relative to that mount. Backslashes are normalized to `/`, empty and `.` segments are
-removed (so a leading `/` is ignored), and a `..` segment or a NUL fails with `storage.invalid_path`, as
-does a local path that resolves outside the root (a drive-qualified path, or a link leading out). The
+removed (so a leading `/` is ignored), and a `..` segment or a control character (U+0000 to U+001F and U+007F:
+NUL, CR, LF, tab, ...) fails with `storage.invalid_path`, as does a local path that resolves outside the root (a
+drive-qualified path, or a link leading out). On Windows, local paths also reject `:` and reserved device names
+(`CON`, `PRN`, `AUX`, `NUL`, `COM0`-`COM9`, `LPT0`-`LPT9`, with or without an extension). The
 empty path means the mounted root for info/listing and idempotent root directory creation; transfers need
 a non-root path. Link targets, raw-command
 paths, and every other path the library resolves stay inside the mount; only raw commands (off by
@@ -88,7 +90,7 @@ sections:
 
 | Section | Model | Important settings |
 |---|---|---|
-| `storage.local` | `LocalConnectionConfig` | `RootPath`, `FollowLinks` |
+| `storage.local` | `LocalConnectionConfig` | `RootPath` (absolute; a relative root is a validation error), `FollowLinks` |
 | `storage.s3` | `S3ConnectionConfig` | `Bucket`, `Prefix`, `Region`, endpoint/auth, multipart bounds |
 | `storage.ftp` | `FtpConnectionConfig` | host/root/auth, encryption/data mode, TLS pins and versions, encoding, listing parser |
 | `storage.sftp` | `SftpConnectionConfig` | host/root, auth methods and keys, host-key pins or `known_hosts`, algorithms, jump host |
@@ -191,9 +193,10 @@ if (files.Capabilities.Supports(StorageFeature.Permissions))
 
 Optional features return `storage.unsupported` on connections that lack them. Flags include
 `MetadataWrite`, `Tags`, `Versioning`, `SignedReadUrls`, `SignedWriteUrls`, `Permissions`, `Ownership`, `SetTimestamps`,
-`CreateLinks`, `ReadLinks`, `Checksums`, `Append`, `ResumableUpload`, `AtomicMove`, `RawCommands`,
+`CreateLinks`, `ReadLinks`, `Checksums`, `Append`, `AtomicMove`, `RawCommands`,
 `SpaceInfo`, `ChangeNotifications`, `ConditionalCreate`, `ConditionalUpdate`, `ConditionalDelete`, and
-`CaseInsensitivePaths`. `Capabilities.Limits` (`StorageLimits`) adds what a provider reports: page size,
+`CaseInsensitivePaths`. `ResumableUpload` is reserved and reported by no built-in provider: staged resume
+works where `Append` is supported. `Capabilities.Limits` (`StorageLimits`) adds what a provider reports: page size,
 object and single-upload size, metadata size, tag count, and preferred part size. See the capability table
 in [Files & Attributes](files.md#metadata-tags-versions-and-signed-urls).
 

@@ -1,3 +1,6 @@
+using System.Buffers.Binary;
+using System.Diagnostics;
+using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
@@ -7,56 +10,66 @@ namespace CL.GameNetQuery.Minecraft;
 
 /// <summary>
 /// UDP query client for Minecraft servers.
-/// Implements the Minecraft GameSpy4 query protocol.
+/// Implements the Minecraft GameSpy4 query protocol (handshake, then a full-stat request).
 /// </summary>
-public static class MinecraftQueryClient
+public static partial class MinecraftQueryClient
 {
     private const int TimeoutMs = 3000;
     private const int BufferSize = 8192;
+    private const byte TypeHandshake = 0x09;
+    private const byte TypeStat = 0x00;
+
+    /// <summary>Fixed padding after the type and session id of a full-stat response: <c>splitnum\0\x80\0</c>.</summary>
+    private const int FullStatPadding = 11;
+
+    private static ReadOnlySpan<byte> SplitNumPadding => [(byte)'s', (byte)'p', (byte)'l', (byte)'i', (byte)'t', (byte)'n', (byte)'u', (byte)'m', 0x00, 0x80, 0x00];
 
     /// <summary>
     /// Queries a Minecraft server and returns the parsed key-value response.
     /// </summary>
     /// <param name="ip">The server IP address as a string.</param>
     /// <param name="queryPort">The query port number.</param>
-    /// <returns>The parsed server response as key-value lines.</returns>
-    public static string QueryServer(string ip, int queryPort)
-    {
-        return QueryServer(IPAddress.Parse(ip), queryPort);
-    }
+    /// <returns>The parsed server response as <c>key: value</c> lines; empty on failure or when <paramref name="ip"/> is not an IP address.</returns>
+    public static string QueryServer(string ip, int queryPort) =>
+        IPAddress.TryParse(ip, out var address) ? QueryServer(address, queryPort) : string.Empty;
 
     /// <summary>
-    /// Queries a Minecraft server and returns the parsed key-value response.
+    /// Queries a Minecraft server with a full-stat request and returns the parsed key-value response.
     /// </summary>
     /// <param name="serverIp">The server IP address.</param>
     /// <param name="queryPort">The query port number.</param>
-    /// <returns>The parsed server response as key-value lines.</returns>
+    /// <returns>
+    /// One <c>key: value</c> line per server field (<c>hostname</c>, <c>gametype</c>, <c>game_id</c>,
+    /// <c>version</c>, <c>plugins</c>, <c>map</c>, <c>numplayers</c>, <c>maxplayers</c>, <c>hostport</c>,
+    /// <c>hostip</c>), plus <c>players</c> with the online player names joined by <c>", "</c>. Empty on failure.
+    /// </returns>
     public static string QueryServer(IPAddress serverIp, int queryPort)
     {
-        using var udpClient = new UdpClient();
-        udpClient.Connect(serverIp, queryPort);
-        udpClient.Client.ReceiveTimeout = TimeoutMs;
-        udpClient.Client.ReceiveBufferSize = BufferSize;
-
         try
         {
-            var handshake = CreateHandshakeRequest();
+            var endpoint = new IPEndPoint(serverIp, queryPort);
+            // A connected socket only accepts datagrams from the server; the session id is checked as well.
+            using var udpClient = new UdpClient(serverIp.AddressFamily);
+            udpClient.Connect(endpoint);
+            udpClient.Client.ReceiveTimeout = TimeoutMs;
+            udpClient.Client.ReceiveBufferSize = BufferSize;
+            var deadline = Stopwatch.GetTimestamp() + TimeoutMs * Stopwatch.Frequency / 1000;
+
+            var sessionId = Random.Shared.Next() & 0x0F0F0F0F;     // the protocol only keeps the low nibble of each byte
+
+            var handshake = CreateHandshakeRequest(sessionId);
             udpClient.Send(handshake, handshake.Length);
-
-            var endPoint = new IPEndPoint(IPAddress.Any, queryPort);
-            var challengeResponse = udpClient.Receive(ref endPoint);
-
-            if (challengeResponse.Length < 5)
+            var challengeResponse = Receive(udpClient, endpoint, TypeHandshake, sessionId, deadline);
+            if (challengeResponse is null || !TryParseChallengeToken(challengeResponse, out var challengeToken))
                 return string.Empty;
 
-            var challengeToken = ParseChallengeToken(challengeResponse);
-            var queryRequest = CreateQueryRequest(challengeToken);
+            var queryRequest = CreateFullStatRequest(sessionId, challengeToken);
             udpClient.Send(queryRequest, queryRequest.Length);
+            var serverResponse = Receive(udpClient, endpoint, TypeStat, sessionId, deadline);
+            if (serverResponse is null || ParseFullStat(serverResponse) is not { } stat)
+                return string.Empty;
 
-            var serverResponse = udpClient.Receive(ref endPoint);
-            var response = Encoding.GetEncoding("ISO-8859-1").GetString(serverResponse);
-
-            return ParseServerResponse(response);
+            return FormatResponse(stat.Values, stat.Players);
         }
         catch
         {
@@ -86,64 +99,118 @@ public static class MinecraftQueryClient
         return dict.TryGetValue(key, out var value) ? value : string.Empty;
     }
 
-    private static byte[] CreateHandshakeRequest() =>
-        [0xFE, 0xFD, 0x09, 0x12, 0x34, 0x56, 0x78];
-
-    private static byte[] ParseChallengeToken(byte[] response)
+    /// <summary>Waits for the next datagram from the server of the given type carrying our session id.</summary>
+    private static byte[]? Receive(UdpClient client, IPEndPoint endpoint, byte type, int sessionId, long deadline)
     {
-        var tokenString = Encoding.ASCII.GetString(response, 5, response.Length - 5).TrimEnd('\0');
-        var challengeInt = int.Parse(tokenString);
-        return BitConverter.GetBytes(challengeInt).Reverse().ToArray();
+        while (Stopwatch.GetTimestamp() < deadline)
+        {
+            var from = new IPEndPoint(IPAddress.Any, 0);
+            var data = client.Receive(ref from);
+            if (from.Port == endpoint.Port && from.Address.Equals(endpoint.Address)
+                && data.Length >= 5 && data[0] == type && BinaryPrimitives.ReadInt32BigEndian(data.AsSpan(1)) == sessionId)
+                return data;
+        }
+        return null;
     }
 
-    private static byte[] CreateQueryRequest(byte[] challengeToken)
+    internal static byte[] CreateHandshakeRequest(int sessionId)
     {
-        var request = new byte[11 + challengeToken.Length];
+        var request = new byte[7];
         request[0] = 0xFE;
         request[1] = 0xFD;
-        request[2] = 0x00;
-        request[3] = 0x12;
-        request[4] = 0x34;
-        request[5] = 0x56;
-        request[6] = 0x78;
-        Array.Copy(challengeToken, 0, request, 7, challengeToken.Length);
+        request[2] = TypeHandshake;
+        BinaryPrimitives.WriteInt32BigEndian(request.AsSpan(3), sessionId);
         return request;
     }
 
-    private static string ParseServerResponse(string response)
+    /// <summary>The challenge token is the decimal text after the type and session id, NUL-terminated.</summary>
+    internal static bool TryParseChallengeToken(byte[] response, out int token)
     {
-        var clean = RemoveMinecraftFormatting(response);
-        var parts = clean.Split('\0', StringSplitOptions.RemoveEmptyEntries);
-        var dict = new Dictionary<string, string>();
-        string? prevKey = null;
-
-        foreach (var part in parts)
-        {
-            var trimmed = part.Trim();
-            if (IsValidKey(trimmed))
-            {
-                if (prevKey is not null)
-                    dict[prevKey] = "(empty)";
-                prevKey = trimmed;
-            }
-            else if (prevKey is not null)
-            {
-                dict[prevKey] = trimmed;
-                prevKey = null;
-            }
-        }
-
-        if (prevKey is not null)
-            dict[prevKey] = "(empty)";
-
-        return string.Join(Environment.NewLine, dict.Select(kv => $"{kv.Key}: {kv.Value}"));
+        token = 0;
+        if (response.Length < 6)
+            return false;
+        var text = Encoding.ASCII.GetString(response, 5, response.Length - 5).TrimEnd('\0');
+        return int.TryParse(text, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out token);
     }
 
-    private static bool IsValidKey(string part) =>
-        !string.IsNullOrWhiteSpace(part) &&
-        char.IsLetter(part[0]) &&
-        part.All(c => char.IsLetterOrDigit(c) || c == '_');
+    /// <summary>
+    /// A full-stat request: magic, type 0, session id, challenge token, and four bytes of padding. Without the
+    /// padding the server answers with the basic stat (MOTD, game type, map, counts, port, IP as bare values),
+    /// which has no keys.
+    /// </summary>
+    internal static byte[] CreateFullStatRequest(int sessionId, int challengeToken)
+    {
+        var request = new byte[15];
+        request[0] = 0xFE;
+        request[1] = 0xFD;
+        request[2] = TypeStat;
+        BinaryPrimitives.WriteInt32BigEndian(request.AsSpan(3), sessionId);
+        BinaryPrimitives.WriteInt32BigEndian(request.AsSpan(7), challengeToken);
+        return request;                                          // bytes 11..14 stay zero: the full-stat padding
+    }
 
-    private static string RemoveMinecraftFormatting(string input) =>
-        Regex.Replace(input, @"[§?&][0-9a-fklmor]", string.Empty, RegexOptions.IgnoreCase);
+    /// <summary>
+    /// Parses a full-stat response: type, session id, 11 bytes of padding, NUL-separated key/value pairs ended
+    /// by an empty key, <c>\x01player_\0\0</c>, then NUL-terminated player names ended by an empty name.
+    /// </summary>
+    /// <returns>The fields and player names, or <see langword="null"/> when the packet is not a full-stat response.</returns>
+    internal static (IReadOnlyDictionary<string, string> Values, IReadOnlyList<string> Players)? ParseFullStat(byte[] response)
+    {
+        var index = 5 + FullStatPadding;
+        if (response.Length < index || response[0] != TypeStat
+            || !response.AsSpan(5, FullStatPadding).SequenceEqual(SplitNumPadding))
+            return null;
+
+        var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        while (true)
+        {
+            if (!TryReadString(response, ref index, out var key))
+                return null;
+            if (key.Length == 0)
+                break;
+            if (!TryReadString(response, ref index, out var value))
+                return null;
+            values[key] = value;
+        }
+
+        var players = new List<string>();
+        // "\x01player_\0\0" introduces the player section; older servers may end the packet before it.
+        if (index < response.Length && TryReadString(response, ref index, out var marker) && marker == "\x01player_")
+        {
+            index++;                                             // the second NUL after the marker
+            while (index < response.Length && TryReadString(response, ref index, out var name) && name.Length > 0)
+                players.Add(name);
+        }
+
+        return (values, players);
+    }
+
+    private static bool TryReadString(byte[] data, ref int index, out string value)
+    {
+        value = string.Empty;
+        if (index >= data.Length)
+            return false;
+        var end = Array.IndexOf(data, (byte)0, index);
+        if (end < 0)
+            return false;
+        value = Encoding.UTF8.GetString(data, index, end - index);
+        index = end + 1;
+        return true;
+    }
+
+    private static string FormatResponse(IReadOnlyDictionary<string, string> values, IReadOnlyList<string> players)
+    {
+        var lines = values.Select(kv => $"{Clean(kv.Key)}: {Clean(kv.Value)}").ToList();
+        if (!values.ContainsKey("players"))
+            lines.Add($"players: {string.Join(", ", players.Select(Clean))}");
+        return string.Join(Environment.NewLine, lines);
+
+        // One field per line: drop formatting codes and line breaks inside values (an MOTD may contain them).
+        static string Clean(string s) => RemoveMinecraftFormatting(s).Replace('\r', ' ').Replace('\n', ' ').Trim();
+    }
+
+    private static string RemoveMinecraftFormatting(string input) => FormattingCode().Replace(input, string.Empty);
+
+    [GeneratedRegex("[§&][0-9a-fk-or]", RegexOptions.IgnoreCase)]
+    private static partial Regex FormattingCode();
 }

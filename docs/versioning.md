@@ -71,6 +71,14 @@ interchangeably. Consumers never need a binding redirect to take a patch.
 `AssemblyVersion` is derived in `Directory.Build.targets`; the composed
 `Version` is assembled in `Directory.Build.props`.
 
+### Strong names
+
+From 5.0, every CodeLogic and `CodeLogic.*` assembly is strong-named with one key: public key token
+**`53a89305eedc5d98`**. The full identity is name, version, culture and that token. Released packages
+are fully signed by the release workflow, which reads the private key from a repository secret, and it
+refuses to publish anything not signed with this key. Local and CI builds sign with the committed public
+key, so they have the same identity. Strong naming is identity, not a security boundary.
+
 ---
 
 ## Releasing
@@ -105,8 +113,10 @@ request with the full suite green.
    (`prerelease` or `release`). It merges the source into `<channel>/<major>.x`, reading the major
    from the source's `version.txt`, and refuses to merge across lines.
 3. The release workflow on that branch re-runs the full suite, packs, pre-flights every package and
-   publishes. In CodeLogic.Libs only libraries changed since that line's last release tag
-   (`libs-v<major.minor>-<run>`) are packed.
+   publishes. In CodeLogic.Libs only libraries changed since that channel's last release tag
+   (`libs-v<major.minor>-<run>` for stable releases, `libs-preview-v<major.minor>-<run>` for previews)
+   are packed. Each published nuspec depends on CodeLogic `[5.0.0-preview, 6.0.0)` while 5.0 is in
+   preview, so the 5.0 previews satisfy it; it becomes `[5.0.0, 6.0.0)` once CodeLogic 5.0 is stable.
 
 A fix that applies to both lines is made on one integration branch and cherry-picked in a second
 pull request into the other.

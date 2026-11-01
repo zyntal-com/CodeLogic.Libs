@@ -65,6 +65,9 @@ public sealed class SqlServerDataProvider : DataProvider
     public override string? GetColumnCollation(ColumnMap column) => column.Hint<SqlServerColumnAttribute>()?.Collation;
 
     /// <inheritdoc />
+    public override IReadOnlyDictionary<string, string> TableOptions(EntityMap map, DataConnectionConfig config) => SqlServerTableOptions.For(map);
+
+    /// <inheritdoc />
     public override IErrorClassifier Errors { get; } = new SqlServerErrorClassifier();
 
     /// <inheritdoc />
@@ -176,6 +179,11 @@ public sealed class SqlServerDataProvider : DataProvider
             errors.Add(new($"{path}.sqlServer.defaultSchema", "A default schema is required."));
         if (config.FailoverHosts.Count > 0)
             errors.Add(new($"{path}.failoverHosts", "SQL Server uses SqlServer.FailoverPartner or an availability group listener instead of failover hosts."));
+        // SqlClient validates the server certificate against the machine's trust store only; a CA file cannot be given.
+        // Refusing the setting is better than ignoring it and leaving the operator to believe the CA is pinned.
+        if (!string.IsNullOrWhiteSpace(config.SslCaCertificatePath))
+            errors.Add(new($"{path}.sslCaCertificatePath",
+                "SQL Server cannot use a CA certificate file: install the CA in the machine's trust store, or pin the server certificate with 'Server Certificate=<path>' in the connection string."));
     }
 }
 

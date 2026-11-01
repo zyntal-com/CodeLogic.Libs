@@ -76,12 +76,26 @@ public sealed record NodeEndpoint(string Name, bool IsPrimary, string? Connectio
     public static NodeEndpoint Primary(DataConnectionConfig config) =>
         new(PrimaryName, true, config.ConnectionString, config.Host, config.Port, config.Username, config.Password);
 
-    /// <summary>A replica endpoint; unset values fall back to the primary's.</summary>
+    /// <summary>
+    /// A replica endpoint; unset values fall back to the primary's. A replica given only a <c>host</c> starts from the primary's
+    /// connection string (database, credentials, TLS and driver settings), with its own host, port and credentials on top.
+    /// </summary>
     public static NodeEndpoint Replica(DataConnectionConfig config, ReplicaConfig replica) =>
         new(replica.Name, false,
-            replica.ConnectionString ?? (replica.Host is null ? config.ConnectionString : null),
+            replica.ConnectionString ?? config.ConnectionString,
             replica.Host ?? config.Host, replica.Port ?? config.Port,
             replica.Username ?? config.Username, replica.Password ?? config.Password, replica.Weight);
+
+    /// <summary>The node's name, role and address; never the password or the connection string (which may hold one).</summary>
+    public override string ToString() =>
+        $"{Name} ({(IsPrimary ? "primary" : "replica")}{(Host is null ? "" : ", " + Host)}{(Port is { } port ? ":" + port.ToString(System.Globalization.CultureInfo.InvariantCulture) : "")})";
+
+    private bool PrintMembers(System.Text.StringBuilder builder)
+    {
+        builder.Append("Name = ").Append(Name).Append(", IsPrimary = ").Append(IsPrimary).Append(", Host = ").Append(Host)
+            .Append(", Port = ").Append(Port).Append(", Username = ").Append(Username).Append(", Weight = ").Append(Weight);
+        return true;
+    }
 }
 
 /// <summary>The outcome of classifying a provider exception.</summary>

@@ -39,9 +39,9 @@ public static class ValveUdpQuery
         CancellationToken cancellationToken = default)
     {
         if (!IPAddress.TryParse(ip, out var address))
-            return Error.Validation("gamenetquery.invalid_address", $"'{ip}' is not an IP address");
+            return Error.Validation(GameNetQueryErrorCodes.InvalidAddress, $"'{ip}' is not an IP address");
         if (timeoutMs <= 0)
-            return Error.Validation("gamenetquery.invalid_timeout", $"Timeout must be positive, was {timeoutMs} ms");
+            return Error.Validation(GameNetQueryErrorCodes.InvalidTimeout, $"Timeout must be positive, was {timeoutMs} ms");
 
         var endpoint = new IPEndPoint(address, port);
         var started = Stopwatch.GetTimestamp();
@@ -55,19 +55,19 @@ public static class ValveUdpQuery
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            return Error.Timeout("gamenetquery.timeout", $"No answer from {endpoint} within {timeoutMs} ms");
+            return Error.Timeout(GameNetQueryErrorCodes.Timeout, $"No answer from {endpoint} within {timeoutMs} ms");
         }
         catch (SocketException ex)
         {
-            return Error.Unavailable("gamenetquery.unreachable", $"{endpoint} is unreachable: {ex.Message}", ex.SocketErrorCode.ToString());
+            return Error.Unavailable(GameNetQueryErrorCodes.Unreachable, $"{endpoint} is unreachable: {ex.Message}", ex.SocketErrorCode.ToString());
         }
         catch (Exception ex) when (ex is InvalidDataException or IndexOutOfRangeException or ArgumentException)
         {
-            return Error.Internal("gamenetquery.malformed_response", $"Unreadable answer from {endpoint}: {ex.Message}", ex.GetType().Name);
+            return Error.Internal(GameNetQueryErrorCodes.MalformedResponse, $"Unreadable answer from {endpoint}: {ex.Message}", ex.GetType().Name);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            return Error.FromException(ex, "gamenetquery.query_failed");
+            return Error.FromException(ex, GameNetQueryErrorCodes.QueryFailed);
         }
     }
 
@@ -113,49 +113,87 @@ public static class ValveUdpQuery
 
     private static async Task<ServerInfo> QueryInfoCoreAsync(IPEndPoint endpoint, string ip, int port, int timeoutMs, CancellationToken ct)
     {
-        using var client = new UdpClient(endpoint.AddressFamily) { Client = { ReceiveTimeout = timeoutMs } };
+        using var client = Connect(endpoint, timeoutMs);
 
         var request = BuildInfoRequest();
-        await client.SendAsync(request, request.Length, endpoint).ConfigureAwait(false);
+        await client.SendAsync(request, request.Length).ConfigureAwait(false);
 
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         cts.CancelAfter(timeoutMs);
-        var result = await client.ReceiveAsync(cts.Token).ConfigureAwait(false);
+        var buffer = await ReceiveFromAsync(client, endpoint, cts.Token).ConfigureAwait(false);
 
         // Since 2020 servers may answer A2S_INFO with S2C_CHALLENGE (0x41); repeat the request with it.
-        if (result.Buffer.Length >= 9 && result.Buffer[4] == 0x41)
+        if (buffer.Length >= 9 && buffer[4] == 0x41)
         {
-            request = [.. request, .. result.Buffer.AsSpan(5, 4)];
-            await client.SendAsync(request, request.Length, endpoint).ConfigureAwait(false);
-            result = await client.ReceiveAsync(cts.Token).ConfigureAwait(false);
+            request = [.. request, .. buffer.AsSpan(5, 4)];
+            await client.SendAsync(request, request.Length).ConfigureAwait(false);
+            buffer = await ReceiveFromAsync(client, endpoint, cts.Token).ConfigureAwait(false);
         }
 
-        ExpectHeader(result.Buffer, 0x49, "A2S_INFO");
-        return ParseInfoResponse(result.Buffer, ip, port);
+        ExpectHeader(buffer, 0x49, "A2S_INFO");
+        return ParseInfoResponse(buffer, ip, port);
     }
 
     private static async Task<List<PlayerInfo>> QueryPlayersCoreAsync(IPEndPoint endpoint, int timeoutMs, CancellationToken ct)
     {
-        using var client = new UdpClient(endpoint.AddressFamily) { Client = { ReceiveTimeout = timeoutMs } };
+        using var client = Connect(endpoint, timeoutMs);
 
         var challengeRequest = BuildPlayerRequest(-1);
-        await client.SendAsync(challengeRequest, challengeRequest.Length, endpoint).ConfigureAwait(false);
+        await client.SendAsync(challengeRequest, challengeRequest.Length).ConfigureAwait(false);
 
         using var cts1 = CancellationTokenSource.CreateLinkedTokenSource(ct);
         cts1.CancelAfter(timeoutMs);
-        var challengeResp = await client.ReceiveAsync(cts1.Token).ConfigureAwait(false);
-        ExpectHeader(challengeResp.Buffer, 0x41, "A2S_PLAYER challenge");
-        var challengeNumber = BitConverter.ToInt32(challengeResp.Buffer, 5);
+        var challengeResp = await ReceiveFromAsync(client, endpoint, cts1.Token).ConfigureAwait(false);
+        ExpectHeader(challengeResp, 0x41, "A2S_PLAYER challenge");
+        if (challengeResp.Length < 9)
+            throw new InvalidDataException("A2S_PLAYER challenge is too short");
+        var challengeNumber = BitConverter.ToInt32(challengeResp, 5);
 
         var playerRequest = BuildPlayerRequest(challengeNumber);
-        await client.SendAsync(playerRequest, playerRequest.Length, endpoint).ConfigureAwait(false);
+        await client.SendAsync(playerRequest, playerRequest.Length).ConfigureAwait(false);
 
         using var cts2 = CancellationTokenSource.CreateLinkedTokenSource(ct);
         cts2.CancelAfter(timeoutMs);
-        var playerResp = await client.ReceiveAsync(cts2.Token).ConfigureAwait(false);
-        ExpectHeader(playerResp.Buffer, 0x44, "A2S_PLAYER");
-        return ParsePlayerResponse(playerResp.Buffer);
+        var playerResp = await ReceiveFromAsync(client, endpoint, cts2.Token).ConfigureAwait(false);
+        ExpectHeader(playerResp, 0x44, "A2S_PLAYER");
+        return ParsePlayerResponse(playerResp);
     }
+
+    /// <summary>
+    /// A UDP socket connected to <paramref name="endpoint"/>: the OS then drops datagrams from any other
+    /// source, so a third party cannot answer the query in the server's place.
+    /// </summary>
+    private static UdpClient Connect(IPEndPoint endpoint, int timeoutMs)
+    {
+        var client = new UdpClient(endpoint.AddressFamily) { Client = { ReceiveTimeout = timeoutMs } };
+        try
+        {
+            client.Connect(endpoint);
+            return client;
+        }
+        catch
+        {
+            client.Dispose();
+            throw;
+        }
+    }
+
+    /// <summary>Receives the next datagram that came from <paramref name="endpoint"/>; anything else is discarded.</summary>
+    private static async Task<byte[]> ReceiveFromAsync(UdpClient client, IPEndPoint endpoint, CancellationToken ct)
+    {
+        while (true)
+        {
+            var result = await client.ReceiveAsync(ct).ConfigureAwait(false);
+            if (IsFrom(result.RemoteEndPoint, endpoint))
+                return result.Buffer;
+        }
+    }
+
+    /// <summary>Whether <paramref name="remote"/> is <paramref name="expected"/> (IPv4-mapped IPv6 compares as IPv4).</summary>
+    internal static bool IsFrom(IPEndPoint remote, IPEndPoint expected) =>
+        remote.Port == expected.Port && Normalize(remote.Address).Equals(Normalize(expected.Address));
+
+    private static IPAddress Normalize(IPAddress a) => a.IsIPv4MappedToIPv6 ? a.MapToIPv4() : a;
 
     private static void ExpectHeader(byte[] data, byte type, string what)
     {
@@ -196,6 +234,31 @@ public static class ValveUdpQuery
         var maxPlayers = data.Length > index ? data[index++] : 0;
         var botCount = data.Length > index ? data[index++] : 0;
 
+        // Optional tail: server type, environment, visibility, VAC, [The Ship: 3 bytes], version, extra data flag.
+        var version = string.Empty;
+        IReadOnlyList<string> tags = [];
+        index += 4;
+        if (steamAppId == 2400)
+            index += 3;
+        if (index < data.Length)
+        {
+            version = ReadNullTerminatedString(data, ref index);
+            if (index < data.Length)
+            {
+                var edf = data[index++];
+                if ((edf & 0x80) != 0) index += 2;                   // game port
+                if ((edf & 0x10) != 0) index += 8;                   // server SteamID
+                if ((edf & 0x40) != 0)                               // SourceTV port and name
+                {
+                    index += 2;
+                    if (index < data.Length) ReadNullTerminatedString(data, ref index);
+                }
+                if ((edf & 0x20) != 0 && index < data.Length)        // keywords (sv_tags)
+                    tags = ReadNullTerminatedString(data, ref index)
+                        .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            }
+        }
+
         return new ServerInfo
         {
             Hostname = name,
@@ -203,6 +266,8 @@ public static class ValveUdpQuery
             PlayerCount = playerCount,
             MaxPlayers = maxPlayers,
             BotCount = botCount,
+            Version = version,
+            Tags = tags,
             Ip = ip,
             Port = port,
             IsOnline = true,
@@ -238,14 +303,18 @@ public static class ValveUdpQuery
         return players;
     }
 
-    private static string ReadNullTerminatedString(byte[] data, ref int index)
+    /// <summary>Reads a NUL-terminated UTF-8 string at <paramref name="index"/> and moves past the NUL.</summary>
+    /// <exception cref="InvalidDataException">The string starts past the end of the packet or has no terminator.</exception>
+    internal static string ReadNullTerminatedString(byte[] data, ref int index)
     {
-        var start = index;
-        while (index < data.Length && data[index] != 0x00)
-            index++;
+        if (index < 0 || index >= data.Length)
+            throw new InvalidDataException("A2S string starts past the end of the packet");
+        var length = Array.IndexOf(data, (byte)0, index) - index;
+        if (length < 0)
+            throw new InvalidDataException("A2S string has no terminator");
 
-        var result = Encoding.UTF8.GetString(data, start, index - start);
-        index++; // Skip null byte
+        var result = Encoding.UTF8.GetString(data, index, length);
+        index += length + 1;
         return result;
     }
 }

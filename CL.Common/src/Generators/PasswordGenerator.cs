@@ -120,7 +120,7 @@ public static class PasswordGenerator
         var words = new string[wordCount];
         for (int i = 0; i < wordCount; i++)
         {
-            var word = Wordlist[RandomByte() % Wordlist.Length];
+            var word = Wordlist[RandomNumberGenerator.GetInt32(Wordlist.Length)];
             words[i] = capitalize
                 ? char.ToUpperInvariant(word[0]) + word[1..]
                 : word;
@@ -169,27 +169,13 @@ public static class PasswordGenerator
         };
     }
 
-    private static string GenerateFromPool(string pool, int length)
-    {
-        var bytes = RandomNumberGenerator.GetBytes(length);
-        var sb = new StringBuilder(length);
-        foreach (var b in bytes)
-            sb.Append(pool[b % pool.Length]);
-        return sb.ToString();
-    }
+    // RandomNumberGenerator.GetString / GetInt32 / Shuffle sample uniformly (no modulo bias).
+    private static string GenerateFromPool(string pool, int length) =>
+        length <= 0 ? string.Empty : RandomNumberGenerator.GetString(pool, length);
 
     private static char PickRandom(string pool) =>
-        pool[RandomByte() % pool.Length];
+        pool[RandomNumberGenerator.GetInt32(pool.Length)];
 
-    private static int RandomByte() =>
-        RandomNumberGenerator.GetBytes(1)[0];
-
-    private static void Shuffle(char[] array)
-    {
-        for (int i = array.Length - 1; i > 0; i--)
-        {
-            int j = (int)(RandomNumberGenerator.GetBytes(4).Aggregate(0u, (acc, b) => (acc << 8) | b) % (uint)(i + 1));
-            (array[i], array[j]) = (array[j], array[i]);
-        }
-    }
+    private static void Shuffle(char[] array) =>
+        RandomNumberGenerator.Shuffle(array.AsSpan());
 }

@@ -8,8 +8,10 @@ namespace CL.Storage.Registry;
 
 /// <summary>
 /// The hold one transfer has on a resumable part file. In this process it is an entry in a shared table; across
-/// processes it is a lock marker created create-only beside the part file (<c>&lt;part&gt;.lock</c>) that names
-/// its owner, read back to confirm it. A marker whose owner is gone is taken over: on the same machine when its
+/// processes it is a lock marker created create-only beside the part file (<c>&lt;part&gt;.lock</c>) that identifies
+/// its owner, read back to confirm it. The marker holds a random owner id and salted hashes of the machine name,
+/// process id and start time, never the values themselves: a part file on a shared server does not disclose host
+/// names or process ids, and only the owner's machine can recognise its own markers. A marker whose owner is gone is taken over: on the same machine when its
 /// process no longer runs, from another machine only once it is older than <see cref="StaleAfter"/>. The hold is
 /// kept until the part file has been promoted, so nobody appends to it between the last write and the commit.
 /// </summary>
@@ -21,12 +23,15 @@ internal sealed class PartLease
     /// <summary>How long a marker written where create-only is not atomic settles before it is read back.</summary>
     internal static readonly TimeSpan ReadBackDelay = TimeSpan.FromSeconds(1);
 
-    private const string MarkerHeader = "cl-storage-part-lock/1";
+    private const string MarkerHeader = "cl-storage-part-lock/2";
+
+    /// <summary>The 5.0 marker format, which named the machine and process in clear text; still read.</summary>
+    private const string LegacyMarkerHeader = "cl-storage-part-lock/1";
 
     /// <summary>Part files being written in this process, so two writers never append into one.</summary>
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> ActiveParts = new(StringComparer.Ordinal);
 
-    private static readonly string ProcessIdentity = BuildProcessIdentity();
+    private static readonly (int ProcessId, long StartedTicks) ProcessIdentity = BuildProcessIdentity();
 
     private readonly IStorageService _destination;
     private readonly string _partKey;
@@ -59,7 +64,7 @@ internal sealed class PartLease
         var partKey = PartKey(destination, staging);
         if (!ActiveParts.TryAdd(partKey, 0))
             return Result<PartLease?>.Success(null);
-        var content = $"{MarkerHeader}\n{Guid.NewGuid():N}\n{ProcessIdentity}";
+        var content = FormatMarker(Guid.NewGuid().ToString("N"), Environment.MachineName, ProcessIdentity.ProcessId, ProcessIdentity.StartedTicks);
         var lease = new PartLease(destination, staging, partKey, content);
         var handedOut = false;
         try
@@ -187,23 +192,83 @@ internal sealed class PartLease
     }
 
     /// <summary>
+    /// The marker text: the header, a random owner id, then salted hashes (keyed by the owner id) of the machine name,
+    /// of machine and process id, and of machine, process id and start time.
+    /// </summary>
+    internal static string FormatMarker(string ownerId, string machineName, int processId, long startedTicks) =>
+        string.Join('\n',
+            MarkerHeader,
+            ownerId,
+            Tag(ownerId, machineName),
+            Tag(ownerId, machineName, Invariant(processId)),
+            Tag(ownerId, machineName, Invariant(processId), Invariant(startedTicks)));
+
+    private static string Invariant(long value) => value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+    private static string Tag(string ownerId, params ReadOnlySpan<string> parts)
+    {
+        var hash = System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(string.Join('\n', [ownerId, .. parts])));
+        return Convert.ToHexStringLower(hash.AsSpan(0, 16));
+    }
+
+    /// <summary>
     /// Whether the owner of a marker is gone: a process on this machine that no longer runs (or this process,
     /// which holds no such part file now), or a marker from elsewhere older than <see cref="StaleAfter"/>.
     /// </summary>
     private static async Task<bool> IsStaleAsync(IStorageService destination, string marker, string content, CancellationToken cancellationToken)
     {
         var lines = content.Split('\n');
-        if (lines.Length == 5 && lines[0] == MarkerHeader && lines[2] == Environment.MachineName &&
+        var machine = Environment.MachineName;
+        if (lines.Length == 5 && lines[0] == MarkerHeader && lines[2] == Tag(lines[1], machine))
+        {
+            var (ownerId, pidTag, processTag) = (lines[1], lines[3], lines[4]);
+            // This process holds no such part file (the in-process table said so), so its own marker is a leftover.
+            var ownPid = Invariant(ProcessIdentity.ProcessId);
+            if (pidTag == Tag(ownerId, machine, ownPid) && processTag == Tag(ownerId, machine, ownPid, Invariant(ProcessIdentity.StartedTicks)))
+                return true;
+            return !IsRunning(ownerId, pidTag, processTag);
+        }
+        if (lines.Length == 5 && lines[0] == LegacyMarkerHeader && lines[2] == machine &&
             int.TryParse(lines[3], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var pid) &&
             long.TryParse(lines[4], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var started))
         {
-            // This process holds no such part file (the in-process table said so), so its own marker is a leftover.
-            if (string.Join('\n', lines[2..5]) == ProcessIdentity)
+            if (pid == ProcessIdentity.ProcessId && started == ProcessIdentity.StartedTicks)
                 return true;
             return !IsRunning(pid, started);
         }
         var info = await destination.GetInfoAsync(marker, cancellationToken).ConfigureAwait(false);
         return info.IsSuccess && info.Value!.LastModified is { } modified && DateTimeOffset.UtcNow - modified > StaleAfter;
+    }
+
+    /// <summary>
+    /// Whether the process a hashed marker names still runs on this machine: running processes are matched against
+    /// the process-id hash, then against the start-time hash. An owner that could not read its own start time wrote
+    /// zero, and a matching process whose start time cannot be read is presumed to be the owner.
+    /// </summary>
+    private static bool IsRunning(string ownerId, string pidTag, string processTag)
+    {
+        var machine = Environment.MachineName;
+        System.Diagnostics.Process[] processes;
+        try { processes = System.Diagnostics.Process.GetProcesses(); }
+        catch (Exception) { return true; } // cannot tell: presumed running
+        var running = false;
+        foreach (var process in processes)
+        {
+            using (process)
+            {
+                if (running) continue;
+                var id = Invariant(process.Id);
+                if (Tag(ownerId, machine, id) != pidTag) continue;
+                if (processTag == Tag(ownerId, machine, id, Invariant(0)))
+                {
+                    running = true;
+                    continue;
+                }
+                try { running = processTag == Tag(ownerId, machine, id, Invariant(process.StartTime.ToUniversalTime().Ticks)); }
+                catch (Exception) { running = true; } // cannot tell: presumed running
+            }
+        }
+        return running;
     }
 
     private static bool IsRunning(int pid, long startedTicks)
@@ -223,7 +288,7 @@ internal sealed class PartLease
         }
     }
 
-    private static string BuildProcessIdentity()
+    private static (int ProcessId, long StartedTicks) BuildProcessIdentity()
     {
         long started = 0;
         try
@@ -235,9 +300,6 @@ internal sealed class PartLease
         {
             // Without a start time the process id alone identifies the owner.
         }
-        return string.Join('\n',
-            Environment.MachineName,
-            Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            started.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        return (Environment.ProcessId, started);
     }
 }

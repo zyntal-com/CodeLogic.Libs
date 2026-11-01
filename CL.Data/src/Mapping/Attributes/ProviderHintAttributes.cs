@@ -30,14 +30,18 @@ public sealed class MySqlColumnAttribute : Attribute
     /// <summary>UNSIGNED integer.</summary>
     public bool Unsigned { get; set; }
 
-    /// <summary>Column character set.</summary>
+    /// <summary>
+    /// Column character set. <b>Not applied yet</b>: schema sync does not emit it. Set <see cref="Collation"/> instead (a
+    /// MySQL collation implies its character set, for example <c>ascii_bin</c>).
+    /// </summary>
+    [Obsolete("Not applied by schema sync yet; set Collation (which implies the character set) instead.")]
     public string? Charset { get; set; }
 
     /// <summary>Column collation.</summary>
     public string? Collation { get; set; }
 }
 
-/// <summary>PostgreSQL table options.</summary>
+/// <summary>PostgreSQL table options, applied when schema sync creates the table (an existing table is not altered).</summary>
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct, Inherited = false)]
 public sealed class PostgresTableAttribute : Attribute
 {
@@ -62,14 +66,14 @@ public sealed class PostgresColumnAttribute : Attribute
     public string? Collation { get; set; }
 }
 
-/// <summary>SQL Server table options.</summary>
+/// <summary>SQL Server table options, applied when schema sync creates the table (an existing table is not altered).</summary>
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct, Inherited = false)]
 public sealed class SqlServerTableAttribute : Attribute
 {
     /// <summary>File group.</summary>
     public string? FileGroup { get; set; }
 
-    /// <summary>Data compression (<c>ROW</c>, <c>PAGE</c>).</summary>
+    /// <summary>Data compression (<c>NONE</c>, <c>ROW</c>, <c>PAGE</c>; other values are ignored).</summary>
     public string? DataCompression { get; set; }
 }
 
@@ -83,7 +87,8 @@ public sealed class SqlServerColumnAttribute : Attribute
     /// <summary>Column collation.</summary>
     public string? Collation { get; set; }
 
-    /// <summary>SPARSE column.</summary>
+    /// <summary>SPARSE column. <b>Not applied yet</b>: schema sync does not emit it.</summary>
+    [Obsolete("Not applied by schema sync yet.")]
     public bool Sparse { get; set; }
 }
 

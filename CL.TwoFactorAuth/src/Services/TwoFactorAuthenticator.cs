@@ -81,9 +81,9 @@ public sealed class TwoFactorAuthenticator
         }
         catch (Exception ex)
         {
-            var msg = $"Failed to generate TOTP code: {ex.Message}";
-            _logger?.Error(msg, ex);
-            return Result<string>.Failure(Error.Internal("2fa.generate_failed", msg, ex.GetType().Name));
+            // Details (which may describe the secret) go to the log only.
+            _logger?.Error($"Failed to generate TOTP code: {ex.Message}", ex);
+            return Result<string>.Failure(Error.Internal("2fa.generate_failed", "Failed to generate TOTP code: the secret key is invalid."));
         }
     }
 
@@ -144,9 +144,9 @@ public sealed class TwoFactorAuthenticator
         }
         catch (Exception ex)
         {
-            var msg = $"TOTP validation error: {ex.Message}";
-            _logger?.Error(msg, ex);
-            return TotpValidationResult.Invalid(msg);
+            // The exception text can describe the secret or the code; log it, return a generic message.
+            _logger?.Error($"TOTP validation error: {ex.Message}", ex);
+            return TotpValidationResult.Invalid(TotpValidationResult.ValidationErrorMessage);
         }
     }
 

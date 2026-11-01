@@ -364,6 +364,35 @@ public sealed class MailBuilderTests
     }
 
     [Fact]
+    public void Default_sender_is_used_when_from_is_not_called()
+    {
+        var message = new MailBuilder("noreply@example.com", "Example")
+            .To("r@example.com").Subject("s").TextBody("b").Build();
+
+        Assert.Equal("noreply@example.com", message.From);
+        Assert.Equal("Example", message.FromName);
+    }
+
+    [Fact]
+    public void Explicit_sender_wins_over_the_default()
+    {
+        var message = new MailBuilder("noreply@example.com", "Example")
+            .From("alice@example.com").To("r@example.com").Subject("s").TextBody("b").Build();
+
+        Assert.Equal("alice@example.com", message.From);
+        Assert.Null(message.FromName);
+    }
+
+    [Fact]
+    public void Reply_to_is_carried_on_the_message()
+    {
+        var message = new MailBuilder().From("s@example.com").ReplyTo("help@example.com")
+            .To("r@example.com").Subject("s").TextBody("b").Build();
+
+        Assert.Equal(["help@example.com"], message.ReplyTo);
+    }
+
+    [Fact]
     public void HtmlBody_alone_satisfies_the_body_requirement()
     {
         var message = new MailBuilder()
@@ -488,13 +517,121 @@ public sealed class MailErrorTests
             Headers = new Dictionary<string, string>
             {
                 ["X-Campaign"] = "autumn",
-                ["Reply-To"] = "reply@example.com",
+                ["In-Reply-To"] = "<abc@example.com>",
                 ["List-Unsubscribe"] = "<mailto:u@example.com>",
                 ["X-Note"] = "tabs\tand ünicode are fine"
-            }
+            },
+            ReplyTo = ["reply@example.com"]
         });
 
         Assert.Equal(MailErrorCodes.SmtpConnectionFailed, error.Code);
+    }
+
+    [Theory]
+    [InlineData("Sender")]
+    [InlineData("Reply-To")]
+    [InlineData("reply-to")]
+    [InlineData("Message-Id")]
+    [InlineData("Message-ID")]
+    [InlineData("Date")]
+    [InlineData("Return-Path")]
+    [InlineData("Received")]
+    [InlineData("Resent-From")]
+    [InlineData("To")]
+    [InlineData("Cc")]
+    [InlineData("Subject")]
+    [InlineData("MIME-Version")]
+    public async Task Sender_and_identity_headers_cannot_be_supplied(string name)
+    {
+        var error = await SendFailure(Message() with { Headers = new Dictionary<string, string> { [name] = "x@example.com" } });
+        Assert.IsType<ValidationError>(error);
+        Assert.Equal(MailErrorCodes.InvalidHeader, error.Code);
+    }
+
+    [Fact]
+    public async Task Malformed_reply_to_is_a_validation_error()
+    {
+        var error = await SendFailure(Message() with { ReplyTo = ["a@example.com\r\nBcc: victim@example.com"] });
+        Assert.IsType<ValidationError>(error);
+        Assert.Equal(MailErrorCodes.InvalidRecipient, error.Code);
+    }
+
+    [Fact]
+    public async Task Unknown_security_mode_fails_closed()
+    {
+        var smtp = new SmtpService(new SmtpConfig { Host = "127.0.0.1", Port = 1, SecurityMode = (MailSecurityMode)42 });
+        var error = await SendFailure(Message(), smtp);
+        Assert.IsType<ValidationError>(error);
+        Assert.Equal(MailErrorCodes.SmtpConfigInvalid, error.Code);
+    }
+
+    [Fact]
+    public void Config_with_unknown_security_modes_is_invalid()
+    {
+        var config = new MailConfig { Smtp = { SecurityMode = (MailSecurityMode)42 } };
+        Assert.False(config.Validate().IsValid);
+
+        config = new MailConfig { Imap = new ImapConfig { SecurityMode = (MailSecurityMode)7 } };
+        Assert.False(config.Validate().IsValid);
+    }
+
+    [Theory]
+    [InlineData("not-an-address", null)]
+    [InlineData("ok@example.com", "Name\r\nBcc: x@example.com")]
+    public void Config_with_a_bad_default_sender_is_invalid(string email, string? name)
+    {
+        var config = new MailConfig { DefaultFromEmail = email, DefaultFromName = name };
+        Assert.False(config.Validate().IsValid);
+    }
+
+    [Theory]
+    [InlineData("relative/file.pdf")]
+    [InlineData("file.pdf")]
+    [InlineData("../etc/passwd")]
+    public async Task Relative_attachment_path_is_a_validation_error(string path)
+    {
+        var error = await SendFailure(Message(attachments: [path]));
+        Assert.IsType<ValidationError>(error);
+        Assert.Equal(MailErrorCodes.InvalidAttachment, error.Code);
+    }
+
+    [Fact]
+    public async Task Attachment_outside_the_base_directory_is_refused()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "cl_mail_att_" + Guid.NewGuid().ToString("N"));
+        var allowed = Path.Combine(root, "allowed");
+        var sibling = Path.Combine(root, "allowed-not");   // shares the prefix, not the directory
+        Directory.CreateDirectory(allowed);
+        Directory.CreateDirectory(sibling);
+        try
+        {
+            var inside = Path.Combine(allowed, "in.txt");
+            var outside = Path.Combine(sibling, "out.txt");
+            var traversal = Path.Combine(allowed, "..", "allowed-not", "out.txt");
+            await File.WriteAllTextAsync(inside, "in");
+            await File.WriteAllTextAsync(outside, "out");
+
+            var smtp = new SmtpService(new SmtpConfig
+            {
+                Host = "127.0.0.1", Port = 1, SecurityMode = MailSecurityMode.None, TimeoutSeconds = 5,
+                AttachmentBaseDirectory = allowed
+            });
+
+            foreach (var path in new[] { outside, traversal })
+            {
+                var error = await SendFailure(Message(attachments: [path]), smtp);
+                Assert.IsType<ValidationError>(error);
+                Assert.Equal(MailErrorCodes.InvalidAttachment, error.Code);
+            }
+
+            // Inside the directory: validation passes, the send fails only at the connection.
+            var ok = await SendFailure(Message(attachments: [inside]), smtp);
+            Assert.Equal(MailErrorCodes.SmtpConnectionFailed, ok.Code);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
     }
 
     [Fact]
@@ -626,6 +763,70 @@ public sealed class MailErrorTests
     [InlineData("A1")]
     public void Safe_template_ids_are_accepted(string id) =>
         Assert.True(FileMailTemplateProvider.IsValidTemplateId(id));
+}
+
+// ── IMAP (offline: refused before or at the connection) ──────────────────────────
+
+public sealed class ImapServiceTests
+{
+    private static ImapConfig Config(MailSecurityMode mode = MailSecurityMode.None, bool idle = false) =>
+        new() { Host = "127.0.0.1", Port = 1, SecurityMode = mode, TimeoutSeconds = 5, EnableIdle = idle };
+
+    [Fact]
+    public async Task Idle_is_refused_while_EnableIdle_is_off()
+    {
+        using var imap = new ImapService(Config());
+        var result = await imap.StartIdleAsync("INBOX");
+
+        Assert.IsType<ValidationError>(result.Error);
+        Assert.Equal(MailErrorCodes.ImapConfigInvalid, result.Error!.Code);
+    }
+
+    [Fact]
+    public async Task Unknown_security_mode_fails_closed()
+    {
+        using var imap = new ImapService(Config((MailSecurityMode)42));
+        var result = await imap.ConnectAsync();
+
+        Assert.IsType<ValidationError>(result.Error);
+        Assert.Equal(MailErrorCodes.ImapConfigInvalid, result.Error!.Code);
+    }
+
+    [Fact]
+    public async Task Unreachable_server_is_unavailable_for_every_call()
+    {
+        using var imap = new ImapService(Config(idle: true));
+
+        var connect = await imap.ConnectAsync();
+        var fetch = await imap.FetchMessagesAsync("INBOX", 0, 10);
+        var idle = await imap.StartIdleAsync("INBOX");
+
+        Assert.Equal(MailErrorCodes.ImapConnectionFailed, connect.Error!.Code);
+        Assert.IsType<UnavailableError>(fetch.Error);
+        Assert.Equal(MailErrorCodes.ImapConnectionFailed, fetch.Error!.Code);
+        Assert.Equal(MailErrorCodes.ImapConnectionFailed, idle.Error!.Code);
+    }
+
+    [Fact]
+    public async Task Concurrent_calls_are_serialized_and_all_complete()
+    {
+        using var imap = new ImapService(Config());
+        var calls = Enumerable.Range(0, 3).Select(_ => imap.ListFoldersAsync()).ToArray();
+        var results = await Task.WhenAll(calls);
+
+        Assert.All(results, r => Assert.Equal(MailErrorCodes.ImapConnectionFailed, r.Error!.Code));
+    }
+
+    [Fact]
+    public async Task Cancelled_call_reports_cancelled()
+    {
+        using var imap = new ImapService(Config());
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+
+        var result = await imap.ListFoldersAsync(cts.Token);
+        Assert.Equal(MailErrorCodes.Cancelled, result.Error!.Code);
+    }
 }
 
 // ── Gated live SMTP test ─────────────────────────────────────────────────────────

@@ -111,6 +111,14 @@ await db.Backup.RestoreAsync("backups/2026-10-31");
 await db.Backup.SnapshotAsync("backups/app.db");                                     // SQLite: VACUUM INTO, a consistent file copy
 ```
 
+A restore checks `manifest.json` before it drops anything. Store types, collations, defaults and table options are written
+into `CREATE TABLE`, so they must be plain values: a type name with an optional size and modifiers (`varchar(64)`,
+`timestamp(3) with time zone`, `bigint unsigned`, `enum('a','b')`), a collation or option made of letters, digits and `_`, and
+a default built only from literals, parentheses, casts and known functions (`CURRENT_TIMESTAMP`, `now()`, `newid()`,
+`gen_random_uuid()`, ...). Every rows file must lie inside the backup directory. Anything else fails with `data.validation`.
+Tables with user-defined types or computed defaults need a native dump instead. Restore only backups you trust: rows are
+inserted as they are.
+
 ## Retention
 
 Rows of `[RetainDays(30)]` entities older than their retention are deleted in batches:

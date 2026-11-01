@@ -44,6 +44,7 @@ public static class ValveStatusParserCS2
             players.Add(new PlayerInfo
             {
                 Name = match.Groups[7].Value.Trim(),
+                UserId = int.TryParse(match.Groups[1].Value, out var id) ? id : null,
                 UniqueId = uniqueId,
                 Ping = int.TryParse(match.Groups[3].Value, out var p) ? p : 0,
                 Loss = int.TryParse(match.Groups[4].Value, out var l) ? l : 0,

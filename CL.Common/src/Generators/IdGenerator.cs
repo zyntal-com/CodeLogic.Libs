@@ -1,5 +1,4 @@
 using System.Security.Cryptography;
-using System.Text;
 
 namespace CL.Common.Generators;
 
@@ -120,10 +119,7 @@ public static class IdGenerator
     private static string GenerateRandom(char[] alphabet, int length)
     {
         if (length <= 0) throw new ArgumentOutOfRangeException(nameof(length), "Length must be positive.");
-        var bytes = RandomNumberGenerator.GetBytes(length);
-        var sb = new StringBuilder(length);
-        foreach (var b in bytes)
-            sb.Append(alphabet[b % alphabet.Length]);
-        return sb.ToString();
+        // GetString draws each character uniformly (rejection sampling), so there is no modulo bias.
+        return RandomNumberGenerator.GetString(alphabet, length);
     }
 }

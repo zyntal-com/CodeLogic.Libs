@@ -2,7 +2,7 @@
 
 > DNSBL blacklist checking and MaxMind GeoIP geolocation — screen abusive IPs and locate visitors with one library.
 
-`CL.NetUtils` adds two network-reputation tools to a CodeLogic application behind a single `NetUtilsLibrary` surface. The **DNSBL checker** queries blacklist zones (IPv4 and IPv6, with primary and fallback providers) to decide whether an address is listed as a known abuser. The **GeoIP service** resolves an address to a country, city, coordinates, and time zone using a [MaxMind GeoLite2/GeoIP2](https://www.maxmind.com/) `.mmdb` database, which can be supplied on disk or auto-downloaded with your MaxMind credentials.
+`CL.NetUtils` adds two network-reputation tools to a CodeLogic application behind a single `NetUtilsLibrary` surface. The **DNSBL checker** queries blacklist zones (IPv4 and IPv6, with primary and fallback providers) to decide whether an address is listed as a known abuser. The **GeoIP service** resolves an address to a country, city, coordinates, and time zone (or, with an ASN or ISP edition, to its network operator) using a [MaxMind GeoLite2/GeoIP2](https://www.maxmind.com/) `.mmdb` database, which can be supplied on disk or auto-downloaded with your MaxMind credentials.
 
 There is no standalone DNS-lookup service — DNS resolution is an internal detail of the DNSBL checker.
 
@@ -29,11 +29,12 @@ await CodeLogic.StartAsync();
 var net = Libraries.Get<NetUtilsLibrary>();
 ```
 
-The library exposes three members:
+The library exposes four members:
 
 | Member | Type | Notes |
 |--------|------|-------|
-| `Dnsbl` | `DnsblChecker` | Always available when the library is enabled. |
+| `Dnsbl` | `DnsblChecker` | Always available once the library has initialized (throws only before that). While DNSBL checking is switched off (`enabled` or `dnsbl.enabled` is `false`), `Dnsbl.IsEnabled` is `false` and every check returns `Status = Error` with `ErrorMessage` "DNSBL checking is disabled", without a DNS query. |
+| `HasDnsbl` | `bool` | `true` when DNSBL checking is enabled. |
 | `GeoIp` | `GeoIpService` | **Throws** if accessed when no database is available — guard with `HasGeoIp`. |
 | `HasGeoIp` | `bool` | `true` only when a GeoIP database loaded successfully on startup. |
 
@@ -78,6 +79,8 @@ The checker picks the IPv4 or IPv6 zone set based on the address it is given, th
 1. Queries the primary zones. With `ParallelQueries` (the default) they are queried concurrently and every zone's answer is collected; with `ParallelQueries` off they are queried one at a time and the check stops at the first listing.
 2. Queries the fallback zones the same way, but only when no primary zone lists the address (whether the primaries answered or failed).
 3. Reports `Blacklisted` with the first listing zone (in list order) if any zone lists the address. Otherwise, if any zone could not be checked, it reports `Indeterminate` with those zones in `FailedServices`; only when every queried zone answered "not listed" is the result `NotBlacklisted`.
+
+Each zone is trimmed (whitespace, trailing dot) and must be a DNS name: at least two labels of letters, digits, `-` and `_`, not ending in a numeric label. Anything else (a blank line, an IP literal, spaces, control characters) is never sent to the resolver and is reported in `FailedServices`, so the check is `Indeterminate` rather than clean. `MatchedService` and `FailedServices` hold the trimmed zone names.
 
 A zone counts as answered "not listed" on NXDOMAIN or no A record, or when it only returns addresses outside `127.0.0.0/8` (a parked or wildcarded dead zone). It counts as failed when the lookup times out (`TimeoutSeconds`, per zone), the resolver fails (SERVFAIL, network error), or it returns a DNSBL error code such as Spamhaus' `127.255.255.x` (public resolver blocked, query limit). Any other `127.x.x.x` answer is a listing.
 
@@ -137,6 +140,18 @@ The record exposes `Blacklisted`, `NotBlacklisted`, `Indeterminate`, and `Error`
 
 `GeoIpService` resolves an address against a MaxMind `.mmdb` database. Because the service requires a database, **always guard access with `HasGeoIp`** — reading `net.GeoIp` when no database is loaded throws.
 
+The edition is read from the database's metadata (`GeoIpService.LoadedDatabaseType`) and decides which fields a lookup fills:
+
+| Edition (examples) | Fields filled |
+|--------------------|---------------|
+| City (`GeoLite2-City`, `GeoIP2-City`) | country, city, subdivision, postal code, coordinates, time zone |
+| Enterprise (`GeoIP2-Enterprise`) | as City, plus `Isp`, `AutonomousSystemNumber`, `AutonomousSystemOrganization` |
+| Country (`GeoLite2-Country`, `GeoIP2-Country`) | `CountryName`, `CountryCode` |
+| ASN (`GeoLite2-ASN`) | `AutonomousSystemNumber`, `AutonomousSystemOrganization` |
+| ISP (`GeoIP2-ISP`) | `Isp`, `AutonomousSystemNumber`, `AutonomousSystemOrganization` |
+
+Other editions (Anonymous-IP, Connection-Type, Domain) carry no location data and fail initialization.
+
 ```csharp
 if (net.HasGeoIp)
 {
@@ -152,12 +167,12 @@ if (net.HasGeoIp)
 On startup the library calls `GeoIpService.InitializeAsync`, which loads (or downloads) the database and throws if none can be obtained — leaving `HasGeoIp` `false`. The database path is:
 
 - `GeoIp.DatabasePath` if set, otherwise
-- `{dataDir}/geoip/{DatabaseType}.mmdb` (default `GeoLite2-City.mmdb`).
+- `{dataDir}/geoip/{DatabaseType}.mmdb` (default `GeoLite2-City.mmdb`). `DatabaseType` must be an edition id (letters, digits, `-`, `_`, `.`; no path separators or `..`), otherwise configuration validation fails.
 
-During initialization a missing database is always downloaded. When `GeoIp.AutoUpdate` is `true`, an existing database is also refreshed; a failed refresh is logged and the existing database stays in use. Downloads are a **no-op** if `AccountId` is `0` or `LicenseKey` is empty. Otherwise it downloads the archive from `DownloadUrl` using HTTP Basic Auth (`AccountId` : `LicenseKey`) and installs the `.mmdb` at the resolved path.
+During initialization a missing database is always downloaded. When `GeoIp.AutoUpdate` is `true`, an existing database is also refreshed; a failed refresh is logged and the existing database stays in use. Downloads are a **no-op** if `AccountId` is `0` or `LicenseKey` is empty. Otherwise it downloads the archive from `DownloadUrl` (with `{DatabaseType}` replaced by `DatabaseType`, so the default URL fetches the configured edition) using HTTP Basic Auth (`AccountId` : `LicenseKey`) and installs the `.mmdb` at the resolved path.
 
 - **Trusted URL only.** The credentials go to `DownloadUrl`, so it must be an `https` URL whose host is listed in `TrustedDownloadHosts` (default: `download.maxmind.com` only). Anything else is refused before a request is sent, and also fails configuration validation. Add a host only for a mirror you trust with the license key.
-- **Selective, atomic install.** The archive (`tar.gz` or `zip`) is unpacked in a private temporary directory next to the database. Only the `.mmdb` entry (preferring `{DatabaseType}.mmdb`) is extracted, by content only, so licence files and entry paths never reach the data directory. The extracted file is opened with the MaxMind reader: its metadata must parse, it must be a City database, and a test lookup must walk its search tree. Only then does it replace the database in one rename, and an open reader switches to it without a gap (readers load the database into memory, so the file is never locked). A failed, corrupt or wrong-type download leaves the existing database and reader in use.
+- **Selective, atomic install.** The archive (`tar.gz` or `zip`) is unpacked in a private temporary directory next to the database. Only the `.mmdb` entry (preferring `{DatabaseType}.mmdb`) is extracted, by content only, so licence files and entry paths never reach the data directory. The extracted file is opened with the MaxMind reader: its metadata must parse, it must be a supported edition of the same kind as `DatabaseType` (a Country download never replaces a City database), and a test lookup must walk its search tree. Only then does it replace the database in one rename, and an open reader switches to it without a gap (readers load the database into memory, so the file is never locked). A failed, corrupt or wrong-type download leaves the existing database and reader in use.
 
 To download automatically, set your MaxMind credentials:
 
@@ -188,13 +203,15 @@ public sealed record IpLocationResult
     public double? Longitude { get; init; }
     public string? TimeZone { get; init; }         // IANA, e.g. "Europe/Copenhagen"
     public string? Isp { get; init; }
+    public long? AutonomousSystemNumber { get; init; }        // ASN, ISP, Enterprise
+    public string? AutonomousSystemOrganization { get; init; }
     public string? ErrorMessage { get; init; }
-    public bool IsSuccessful { get; }              // ErrorMessage == null && CountryCode set
+    public bool IsSuccessful { get; }              // no error && (CountryCode, ASN or Isp set)
     public DateTime LookedUpAt { get; init; }      // UTC
 }
 ```
 
-`IsSuccessful` is the canonical success test — it is `true` only when there is no error **and** a country code was resolved. The record exposes `NotFound` and `Error` factory methods for the failure outcomes.
+`IsSuccessful` is the canonical success test — it is `true` only when there is no error **and** data was found: a country code or, for ASN and ISP editions (which have no country), an autonomous system number or ISP. The record exposes `NotFound` and `Error` factory methods for the failure outcomes.
 
 ## Configuration
 
@@ -219,7 +236,7 @@ The library writes `config.netutils.json` (section `netutils`) with defaults on 
     "autoUpdate": false,
     "accountId": 0,
     "licenseKey": "",
-    "downloadUrl": "https://download.maxmind.com/geoip/databases/GeoLite2-City/download?suffix=tar.gz",
+    "downloadUrl": "https://download.maxmind.com/geoip/databases/{DatabaseType}/download?suffix=tar.gz",
     "trustedDownloadHosts": ["download.maxmind.com"],
     "databaseType": "GeoLite2-City",
     "timeoutSeconds": 30
@@ -243,10 +260,14 @@ The library writes `config.netutils.json` (section `netutils`) with defaults on 
 | `GeoIp.AutoUpdate` | `bool` | `false` | Refresh the database on startup when credentials are set (a missing database is always downloaded; a failed refresh keeps the old one). |
 | `GeoIp.AccountId` | `int` | `0` | MaxMind account id; required for download. |
 | `GeoIp.LicenseKey` | `string` | `""` | MaxMind license key (secret); required for download. |
-| `GeoIp.DownloadUrl` | `string` | MaxMind GeoLite2-City | Download endpoint returning a `tar.gz` or `zip`. Must be `https` on a host in `TrustedDownloadHosts`. |
+| `GeoIp.DownloadUrl` | `string` | MaxMind, `{DatabaseType}` edition | Download endpoint returning a `tar.gz` or `zip`; `{DatabaseType}` is replaced with `DatabaseType`. Must be `https` on a host in `TrustedDownloadHosts`. |
 | `GeoIp.TrustedDownloadHosts` | `string[]` | `["download.maxmind.com"]` | Hosts `DownloadUrl` may use (exact, case-insensitive). |
-| `GeoIp.DatabaseType` | `string` | `GeoLite2-City` | Database/edition id; also the default file name. |
+| `GeoIp.DatabaseType` | `string` | `GeoLite2-City` | MaxMind edition id (City, Country, Enterprise, ASN or ISP); the default file name, the `{DatabaseType}` in `DownloadUrl`, and the kind a download must have. |
 | `GeoIp.TimeoutSeconds` | `int` | `30` | Download timeout in seconds. |
+
+## Localization
+
+Log lines and the error messages the library puts in `DnsblCheckResult.ErrorMessage` and `IpLocationResult.ErrorMessage` (invalid address, DNSBL disabled, GeoIP not initialized, location not found) come from `NetUtilsStrings`, registered as localization section `netutils`. Translate them like any CodeLogic localization model; the English defaults apply until translations load. Caller-supplied addresses and zones are logged with control characters replaced and cut to 64 characters, so they cannot forge log lines.
 
 ## Health check
 

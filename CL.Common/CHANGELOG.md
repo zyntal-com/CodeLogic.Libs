@@ -5,12 +5,63 @@ All notable changes to **CodeLogic.Common** are documented here. Versions follow
 
 ## 5.0 (unreleased)
 
+### Security
+
+- **`HttpHeaderHelper.GetEffectiveClientIp` no longer trusts spoofable headers.** It returned the first
+  non-RFC 1918 `X-Forwarded-For` entry from any peer, so every client could choose its own address. New overload
+  `GetEffectiveClientIp(remoteIp, xForwardedFor, TrustedProxies)` (and `GetEffectiveClientIpAddress`, returning
+  `IPAddress?`) reads the header only when the direct peer is a trusted proxy, walks it right to left skipping
+  trusted hops and returns the first untrusted address. New `TrustedProxies` type: `Parse(["10.0.0.0/8",
+  "203.0.113.7"])` returns a `Result` (`web.invalid_trusted_proxy`); also `FromAddresses`, `FromNetworks`, `Union`,
+  `IsTrusted` and the presets `None`, `Loopback`, `PrivateNetworks`. Every entry is parsed with the new
+  `HttpHeaderHelper.TryParseIp` (ports, brackets and quotes stripped, IPv4 shorthand rejected, IPv4-mapped IPv6
+  normalised); unparsable values are never returned.
+- **`HttpHeaderHelper.IsPrivateIp`** now covers IPv6 (`::1`, `::`, link-local `fe80::/10`, unique-local
+  `fc00::/7`), IPv4-mapped IPv6, link-local `169.254/16`, carrier-grade NAT `100.64/10`, all of `127/8` and
+  `0/8`. New overload taking an `IPAddress`.
+- **Decompression output cap.** `CompressionHelper.DecompressGzip` / `DecompressBrotli` / `DecompressZstandard` /
+  `DecompressLz4` / `DecompressString` take an optional `maxOutputBytes` (default
+  `CompressionHelper.DefaultMaxDecompressedBytes`, 100 MiB) and fail with `compression.output_limit_exceeded`
+  (validation) instead of inflating a decompression bomb into memory.
+- **Unbiased random generation.** `PasswordGenerator` and `IdGenerator` mapped random bytes with `byte % pool`,
+  making some characters more likely than others (digits 0-5 in PINs, for example). They now use
+  `RandomNumberGenerator.GetString` / `GetInt32` / `Shuffle`.
+- **Password hashes are self-describing.** `Hashing.HashPassword` writes
+  `$pbkdf2-sha256$v1${iterations}${salt}${hash}` and defaults to **600 000** iterations (OWASP guidance for
+  PBKDF2-SHA256; was 100 000). `VerifyPassword` reads the count from the hash and still verifies legacy Base64
+  salt+hash strings (using its `iterations` argument, default 100 000). New `Hashing.NeedsRehash(hash, iterations
+  = 600000)` tells you when to re-hash after a successful login. New constants `DefaultPasswordIterations`,
+  `LegacyPasswordIterations`, `PasswordHashPrefix`.
+- `StringValidator.MatchesPattern` runs the caller's regex with a timeout (optional `matchTimeout`, default
+  `StringValidator.DefaultMatchTimeout`, 1 s); a timed-out match returns `false` (ReDoS guard).
+- `HttpClientHelper` puts at most `MaxErrorBodyLength` (256) characters of a failed response body into
+  `Error.Message`, followed by the full length, instead of the whole body.
+
 ### Fixed
+
+- `CronParser`: when both day-of-month and day-of-week are restricted (neither starts with `*`), a day matches if
+  **either** matches, as in standard cron (`0 0 1 * 1` = the 1st and every Monday). It used to require both.
+- `StringHelper.Truncate` no longer throws when `maxLength` is smaller than the suffix; the result never exceeds
+  `maxLength` (clipped without the suffix when it does not fit; empty for `maxLength <= 0`).
+- `DateTimeHelper.NextBusinessDay`: the XML doc claimed it returns the same day for a business day; the method
+  (and the docs site) always returned the first Monday-Friday strictly after the date. The doc now says so; the
+  behaviour is unchanged.
 
 - `FastHash.XxHash128` is about 10x faster (~70 ns instead of ~700 ns per call on .NET 11): `XxHash128.HashToUInt128` has a large fixed cost, so the hash is now computed into bytes and read back. The values are unchanged.
 - `StringHelper` (`ToSlug`, `ToPascalCase`, `ToSnakeCase`, `ToKebabCase`, `StripHtml`, `WordCount`, `ExtractNumbers`) uses source-generated regexes (`[GeneratedRegex]`) instead of looking each pattern up in the static `Regex` cache and running it through the interpreter on every call. Output is unchanged.
 
 ### Breaking
+
+- **`HttpHeaderHelper.GetEffectiveClientIp(remoteIp, xForwardedFor)` behaviour change.** It now behaves like the
+  new overload with `TrustedProxies.PrivateNetworks`: the header is honoured only when the direct peer is a
+  loopback/private/link-local address; a public peer is returned as is. If your reverse proxy has a public
+  address, pass it explicitly: `GetEffectiveClientIp(remote, xff, TrustedProxies.Parse([...]).ValueOrThrow())`.
+  The result is always a normalised address (`::ffff:1.2.3.4` becomes `1.2.3.4`, ports stripped) or `"0.0.0.0"`
+  when the remote address is missing or unparsable (it used to echo the raw string).
+- **`Hashing.HashPassword` output format changed** (see Security). Hashes from 4.x still verify; code that
+  parsed the old Base64 layout itself, or verifies with another stack, must handle the new format.
+- `CompressionHelper.Decompress*` reject output above 100 MiB by default; pass `maxOutputBytes` for larger
+  payloads. The new optional parameters are source compatible but change the method signatures (recompile).
 
 - Targets **.NET 11** (`net11.0`) and requires **CodeLogic 5.0** (`[5.0.0, 6.0.0)`). On .NET 10, stay on
   4.9.x. CodeLogic 5 makes `Result<T>` / `Result` C# 15 unions and `Error` a closed record with

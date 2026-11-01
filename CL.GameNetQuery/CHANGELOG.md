@@ -14,8 +14,37 @@ All notable changes to **CodeLogic.GameNetQuery** are documented here. Versions 
   `Ok`/`Fail`) is replaced by CodeLogic `Result<ServerQuery>`, where
   `ServerQuery(ServerInfo Info, IReadOnlyList<PlayerInfo> Players, long DurationMs)` is the success value
   and failures are `Error` kinds with `gamenetquery.*` codes.
+- **Counter-Strike commands that take caller text return `Task<Result<string>>`** (was `Task<string>`), so an
+  unsafe argument can be refused: `ChangeMapAsync`, `KickPlayerAsync`, `BanPlayerAsync`, `UnbanPlayerAsync`,
+  `SetHostnameAsync`, `ExecConfigAsync`, `SetCvarAsync`, `GetCvarAsync`, `SayAsync` (both `CounterStrike2` and
+  `CounterStrikeSource`) and `CounterStrike2.SlayPlayerAsync`. Read the response from `.Value` after checking
+  `IsFailure`. Commands without a text argument (`RestartAsync`, `EnableCheatsAsync`, `SetFriendlyFireAsync(bool)`, ...) still return `Task<string>`.
+- `BanPlayerAsync(string)` / `UnbanPlayerAsync(string)` take a user id or SteamID (`123`, `STEAM_1:0:123`,
+  `[U:1:123]`, `7656119...`); `banid` / `removeid` never accepted names, and a name is now a validation error.
+  The parameter is renamed `playerId`.
+- `SetCvarAsync` quotes the value (`mp_roundtime "1.92"`), so values with spaces are sent as one argument.
+
+### Security
+
+- **RCON command injection in the Counter-Strike wrappers.** Caller values were spliced into the console line
+  unchecked, so kicking a player named `x; rcon_password pwned` (names come straight from `GetStatusAsync`) ran a
+  second command with full RCON rights. Every argument is now checked before anything is sent: free text
+  (names, messages, hostnames, cvar values, kick reasons) may not contain `;`, `"`, CR, LF, NUL or any other
+  control character; maps and configs must be relative paths of letters, digits and `_ - . /` without `..`;
+  cvar names and ids must match their shape. A rejected value is a `ValidationError`
+  `gamenetquery.invalid_rcon_argument`. `ValveRconClient.SendCommandAsync` / `MinecraftRconClient.SendCommandAsync`
+  stay raw: never pass untrusted text to them.
+- **A2S replies are bound to the queried server.** `ValveUdpQuery` connects its UDP socket to the server and
+  discards datagrams from any other endpoint, so a third party can no longer answer a query in its place.
+  `MinecraftQueryClient` also checks the reply's source and session id.
 
 ### Added
+
+- `KickPlayerAsync(int userId, string? reason = null)` (`kickid`) and `BanPlayerAsync(int userId, int minutes = 0)`
+  (`banid`) on both Counter-Strike wrappers: act on the user id, which hostile names cannot affect.
+- `PlayerInfo.UserId` (`int?`): the user id from RCON `status` (`ValveStatusParser`, `ValveStatusParserCS2`,
+  `GetStatusAsync`); `null` from A2S.
+- `GameNetQueryErrorCodes`: every `gamenetquery.*` code in one place.
 
 - `ValveUdpQuery.QueryAsync(ip, port, includePlayers = true, timeoutMs = 3000, cancellationToken)` →
   `Task<Result<ServerQuery>>`: A2S_INFO plus (optionally) A2S_PLAYER with the elapsed time. Failures:
@@ -45,6 +74,16 @@ All notable changes to **CodeLogic.GameNetQuery** are documented here. Versions 
 - Each request uses a fresh id, so a late reply to a timed-out command is skipped instead of being
   returned as the answer to the next one. Calls on one client are serialised. Request bodies and responses
   are UTF-8 (Minecraft used ASCII).
+- **`MinecraftQueryClient.QueryServer` never returned the documented keys.** It sent a basic-stat request
+  (without the four padding bytes) but parsed the reply as a full stat, so `hostname`, `map`, `numplayers` and
+  the rest never appeared. It now sends a full-stat request and parses the reply by its layout; the response
+  also has a `players` line (names joined by `", "`), empty values are empty (were `(empty)`), text is decoded
+  as UTF-8, and `QueryServer(string, ...)` returns an empty string for a non-IP address instead of throwing.
+- `ServerInfo.Version` and `ServerInfo.Tags` are filled from A2S_INFO (version string and `sv_tags` keywords),
+  and `CounterStrike2.GetStatusAsync` fills `Version`. `RawResponse` is the raw `status` text for RCON-parsed
+  info and empty for A2S.
+- A2S strings without a terminator, or starting past the end of the packet, are a
+  `gamenetquery.malformed_response` instead of reading out of bounds; a short A2S_PLAYER challenge is too.
 
 ### Added
 

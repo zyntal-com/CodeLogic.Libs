@@ -43,51 +43,43 @@ public sealed class LinuxSystemStatsProvider : ISystemStatsProvider
         try
         {
             var lines = await File.ReadAllLinesAsync("/proc/cpuinfo");
-
-            string modelName = "Unknown";
-            string vendor = "Unknown";
-            double maxMHz = 0;
-            int logicalCores = 0;
-            var physicalIds = new HashSet<string>();
-
-            foreach (var line in lines)
+            double? maxMHz = null;
+            try
             {
-                var parts = line.Split(':', 2);
-                if (parts.Length < 2) continue;
-                var key = parts[0].Trim();
-                var val = parts[1].Trim();
-
-                switch (key)
-                {
-                    case "model name":
-                        if (modelName == "Unknown") modelName = val;
-                        break;
-                    case "vendor_id":
-                        if (vendor == "Unknown") vendor = val;
-                        break;
-                    case "cpu MHz":
-                        if (double.TryParse(val, System.Globalization.NumberStyles.Float,
-                                System.Globalization.CultureInfo.InvariantCulture, out var mhz))
-                            if (mhz > maxMHz) maxMHz = mhz;
-                        break;
-                    case "processor":
-                        logicalCores++;
-                        break;
-                    case "physical id":
-                        physicalIds.Add(val);
-                        break;
-                }
+                const string maxFreq = "/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq";
+                if (File.Exists(maxFreq))
+                    maxMHz = CpuInfoParsers.ParseMaxFrequencyKHz(await File.ReadAllTextAsync(maxFreq));
             }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* no cpufreq: use cpu MHz */ }
 
-            int physicalCores = physicalIds.Count > 0 ? physicalIds.Count : Math.Max(1, logicalCores);
-            string arch = RuntimeInformation.ProcessArchitecture.ToString();
-
-            return Result<CpuInfo>.Success(new CpuInfo(modelName, physicalCores, logicalCores, vendor, maxMHz, arch));
+            return Result<CpuInfo>.Success(
+                CpuInfoParsers.ParseProcCpuInfo(lines, RuntimeInformation.ProcessArchitecture.ToString(), maxMHz));
         }
         catch (Exception ex)
         {
             _logger?.Error($"Failed to read /proc/cpuinfo: {ex.Message}");
-            return Result<CpuInfo>.Failure(Error.Internal("systemstats.cpu_info", "Failed to read CPU info", ex.Message));
+            return Result<CpuInfo>.Failure(Error.Internal(SystemStatsErrorCodes.CpuInfo, "Failed to read CPU info", ex.Message));
+        }
+    }
+
+    // ── Temperatures ─────────────────────────────────────────────────────────
+
+    /// <inheritdoc/>
+    public Task<Result<IReadOnlyList<TemperatureReading>>> GetTemperaturesAsync()
+    {
+        try
+        {
+            var readings = CpuInfoParsers.ReadSysfsTemperatures("/sys");
+            return Task.FromResult(readings.Count > 0
+                ? Result<IReadOnlyList<TemperatureReading>>.Success(readings)
+                : Result<IReadOnlyList<TemperatureReading>>.Failure(Error.Unavailable(
+                    SystemStatsErrorCodes.TemperatureUnavailable, "No temperature sensors found under /sys/class/thermal or /sys/class/hwmon")));
+        }
+        catch (Exception ex)
+        {
+            _logger?.Error($"Failed to read temperatures: {ex.Message}");
+            return Task.FromResult(Result<IReadOnlyList<TemperatureReading>>.Failure(Error.Unavailable(
+                SystemStatsErrorCodes.TemperatureUnavailable, "Failed to read temperature sensors", ex.Message)));
         }
     }
 
@@ -115,7 +107,7 @@ public sealed class LinuxSystemStatsProvider : ISystemStatsProvider
         catch (Exception ex)
         {
             _logger?.Error($"Failed to read /proc/stat: {ex.Message}");
-            return Result<CpuStats>.Failure(Error.Internal("systemstats.cpu_stats", "Failed to read CPU stats", ex.Message));
+            return Result<CpuStats>.Failure(Error.Internal(SystemStatsErrorCodes.CpuStats, "Failed to read CPU stats", ex.Message));
         }
     }
 
@@ -172,14 +164,14 @@ public sealed class LinuxSystemStatsProvider : ISystemStatsProvider
         {
             var memInfo = await ReadMemInfoAsync();
             if (!memInfo.TryGetValue("MemTotal", out long total))
-                return Result<MemoryInfo>.Failure(Error.Internal("systemstats.mem_info", "MemTotal not found in /proc/meminfo"));
+                return Result<MemoryInfo>.Failure(Error.Internal(SystemStatsErrorCodes.MemoryInfo, "MemTotal not found in /proc/meminfo"));
 
             return Result<MemoryInfo>.Success(new MemoryInfo(total * 1024));
         }
         catch (Exception ex)
         {
             _logger?.Error($"Failed to read /proc/meminfo: {ex.Message}");
-            return Result<MemoryInfo>.Failure(Error.Internal("systemstats.mem_info", "Failed to read memory info", ex.Message));
+            return Result<MemoryInfo>.Failure(Error.Internal(SystemStatsErrorCodes.MemoryInfo, "Failed to read memory info", ex.Message));
         }
     }
 
@@ -209,7 +201,7 @@ public sealed class LinuxSystemStatsProvider : ISystemStatsProvider
         catch (Exception ex)
         {
             _logger?.Error($"Failed to read /proc/meminfo: {ex.Message}");
-            return Result<MemoryStats>.Failure(Error.Internal("systemstats.mem_stats", "Failed to read memory stats", ex.Message));
+            return Result<MemoryStats>.Failure(Error.Internal(SystemStatsErrorCodes.MemoryStats, "Failed to read memory stats", ex.Message));
         }
     }
 
@@ -241,14 +233,14 @@ public sealed class LinuxSystemStatsProvider : ISystemStatsProvider
             var firstField = content.Trim().Split(' ')[0];
             if (!double.TryParse(firstField, System.Globalization.NumberStyles.Float,
                     System.Globalization.CultureInfo.InvariantCulture, out double seconds))
-                return Result<TimeSpan>.Failure(Error.Internal("systemstats.uptime", "Failed to parse /proc/uptime"));
+                return Result<TimeSpan>.Failure(Error.Internal(SystemStatsErrorCodes.Uptime, "Failed to parse /proc/uptime"));
 
             return Result<TimeSpan>.Success(TimeSpan.FromSeconds(seconds));
         }
         catch (Exception ex)
         {
             _logger?.Error($"Failed to read /proc/uptime: {ex.Message}");
-            return Result<TimeSpan>.Failure(Error.Internal("systemstats.uptime", "Failed to read system uptime", ex.Message));
+            return Result<TimeSpan>.Failure(Error.Internal(SystemStatsErrorCodes.Uptime, "Failed to read system uptime", ex.Message));
         }
     }
 
@@ -259,14 +251,14 @@ public sealed class LinuxSystemStatsProvider : ISystemStatsProvider
     {
         try
         {
-            var proc = Process.GetProcessById(processId);
+            using var proc = Process.GetProcessById(processId);
             return Task.FromResult(Result<ProcessStats>.Success(MapProcess(proc)));
         }
         catch (Exception ex)
         {
             _logger?.Error($"Failed to get process {processId}: {ex.Message}");
             return Task.FromResult(Result<ProcessStats>.Failure(
-                Error.NotFound("systemstats.process", $"Process {processId} not found or inaccessible", ex.Message)));
+                Error.NotFound(SystemStatsErrorCodes.Process, $"Process {processId} not found or inaccessible", ex.Message)));
         }
     }
 
@@ -290,7 +282,7 @@ public sealed class LinuxSystemStatsProvider : ISystemStatsProvider
         {
             _logger?.Error($"Failed to enumerate processes: {ex.Message}");
             return Task.FromResult(Result<IReadOnlyList<ProcessStats>>.Failure(
-                Error.Internal("systemstats.processes", "Failed to enumerate processes", ex.Message)));
+                Error.Internal(SystemStatsErrorCodes.Processes, "Failed to enumerate processes", ex.Message)));
         }
     }
 

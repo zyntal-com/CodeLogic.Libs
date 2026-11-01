@@ -17,15 +17,16 @@ you are working on before changing anything.
 
 | Line | Target | Integration branch | Preview channel | Stable channel | `version.txt` | CodeLogic dependency |
 |------|--------|--------------------|-----------------|----------------|---------------|----------------------|
-| 5.x | .NET 11, C# 15 | `main` | `prerelease/5.x` | `release/5.x` | `5.0` | `[5.0.0, 6.0.0)` |
+| 5.x | .NET 11, C# 15 | `main` | `prerelease/5.x` | `release/5.x` | `5.0` | `[5.0.0-preview, 6.0.0)` (`[5.0.0, 6.0.0)` once 5.0 is stable) |
 | 4.x | .NET 10, C# 13 | `support/4.x` | `prerelease/4.x` | `release/4.x` | `4.9` | `[4.9.0, 5.0.0)` |
 
-> **Current state (2026-10-31):** `main` is the 5.x line (net11, CodeLogic 5 `Result`/`Error`) and builds
-> against the newest CodeLogic 5.0 preview. **No library has been published as 5.x.** CL.Data, the redesigned
-> database framework, is complete on `feature/cl-data` (work packages `cl-data/<wp>` merged locally) and waits for
-> the owner's release PR. CodeLogic 5.0.30-preview is published with `Result.ThrowIfFailure` and strong-name signing. See `CL.Data/FINDINGS.md`. The `Deploy Documentation` workflow is **disabled**, so the public
-> docs site keeps showing 4.9 until the 5.x libraries are released. Do not run Promote or re-enable that
-> workflow without the owner's explicit go-ahead.
+> **Current state (2026-11-01):** `main` is the 5.x line (net11, CodeLogic 5 `Result`/`Error`). CL.Data, the
+> redesigned database framework, is on `main` (PR #37). The 5.x libraries are published as previews
+> (`CodeLogic.Data`, `CodeLogic.Common`, `CodeLogic.Storage` and the rest at `5.0.115-preview` and later) and
+> build against CodeLogic `5.0.33-preview` (`CodeLogicPackageVersion` in `Directory.Build.props`). Published
+> nuspecs depend on CodeLogic `[5.0.0-preview, 6.0.0)` until CodeLogic 5.0 is stable. The `Deploy Documentation`
+> workflow is **disabled**, so the public docs site keeps showing 4.9 until the 5.x libraries are released
+> as stable. Do not run Promote or re-enable that workflow without the owner's explicit go-ahead.
 
 - **Integration branches** (`main`, `support/**`) take changes through pull requests only, and the
   required checks must pass. That means the full suite, including the MySQL, PostgreSQL and SQL Server
@@ -38,7 +39,8 @@ you are working on before changing anything.
   2. Once it's merged, run **Promote** (`source` = `main` or `support/4.x`, `channel` = `prerelease`
      or `release`).
   3. `release.yml` re-runs the suite and packs **only the libraries changed since that line's last
-     tag** (`libs-v<major.minor>-<run>`, e.g. `libs-v4.9-107`).
+     tag** on that channel (`libs-v<major.minor>-<run>` for stable, e.g. `libs-v4.9-107`;
+     `libs-preview-v<major.minor>-<run>` for previews).
   4. It rewrites each nuspec's CodeLogic range, pre-flights every package, then publishes.
 - **Fixes for both lines:** make the fix on one integration branch, then cherry-pick it in a second
   PR into the other.

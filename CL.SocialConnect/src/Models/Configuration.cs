@@ -25,8 +25,16 @@ public class SocialConnectConfig : ConfigModelBase
     {
         var errors = new List<string>();
 
-        if (Steam.Enabled && string.IsNullOrWhiteSpace(Steam.ApiKey))
-            errors.Add("Steam API key is required when Steam is enabled");
+        // The API key is needed by the profile and ticket services; Steam sign-in (OpenID) works without one.
+        if (Steam.Enabled && string.IsNullOrWhiteSpace(Steam.ApiKey) && !Steam.OpenIdEnabled)
+            errors.Add("Steam API key is required when Steam is enabled (unless only Steam sign-in is used)");
+
+        if (Steam.AuthEnabled && string.IsNullOrWhiteSpace(Steam.ApiKey))
+            errors.Add("Steam API key is required when Steam authentication is enabled");
+
+        if (!string.IsNullOrWhiteSpace(Discord.DefaultWebhookUrl)
+            && !Services.Discord.DiscordWebhookService.IsValidWebhookUrl(Discord.DefaultWebhookUrl))
+            errors.Add("Discord default webhook URL must be an https://discord.com/api/webhooks/{id}/{token} URL");
 
         if (Steam.AuthEnabled && string.IsNullOrWhiteSpace(Steam.AppId))
             errors.Add("Steam App ID is required when Steam authentication is enabled");
@@ -54,7 +62,8 @@ public class DiscordConfig
 
     /// <summary>
     /// Default webhook URL used when no URL is specified in individual send calls.
-    /// Format: <c>https://discord.com/api/webhooks/{id}/{token}</c>
+    /// Format: <c>https://discord.com/api/webhooks/{id}/{token}</c>; any other URL fails validation
+    /// (see <see cref="Services.Discord.DiscordWebhookService.IsValidWebhookUrl"/>).
     /// </summary>
     [ConfigField(Label = "Default Webhook URL", InputType = ConfigInputType.Url, Secret = true,
         Description = "https://discord.com/api/webhooks/{id}/{token}",
@@ -87,7 +96,8 @@ public class SteamConfig
     public bool Enabled { get; set; } = false;
 
     /// <summary>
-    /// Steam Web API key. Required when <see cref="Enabled"/> is <c>true</c>.
+    /// Steam Web API key. Needed for the profile service (<c>Steam</c>) and ticket authentication; without it only
+    /// Steam sign-in (OpenID) is available.
     /// Obtain from <c>https://steamcommunity.com/dev/apikey</c>.
     /// </summary>
     [ConfigField(Label = "Steam API Key", InputType = ConfigInputType.Password, Secret = true,

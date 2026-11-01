@@ -40,7 +40,9 @@ else
 ## Features
 
 - **Idempotent sync** — `EnsureUpToDateAsync` clones-or-updates in a single call; the easiest way to keep a working copy at the remote tip.
-- **Full remote workflow** — `CloneAsync`, `FetchAsync`, `PullAsync`, `PushAsync`, each with an options model and `CancellationToken`.
+- **Full remote workflow** — `CloneAsync`, `FetchAsync`, `PullAsync` (merge, rebase or fast-forward only), `PushAsync` (optionally with tags), each with an options model, a progress callback and a `CancellationToken` that aborts a running transfer. Network operations are bounded by the repository's `TimeoutSeconds`.
+- **Credential hygiene** — the PAT is sent only to the configured repository's host, and credentials in URLs are redacted from logs and errors.
+- **Background fetch** — `AutoFetchIntervalMinutes` fetches each repository on a timer while the library runs.
 - **Commit & status** — stage and commit with author metadata (`CommitAsync`), and inspect the working tree (`GetStatusAsync`).
 - **Branches** — list local/remote branches and check them out (`ListBranchesAsync`, `CheckoutBranchAsync`).
 - **Reset & history** — `ResetHardAsync` and `GetCommitLogAsync`.
@@ -81,13 +83,13 @@ Auto-generated on first run as `config.githelper.json`:
 |---------|---------|-------------|
 | `Enabled` | `true` | Master switch; when `false` the library is inactive and health reports *disabled*. |
 | `BaseDirectory` | `""` | Root for relative `LocalPath` values; empty means the library data directory. |
-| `DefaultTimeoutSeconds` | `300` | Default per-operation timeout (1–3600). |
+| `DefaultTimeoutSeconds` | `300` | Network operation timeout for repositories whose `TimeoutSeconds` is `0` (1–3600). |
 | `MaxConcurrentOperations` | `3` | Concurrency cap for batch operations (1–20). |
 | `EnableRepositoryCaching` | `true` | Keep opened repositories in an in-memory pool. |
 | `CacheTimeoutMinutes` | `30` | Idle eviction window (0–1440; `0` = never expire). |
 | `Repositories` | one entry | Per-repository definitions (URL, local path, branch, credentials). |
 
-Each repository entry: `Id`, `Name`, `RepositoryUrl` (required), `LocalPath` (required; absolute or relative to `BaseDirectory`), `DefaultBranch`, `Username`, `Password` (PAT), `AutoFetch`, `AutoFetchIntervalMinutes`, `TimeoutSeconds`. Authentication is HTTPS only — see the full guide for details. SSH key fields exist in config but are **not currently wired**.
+Each repository entry: `Id`, `Name`, `RepositoryUrl` (required), `LocalPath` (required; absolute or relative to `BaseDirectory`), `DefaultBranch`, `Username`, `Password` (PAT), `AutoFetch` (fetch once at start), `AutoFetchIntervalMinutes` (background fetch timer; `0` = off), `TimeoutSeconds` (network timeout; `0` = `DefaultTimeoutSeconds`). Authentication is HTTPS only, and the token is only sent to the host of `RepositoryUrl` — see the full guide for details. SSH key fields exist in config but are **not currently wired**.
 
 ### Changing config while running
 
@@ -100,6 +102,7 @@ With CodeLogic 4.9+, `config.githelper.json` applies live when changed through `
 - Added or changed repositories with `autoFetch` are fetched in the background.
 - Repositories added with `RegisterRepository` are kept across changes and never written to the file.
 - **`enabled`** can be switched either way.
+- An invalid configuration (`Validate()` fails) is rejected: the errors are logged and the current settings stay.
 
 ## Documentation
 

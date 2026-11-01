@@ -5,7 +5,7 @@
 
 > Cross-platform CPU, memory, uptime, and process statistics for [CodeLogic 5](https://github.com/zyntal-com/CodeLogic) — one API over Windows performance counters and Linux `/proc`.
 
-Samples live system metrics through platform-specific providers: Windows reads CPU info from the registry, CPU usage from `PerformanceCounter`, and total/available RAM via the `GlobalMemoryStatusEx` P/Invoke; Linux reads `/proc/cpuinfo`, `/proc/stat`, `/proc/meminfo`, and `/proc/uptime`. Every data method returns a `Result<T>`, results are cached for a short window, and breaching CPU/memory thresholds publishes events on the CodeLogic event bus.
+Samples live system metrics through platform-specific providers: Windows reads CPU info from the registry and `GetLogicalProcessorInformationEx`, CPU usage from `PerformanceCounter`, and total/available RAM via the `GlobalMemoryStatusEx` P/Invoke; Linux reads `/proc/cpuinfo`, `/proc/stat`, `/proc/meminfo`, `/proc/uptime` and the sysfs temperature sensors. Every data method returns a `Result<T>`, results are cached for a short window, and breaching CPU/memory thresholds publishes events on the CodeLogic event bus.
 
 ## Install
 
@@ -39,10 +39,11 @@ Result<SystemSnapshot> snap = await sys.GetSystemSnapshotAsync();
 
 ## Features
 
-- **CPU** — static `CpuInfo` (model, cores, vendor, max speed, architecture) via `GetCpuInfoAsync()`, and live `CpuStats` (overall + per-core usage) via `GetCpuStatsAsync()` with configurable sampling.
+- **CPU** — static `CpuInfo` (model, physical cores, logical processors, vendor, max speed, architecture) via `GetCpuInfoAsync()`, and live `CpuStats` (overall + per-core usage) via `GetCpuStatsAsync()`, averaged over the last `CpuSamplesForAverage` samples.
 - **Memory** — static `MemoryInfo` (total RAM) and live `MemoryStats` (used / available / cached / buffers / percent), each with MiB/GiB helper properties.
 - **Uptime** — system uptime since last boot via `GetSystemUptimeAsync()`.
-- **Processes** — enumerate all (`GetAllProcessesAsync`), query by PID (`GetProcessStatsAsync`), or rank by CPU / memory (`GetTopProcessesByCpuAsync` / `GetTopProcessesByMemoryAsync`).
+- **Temperatures** — sensor readings via `GetTemperaturesAsync()` (Linux sysfs; unavailable on Windows), switched by `EnableTemperatureMonitoring`.
+- **Processes** — enumerate all (`GetAllProcessesAsync`), query by PID (`GetProcessStatsAsync`), or rank by CPU / memory (`GetTopProcessesByCpuAsync` / `GetTopProcessesByMemoryAsync`); switched by `EnableProcessMonitoring`.
 - **Snapshots** — `GetSystemSnapshotAsync()` rolls CPU, memory, uptime, and top processes into one `SystemSnapshot`.
 - **Threshold events** — publishes `HighCpuUsageEvent` / `HighMemoryUsageEvent` when usage crosses the configured limits, and `SystemSnapshotTakenEvent` after each snapshot.
 - **Result caching** — short-lived caching of common reads; clear it with `sys.Stats.ClearCache()`.
@@ -70,9 +71,9 @@ Auto-generated on first run as `config.systemstats.json` (section `systemstats`)
 | `EnableCaching` | `true` | Cache common reads for `CacheDurationSeconds`. |
 | `CacheDurationSeconds` | `5` | Cache lifetime in seconds (1–600). |
 | `CpuSamplingIntervalMs` | `100` | Delay between CPU samples in ms (1–10000). |
-| `CpuSamplesForAverage` | `3` | Number of CPU samples averaged per reading (1–20). |
-| `EnableTemperatureMonitoring` | `true` | Reserved for temperature sampling support. |
-| `EnableProcessMonitoring` | `true` | Enable process enumeration / ranking. |
+| `CpuSamplesForAverage` | `3` | A CPU reading is the average of the last N samples (1–20); `1` = no smoothing. |
+| `EnableTemperatureMonitoring` | `true` | `false`: `GetTemperaturesAsync` fails with `systemstats.temperature_monitoring_disabled` and reads no sensor. |
+| `EnableProcessMonitoring` | `true` | `false`: process calls fail with `systemstats.process_monitoring_disabled`, and snapshots have empty process lists. |
 | `MaxTopProcesses` | `10` | Default count for top-process queries (1–200). |
 | `HighCpuThresholdPercent` | `90.0` | CPU usage that triggers `HighCpuUsageEvent` (1–100). |
 | `HighMemoryThresholdPercent` | `90.0` | Memory usage that triggers `HighMemoryUsageEvent` (1–100). |
@@ -84,7 +85,7 @@ Full guide: **[CL.SystemStats documentation](https://zyntal-com.github.io/CodeLo
 ## Requirements
 
 - [CodeLogic 5.0+](https://github.com/zyntal-com/CodeLogic) · .NET 11
-- Windows: `System.Diagnostics.PerformanceCounter` 9.x · `System.Management` 9.x
+- Windows: `System.Diagnostics.PerformanceCounter` 11.x
 - Linux: read access to the `/proc` filesystem
 
 ## License

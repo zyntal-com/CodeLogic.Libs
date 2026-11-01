@@ -19,14 +19,14 @@ string pascal= StringHelper.ToPascalCase("hello world");    // "HelloWorld"
 string snake = StringHelper.ToSnakeCase("HelloWorld");      // "hello_world"
 string kebab = StringHelper.ToKebabCase("HelloWorld");      // "hello-world"
 
-string clip  = StringHelper.Truncate("a long sentence", 6); // "a long..."
+string clip  = StringHelper.Truncate("a long sentence", 9); // "a long..."
 string plain = StringHelper.StripHtml("<b>hi</b>");          // "hi"
 int    words = StringHelper.WordCount("one two three");      // 3
 ```
 
 | Member | Returns | Purpose |
 |--------|---------|---------|
-| `Truncate(value, maxLength, suffix = "...")` | `string` | Clip with an ellipsis (or custom suffix). |
+| `Truncate(value, maxLength, suffix = "...")` | `string` | Clip to at most `maxLength` characters including the suffix; if the suffix does not fit, clip without it. Never throws. |
 | `ToSlug` / `ToCamelCase` / `ToPascalCase` / `ToSnakeCase` / `ToKebabCase(value)` | `string` | Case / slug conversions. |
 | `StripHtml(value)` | `string` | Remove HTML tags. |
 | `WordCount(value)` | `int` | Count words. |
@@ -56,7 +56,7 @@ bool fits  = StringValidator.HasMaxLength("hi", 10);
 |--------|---------|---------|
 | `IsEmail` / `IsUrl` / `IsPhoneNumber` / `IsNumeric` / `IsAlphanumeric` / `IsIPv4` / `IsIPv6` / `IsGuid(value)` | `bool` | Format checks. |
 | `HasMinLength(value, min)` / `HasMaxLength(value, max)` | `bool` | Length bounds. |
-| `MatchesPattern(value, pattern)` | `bool` | Regex match. |
+| `MatchesPattern(value, pattern, matchTimeout?)` | `bool` | Regex match with a timeout (default 1 s); a timed-out match returns `false`. |
 | `IsNullOrWhiteSpace(value)` / `IsNotEmpty(value)` | `bool` | Emptiness checks. |
 
 ## Time — DateTimeHelper
@@ -87,7 +87,7 @@ string   rel  = DateTimeHelper.ToRelativeString(DateTime.UtcNow.AddMinutes(-3));
 | `FromIso8601(value)` | `Result<DateTime>` | Parse ISO 8601. |
 | `GetAge(birthDate)` | `int` | Whole years. |
 | `IsWeekend(value)` / `IsBusinessDay(value)` | `bool` | Day classification. |
-| `NextBusinessDay(value)` | `DateTime` | Next non-weekend day. |
+| `NextBusinessDay(value)` | `DateTime` | First Monday-Friday strictly after the date (Friday gives Monday, Monday gives Tuesday); time of day kept. |
 | `StartOfDay` / `EndOfDay` / `StartOfMonth` / `EndOfMonth(value)` | `DateTime` | Period boundaries. |
 | `StartOfWeek(value, startOfWeek = Monday)` | `DateTime` | Week start. |
 | `ToRelativeString(value)` | `string` | Human "3 minutes ago" text. |
@@ -150,7 +150,7 @@ Pulls request-context facts out of raw header values.
 using CL.Common.Web;
 
 string locale = HttpHeaderHelper.GetPrimaryLocale(acceptLanguageHeader);   // e.g. "en"
-string ip     = HttpHeaderHelper.GetEffectiveClientIp(remoteIp, xForwardedFor);
+string ip     = HttpHeaderHelper.GetEffectiveClientIp(remoteIp, xForwardedFor, proxies); // see below
 bool   bot    = HttpHeaderHelper.IsBot(userAgent);
 bool   mobile = HttpHeaderHelper.IsMobile(userAgent);
 bool   json   = HttpHeaderHelper.AcceptsJson(acceptHeader);
@@ -159,10 +159,43 @@ bool   json   = HttpHeaderHelper.AcceptsJson(acceptHeader);
 | Member | Returns | Purpose |
 |--------|---------|---------|
 | `GetPrimaryLocale(acceptLanguage?)` | `string` | Best language from `Accept-Language`. |
-| `GetEffectiveClientIp(remoteIp?, xForwardedFor?)` | `string` | Real client IP behind a proxy. |
-| `IsPrivateIp(ip)` | `bool` | Whether an IP is in a private range. |
+| `GetEffectiveClientIp(remoteIp?, xForwardedFor?, trustedProxies)` | `string` | Client IP behind the given trusted proxies (see below). |
+| `GetEffectiveClientIp(remoteIp?, xForwardedFor?)` | `string` | Same, trusting only non-public peers (`TrustedProxies.PrivateNetworks`). |
+| `GetEffectiveClientIpAddress(remoteIp?, xForwardedFor?, trustedProxies)` | `IPAddress?` | Same, as a parsed address (`null` if the remote is unparsable). |
+| `TryParseIp(value, out address)` | `bool` | Parse an address as found in headers: strips ports, brackets and quotes, rejects `127.1`-style shorthand, maps `::ffff:a.b.c.d` to IPv4. |
+| `IsPrivateIp(ip)` | `bool` | Whether an address is not publicly routable: RFC 1918, loopback (`127/8`, `::1`), `0/8`, `::`, link-local (`169.254/16`, `fe80::/10`), CGNAT `100.64/10`, unique-local `fc00::/7`; IPv4-mapped IPv6 checked as IPv4. |
 | `IsBot(userAgent?)` / `IsMobile(userAgent?)` / `AcceptsJson(accept?)` | `bool` | User-agent / accept checks. |
 | `GetHeader(headers, name)` | `string?` | Case-insensitive header lookup. |
+
+#### Client IP behind proxies
+
+`X-Forwarded-For` is written by whoever sends the request, so it is only believed when it comes from a proxy you
+trust. Build a `TrustedProxies` set once (for example from configuration) and pass it in:
+
+```csharp
+TrustedProxies proxies = TrustedProxies.Parse(["10.0.0.0/8", "203.0.113.7", "2001:db8::/32"]).ValueOrThrow();
+
+// remote 203.0.113.7 (trusted), X-Forwarded-For "6.6.6.6, 198.51.100.9, 10.1.2.3"  ->  "198.51.100.9"
+string ip = HttpHeaderHelper.GetEffectiveClientIp(remoteIp, xForwardedFor, proxies);
+```
+
+- If the direct peer (`remoteIp`) is not trusted, it is the client and the header is ignored.
+- Otherwise the header is walked right to left, skipping trusted hops; the first untrusted address is the client.
+  If every hop is trusted, the leftmost is returned.
+- An unparsable entry stops the walk at the last trusted hop; garbage is never returned.
+- The result is always a normalised address, or `"0.0.0.0"` when `remoteIp` is missing or unparsable.
+
+| `TrustedProxies` member | Purpose |
+|--------|---------|
+| `Parse(entries)` returns `Result<TrustedProxies>` | Addresses and CIDR networks; fails with `web.invalid_trusted_proxy`. |
+| `FromAddresses(addresses)` / `FromNetworks(networks)` | Build from `IPAddress` / `IPNetwork` values. |
+| `None` / `Loopback` / `PrivateNetworks` | Presets: trust nothing, only `127/8` and `::1`, or every non-public address. |
+| `Union(other)`, `IsTrusted(address)`, `Networks` | Combine sets, test an address, list the networks. |
+
+> **Changed in 5.0:** the two-argument `GetEffectiveClientIp(remoteIp, xForwardedFor)` used to return the first
+> non-RFC 1918 header entry from any peer, so clients could spoof their address. It now trusts the header only
+> when the peer is a non-public address (`TrustedProxies.PrivateNetworks`). If your proxy has a public address,
+> or you want to trust only specific hosts, use the overload above.
 
 ### UrlHelper
 

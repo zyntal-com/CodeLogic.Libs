@@ -40,6 +40,7 @@ public sealed class MailLibrary : ILibrary, IConfigReloadable
     private ImapService? _imap;
     private IMailTemplateProvider? _templateProvider;
     private IMailTemplateEngine? _templateEngine;
+    private MailConfig? _config;
 
     // ── Phase 1: Configure ────────────────────────────────────────────────────
 
@@ -84,6 +85,8 @@ public sealed class MailLibrary : ILibrary, IConfigReloadable
 
     private void BuildServices(LibraryContext context, MailConfig config)
     {
+        _config = config;
+
         // SMTP (always required when enabled)
         BuildSmtp(context, config);
 
@@ -129,12 +132,22 @@ public sealed class MailLibrary : ILibrary, IConfigReloadable
     /// on the old settings); a changed template directory swaps the template provider and engine;
     /// changed IMAP settings replace <see cref="Imap"/> and disconnect the old service — re-read
     /// <see cref="Imap"/> and call <see cref="ImapService.StartIdleAsync"/> again if you were idling.
-    /// <see cref="MailConfig.Enabled"/> can be switched either way.
+    /// <see cref="MailConfig.Enabled"/> can be switched either way. A configuration that fails
+    /// <see cref="MailConfig.Validate"/> is logged and ignored: the services keep the last valid one.
     /// </summary>
     public async Task OnConfigChangedAsync(LibraryContext context, ConfigChangedEventArgs change, CancellationToken cancellationToken)
     {
         if (change.NewValue is not MailConfig current) return;
-        var previous = change.GetOld<MailConfig>();
+
+        var validation = current.Validate();
+        if (!validation.IsValid)
+        {
+            context.Logger.Error($"{Manifest.Name}: ignored invalid configuration, keeping the current one: {string.Join("; ", validation.Errors)}");
+            return;
+        }
+
+        // Compare with what is actually running, not with the previous (possibly ignored) value.
+        var previous = _config ?? change.GetOld<MailConfig>();
 
         if (!current.Enabled)
         {
@@ -150,6 +163,8 @@ public sealed class MailLibrary : ILibrary, IConfigReloadable
             context.Logger.Info($"{Manifest.Name} enabled by a config change");
             return;
         }
+
+        _config = current;
 
         // Old SMTP services are not disposed: a send already running on one finishes normally.
         if (!ConfigDiff.ValueEquals(previous?.Smtp, current.Smtp))
@@ -186,6 +201,7 @@ public sealed class MailLibrary : ILibrary, IConfigReloadable
         _smtp = null;
         _templateProvider = null;
         _templateEngine = null;
+        _config = null;
     }
 
     // ── Phase 3: Start ────────────────────────────────────────────────────────
@@ -262,8 +278,11 @@ public sealed class MailLibrary : ILibrary, IConfigReloadable
     public IMailTemplateEngine TemplateEngine =>
         _templateEngine ?? throw new InvalidOperationException($"{Manifest.Name} has not been initialized.");
 
-    /// <summary>Creates a new fluent <see cref="MailBuilder"/> for composing messages.</summary>
-    public MailBuilder CreateMessage() => new();
+    /// <summary>
+    /// Creates a new fluent <see cref="MailBuilder"/> for composing messages. Its sender defaults to
+    /// <see cref="MailConfig.DefaultFromEmail"/> / <see cref="MailConfig.DefaultFromName"/> when <c>From()</c> is not called.
+    /// </summary>
+    public MailBuilder CreateMessage() => new(_config?.DefaultFromEmail, _config?.DefaultFromName);
 
     /// <summary>
     /// Convenience method: renders a template by ID and sends the result via SMTP.
@@ -291,7 +310,7 @@ public sealed class MailLibrary : ILibrary, IConfigReloadable
             return renderResult.Error!;
 
         var rendered = renderResult.Value!;
-        var builder = new MailBuilder().Subject(rendered.Subject);
+        var builder = CreateMessage().Subject(rendered.Subject);
         if (rendered.TextBody is not null) builder.TextBody(rendered.TextBody);
         if (rendered.HtmlBody is not null) builder.HtmlBody(rendered.HtmlBody);
 

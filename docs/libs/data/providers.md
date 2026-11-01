@@ -14,7 +14,7 @@ connection settings, provider options, storage choices and the few provider-only
 | Native bulk copy | `MySqlBulkCopy` (needs local infile) | `COPY ... (FORMAT BINARY)` | `SqlBulkCopy` | prepared inserts in one transaction |
 | Slow-query plan | `EXPLAIN FORMAT=TREE` | `EXPLAIN` | `SET SHOWPLAN_TEXT` | `EXPLAIN QUERY PLAN` |
 | Replica lag probe | `SHOW REPLICA STATUS` | replay LSN / timestamp | `sys.dm_hadr_database_replica_states` | none (no replicas) |
-| Schema lock | `GET_LOCK` | `pg_advisory_lock` | `sp_getapplock` | lock table |
+| Schema lock | `GET_LOCK` | `pg_advisory_lock` | `sp_getapplock` | none (run sync and migrations from one process) |
 | Parameter limit | 65,535 | 65,535 | 2,098 | 32,766 |
 
 A statement over its provider's parameter limit fails with `data.parameter_limit` before anything is sent. Batched inserts
@@ -29,7 +29,7 @@ size themselves to stay under the limit.
 ```
 
 - **Failover:** `failoverHosts` turns on MySqlConnector's failover load balancing for the primary.
-- **Storage:** GUIDs are stored as `BINARY(16)`, and dates are UTC. `[MySqlTable]` and `[MySqlColumn]` set the engine, charset and collation per table or column.
+- **Storage:** GUIDs are stored as `BINARY(16)`, and dates are UTC. `[MySqlTable]` sets the engine, charset, collation and row format per table; `[MySqlColumn]` sets the collation (which implies the character set) per column. `[MySqlColumn(Charset)]` is not applied yet.
 - **Bulk copy** needs `allowLoadLocalInfile` and the server's `local_infile`. When either is off, CL.Data batches multi-row inserts instead, and it remembers when the server refuses.
 - **Lag probe:** it needs the `REPLICATION CLIENT` privilege. Without it, the lag is unknown and the replica counts as usable.
 - **MySQL-only operations:**
@@ -50,6 +50,7 @@ await db.MySql.AnalyzeTableAsync<Product>();
 
 - **Failover:** `failoverHosts` maps to Npgsql multi-host with `TargetSessionAttributes=primary`.
 - **Tables** are qualified with `defaultSchema` unless `[Table(Schema = ...)]` says otherwise.
+- **Table hints:** `[PostgresTable(Unlogged = true, FillFactor = 70, Tablespace = "fast")]` shape `CREATE TABLE` (`UNLOGGED`, `WITH (fillfactor = 70)`, `TABLESPACE`). They apply when sync creates the table; existing tables are not altered.
 - **Types:** jsonb, uuid, timestamptz and bytea map natively. Other types (inet, interval, arrays, ranges) work through `[PostgresColumn(Type = ...)]`, with values bound as-is. LINQ has no array or range operators yet.
 - **PostgreSQL-only operations:**
 
@@ -60,7 +61,8 @@ await db.Postgres.NotifyAsync("orders", "42");
 await db.Postgres.VacuumAnalyzeAsync<Product>();   // outside transactions only
 ```
 
-`ListenAsync` holds a dedicated connection until you dispose the listener.
+`ListenAsync` holds a dedicated connection until you dispose the listener. `NotifyAsync` and `VacuumAnalyzeAsync` always run on
+the primary and are never retried once sent (as are the MySQL and SQL Server maintenance operations).
 
 ## SQL Server
 
@@ -71,9 +73,9 @@ await db.Postgres.VacuumAnalyzeAsync<Product>();   // outside transactions only
 ```
 
 - **Authentication:** `SqlPassword`, `Integrated`, `EntraDefault`, `EntraManagedIdentity` or `EntraServicePrincipal`.
-- **TLS:** `Encrypt` and `TrustServerCertificate` written in a connection string win. Otherwise the `sqlServer` options apply (encrypted by default). An explicit `sslMode` overrides both.
+- **TLS:** `Encrypt` and `TrustServerCertificate` written in a connection string win. Otherwise the `sqlServer` options apply (encrypted by default). An explicit `sslMode` overrides both. `sslCaCertificatePath` is rejected: SqlClient trusts the machine's certificate store only, so install the CA there, or pin the server certificate with `Server Certificate=<path>` in the connection string.
 - **Replicas** are reached with `ApplicationIntent=ReadOnly` (an availability group listener). The lag probe needs `VIEW SERVER STATE`.
-- **Storage:** JSON columns are `nvarchar(max)` with `CHECK (ISJSON(col) = 1)`. `rowversion` concurrency tokens are native. Explicit identity values are inserted with `IDENTITY_INSERT`.
+- **Storage:** JSON columns are `nvarchar(max)` with `CHECK (ISJSON(col) = 1)`. `rowversion` concurrency tokens are native. Explicit identity values are inserted with `IDENTITY_INSERT`. `[SqlServerTable(FileGroup = "FG1", DataCompression = "PAGE")]` adds `ON [FG1] WITH (DATA_COMPRESSION = PAGE)` when sync creates the table. `[SqlServerColumn(Sparse)]` is not applied yet.
 - **SQL Server-only operations:**
 
 ```csharp
@@ -95,6 +97,7 @@ await db.SqlServer.UpdateStatisticsAsync<Product>(fullScan: true);
   - Schema changes SQLite can't `ALTER` rebuild the table, with foreign keys checked afterwards.
   - `db.Backup` can make a consistent copy with `VACUUM INTO`.
 - **No replicas:** a configuration with replicas is rejected.
+- **No advisory locks:** `AcquireLockAsync` returns `data.unsupported`, and schema sync, migrations and seeds run without a lock. Run them from one process at a time.
 
 ## Writing a provider
 

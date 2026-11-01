@@ -6,7 +6,10 @@ namespace CL.SocialConnect.Events;
 /// Published on the <see cref="IEventBus"/> after a Discord webhook send attempt completes
 /// (whether successful or not).
 /// </summary>
-/// <param name="WebhookUrl">The webhook URL that was called.</param>
+/// <param name="WebhookUrl">
+/// The webhook URL that was called, with its secret token redacted (<c>https://discord.com/api/webhooks/{id}/***</c>).
+/// The token is never published.
+/// </param>
 /// <param name="Success">Whether the delivery succeeded (HTTP 2xx).</param>
 /// <param name="SentAt">UTC timestamp of the send attempt.</param>
 /// <param name="StatusCode">The HTTP status code returned, or <c>null</c> if a network error occurred.</param>
@@ -17,7 +20,11 @@ public record WebhookSentEvent(
     DateTime SentAt,
     int? StatusCode = null,
     string? ErrorMessage = null
-) : IEvent;
+) : IEvent
+{
+    /// <summary>The webhook's id (the numeric segment of its URL), or <c>null</c> when unknown.</summary>
+    public string? WebhookId { get; init; }
+}
 
 /// <summary>
 /// Published on the <see cref="IEventBus"/> after a Steam authentication attempt completes.

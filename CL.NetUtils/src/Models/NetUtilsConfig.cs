@@ -27,7 +27,9 @@ public class NetUtilsConfig : ConfigModelBase
         if (Dnsbl.TimeoutSeconds <= 0)
             errors.Add("DNSBL timeout must be > 0");
 
-        if (!GeoIp.TryGetTrustedDownloadUri(out _, out var urlError))
+        if (!GeoIpConfig.IsValidDatabaseType(GeoIp.DatabaseType))
+            errors.Add("GeoIp.DatabaseType must be a MaxMind edition id: letters, digits, '-', '_' or '.', at most 64 characters (e.g. GeoLite2-City)");
+        else if (!GeoIp.TryGetTrustedDownloadUri(out _, out var urlError))
             errors.Add(urlError);
 
         return errors.Count > 0
@@ -120,15 +122,19 @@ public class GeoIpConfig
         Group = "GeoIP", Order = 24, Collapsed = true)]
     public string LicenseKey { get; set; } = string.Empty;
 
+    /// <summary>The placeholder in <see cref="DownloadUrl"/> that is replaced with <see cref="DatabaseType"/>.</summary>
+    public const string DatabaseTypePlaceholder = "{DatabaseType}";
+
     /// <summary>
     /// URL used to download the GeoIP database archive. The MaxMind credentials are sent to it, so it must be
-    /// <c>https</c> and its host must be listed in <see cref="TrustedDownloadHosts"/>.
+    /// <c>https</c> and its host must be listed in <see cref="TrustedDownloadHosts"/>. <c>{DatabaseType}</c> is replaced
+    /// with <see cref="DatabaseType"/>, so the default URL downloads whichever edition is configured.
     /// </summary>
     [ConfigField(Label = "Download URL", InputType = ConfigInputType.Url,
         Description = "Must be https and on a trusted host: the MaxMind credentials are sent to it.",
         Group = "GeoIP", Order = 25, Collapsed = true)]
     public string DownloadUrl { get; set; } =
-        "https://download.maxmind.com/geoip/databases/GeoLite2-City/download?suffix=tar.gz";
+        "https://download.maxmind.com/geoip/databases/{DatabaseType}/download?suffix=tar.gz";
 
     /// <summary>
     /// Hosts that <see cref="DownloadUrl"/> may point at (exact, case-insensitive host names). Default: MaxMind's
@@ -139,9 +145,27 @@ public class GeoIpConfig
         Group = "GeoIP", Order = 26, Collapsed = true)]
     public List<string> TrustedDownloadHosts { get; set; } = ["download.maxmind.com"];
 
-    /// <summary>MaxMind database type (e.g. <c>GeoLite2-City</c>).</summary>
-    [ConfigField(Label = "Database Type", Group = "GeoIP", Order = 27, Collapsed = true)]
+    /// <summary>
+    /// MaxMind edition id: a City, Country, Enterprise, ASN or ISP edition such as <c>GeoLite2-City</c>,
+    /// <c>GeoLite2-Country</c>, <c>GeoLite2-ASN</c>, <c>GeoIP2-City</c>, <c>GeoIP2-Enterprise</c> or <c>GeoIP2-ISP</c>.
+    /// It names the default database file (<c>{DatabaseType}.mmdb</c>), fills <c>{DatabaseType}</c> in
+    /// <see cref="DownloadUrl"/>, and a downloaded database must be of the same kind.
+    /// </summary>
+    [ConfigField(Label = "Database Type", Description = "MaxMind edition id, e.g. GeoLite2-City, GeoLite2-Country or GeoLite2-ASN.",
+        Group = "GeoIP", Order = 27, Collapsed = true)]
     public string DatabaseType { get; set; } = "GeoLite2-City";
+
+    /// <summary>
+    /// Whether <paramref name="databaseType"/> can be an edition id: 1 to 64 letters, digits, <c>-</c>, <c>_</c> or
+    /// <c>.</c>, not starting with <c>.</c>. It becomes a file name and a URL path segment, so separators and
+    /// <c>..</c> are refused.
+    /// </summary>
+    public static bool IsValidDatabaseType(string? databaseType) =>
+        !string.IsNullOrEmpty(databaseType)
+        && databaseType.Length <= 64
+        && databaseType[0] != '.'
+        && !databaseType.Contains("..", StringComparison.Ordinal)
+        && databaseType.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_' or '.');
 
     /// <summary>HTTP download timeout in seconds.</summary>
     [ConfigField(Label = "Download Timeout (s)", Min = 1, Max = 600,
@@ -157,7 +181,17 @@ public class GeoIpConfig
     public bool TryGetTrustedDownloadUri(out Uri? uri, out string error)
     {
         uri = null;
-        if (!Uri.TryCreate(DownloadUrl, UriKind.Absolute, out var parsed))
+        var url = DownloadUrl ?? string.Empty;
+        if (url.Contains(DatabaseTypePlaceholder, StringComparison.Ordinal))
+        {
+            if (!IsValidDatabaseType(DatabaseType))
+            {
+                error = "GeoIp.DatabaseType is not a valid edition id, so it cannot fill {DatabaseType} in GeoIp.DownloadUrl";
+                return false;
+            }
+            url = url.Replace(DatabaseTypePlaceholder, Uri.EscapeDataString(DatabaseType), StringComparison.Ordinal);
+        }
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var parsed))
         {
             error = "GeoIp.DownloadUrl must be an absolute URL";
             return false;

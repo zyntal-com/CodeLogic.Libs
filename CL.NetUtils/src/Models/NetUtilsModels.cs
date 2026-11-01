@@ -123,16 +123,24 @@ public record IpLocationResult
     /// <summary>IANA time zone identifier (e.g. <c>Europe/Copenhagen</c>), or <see langword="null"/>.</summary>
     public string? TimeZone { get; init; }
 
-    /// <summary>ISP / organization name, or <see langword="null"/> when unavailable.</summary>
+    /// <summary>ISP / organization name, or <see langword="null"/> when unavailable (filled by ISP and Enterprise databases).</summary>
     public string? Isp { get; init; }
+
+    /// <summary>Autonomous system number, or <see langword="null"/> when unavailable (filled by ASN, ISP and Enterprise databases).</summary>
+    public long? AutonomousSystemNumber { get; init; }
+
+    /// <summary>Organization of the autonomous system, or <see langword="null"/> when unavailable (ASN, ISP and Enterprise databases).</summary>
+    public string? AutonomousSystemOrganization { get; init; }
 
     /// <summary>Error message when the lookup failed; <see langword="null"/> on success.</summary>
     public string? ErrorMessage { get; init; }
 
     /// <summary>
-    /// <see langword="true"/> when the lookup succeeded and country information is available.
+    /// <see langword="true"/> when the lookup succeeded and found data: a country code (City, Country and Enterprise
+    /// databases) or, for ASN and ISP databases, which have no country, an autonomous system number or ISP.
     /// </summary>
-    public bool IsSuccessful => string.IsNullOrEmpty(ErrorMessage) && !string.IsNullOrEmpty(CountryCode);
+    public bool IsSuccessful => string.IsNullOrEmpty(ErrorMessage)
+        && (!string.IsNullOrEmpty(CountryCode) || AutonomousSystemNumber is not null || !string.IsNullOrEmpty(Isp));
 
     /// <summary>UTC timestamp of when the lookup was performed.</summary>
     public DateTime LookedUpAt { get; init; } = DateTime.UtcNow;

@@ -64,6 +64,12 @@ public static class MailErrorCodes
     /// <summary>An attachment file does not exist on disk. Kind: <see cref="NotFoundError"/>.</summary>
     public const string AttachmentNotFound = "mail.attachment_not_found";
 
+    /// <summary>
+    /// An attachment path is not a fully qualified path, or lies outside
+    /// <see cref="SmtpConfig.AttachmentBaseDirectory"/>. Kind: <see cref="ValidationError"/>.
+    /// </summary>
+    public const string InvalidAttachment = "mail.invalid_attachment";
+
     /// <summary>The IMAP configuration is incomplete or invalid. Kind: <see cref="ValidationError"/>.</summary>
     public const string ImapConfigInvalid = "mail.imap_config_invalid";
 
@@ -78,6 +84,12 @@ public static class MailErrorCodes
 
     /// <summary>A general IMAP protocol or state error. Kind: <see cref="InternalError"/>.</summary>
     public const string ImapError = "mail.imap_error";
+
+    /// <summary>
+    /// The IMAP server refused a command (a <c>NO</c> or <c>BAD</c> answer, e.g. creating a folder that exists).
+    /// Kind: <see cref="ValidationError"/>; <see cref="Error.Details"/> carries the IMAP response.
+    /// </summary>
+    public const string ImapRejected = "mail.imap_rejected";
 
     /// <summary>The requested IMAP folder does not exist. Kind: <see cref="NotFoundError"/>.</summary>
     public const string FolderNotFound = "mail.folder_not_found";

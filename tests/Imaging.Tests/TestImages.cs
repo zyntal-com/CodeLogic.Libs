@@ -99,17 +99,20 @@ internal static class TestImages
     }
 }
 
-/// <summary>Builds a minimal TIFF/EXIF block: IFD0 with optional Exif and GPS sub-IFDs.</summary>
+/// <summary>Builds a minimal TIFF/EXIF block: IFD0 with optional Exif and GPS sub-IFDs and an optional IFD1 thumbnail.</summary>
 internal sealed class TiffBuilder(bool bigEndian = false)
 {
     private readonly List<(ushort Tag, ushort Type, uint Count, byte[] Data)> _ifd0 = [];
     private readonly List<(ushort Tag, ushort Type, uint Count, byte[] Data)> _exif = [];
     private readonly List<(ushort Tag, ushort Type, uint Count, byte[] Data)> _gps = [];
+    private readonly List<(ushort Tag, ushort Type, uint Count, byte[] Data)> _ifd1 = [];
     private List<(ushort Tag, ushort Type, uint Count, byte[] Data)> _target = null!;
+    private byte[]? _thumbnail;
 
     public TiffBuilder Ifd0() { _target = _ifd0; return this; }
     public TiffBuilder Exif() { _target = _exif; return this; }
     public TiffBuilder Gps() { _target = _gps; return this; }
+    public TiffBuilder Ifd1() { _target = _ifd1; return this; }
 
     private List<(ushort Tag, ushort Type, uint Count, byte[] Data)> Target => _target ?? _ifd0;
 
@@ -146,26 +149,47 @@ internal sealed class TiffBuilder(bool bigEndian = false)
         return this;
     }
 
+    /// <summary>An UNDEFINED (type 7) entry, such as a MakerNote (0x927C).</summary>
+    public TiffBuilder Undefined(ushort tag, byte[] value)
+    {
+        Target.Add((tag, 7, (uint)value.Length, value));
+        return this;
+    }
+
+    /// <summary>An IFD1 JPEG thumbnail (JPEGInterchangeFormat / JPEGInterchangeFormatLength) with these bytes.</summary>
+    public TiffBuilder Thumbnail(byte[] jpeg)
+    {
+        _thumbnail = jpeg;
+        _ifd1.Add((0x0201, 4, 1, new byte[4]));
+        _ifd1.Add((0x0202, 4, 1, new byte[4]));
+        return this;
+    }
+
     public byte[] Build()
     {
-        // Layout: header, IFD0, Exif IFD, GPS IFD, then all out-of-line values.
+        // Layout: header, IFD0, Exif IFD, GPS IFD, IFD1, then all out-of-line values, then the thumbnail.
         var ifd0 = _ifd0.ToList();
         if (_exif.Count > 0) ifd0.Add((0x8769, 4, 1, new byte[4]));
         if (_gps.Count > 0) ifd0.Add((0x8825, 4, 1, new byte[4]));
         ifd0.Sort((a, b) => a.Tag.CompareTo(b.Tag));
         var ifds = new List<List<(ushort Tag, ushort Type, uint Count, byte[] Data)>> { ifd0 };
-        if (_exif.Count > 0) ifds.Add(_exif);
-        if (_gps.Count > 0) ifds.Add(_gps);
+        int exifIndex = -1, gpsIndex = -1, ifd1Index = -1;
+        if (_exif.Count > 0) { exifIndex = ifds.Count; ifds.Add(_exif); }
+        if (_gps.Count > 0) { gpsIndex = ifds.Count; ifds.Add(_gps); }
+        if (_ifd1.Count > 0) { ifd1Index = ifds.Count; ifds.Add(_ifd1); }
 
         var offsets = new List<int>();
         var pos = 8;
         foreach (var ifd in ifds) { offsets.Add(pos); pos += 2 + ifd.Count * 12 + 4; }
         var dataStart = pos;
-        var total = dataStart + ifds.Sum(ifd => ifd.Sum(e => e.Data.Length > 4 ? e.Data.Length + (e.Data.Length & 1) : 0));
+        var valuesLength = ifds.Sum(ifd => ifd.Sum(e => e.Data.Length > 4 ? e.Data.Length + (e.Data.Length & 1) : 0));
+        var thumbnailAt = dataStart + valuesLength;
+        var total = thumbnailAt + (_thumbnail?.Length ?? 0);
         var buffer = new byte[total];
         buffer[0] = buffer[1] = (byte)(bigEndian ? 'M' : 'I');
         U16(buffer.AsSpan(2), 42);
         U32(buffer.AsSpan(4), 8);
+        _thumbnail?.CopyTo(buffer, thumbnailAt);
 
         var dataPos = dataStart;
         for (var n = 0; n < ifds.Count; n++)
@@ -176,8 +200,10 @@ internal sealed class TiffBuilder(bool bigEndian = false)
             for (var i = 0; i < ifd.Count; i++)
             {
                 var (tag, type, count, data) = ifd[i];
-                if (tag == 0x8769) U32(data, (uint)offsets[1]);
-                if (tag == 0x8825) U32(data, (uint)offsets[^1]);
+                if (n == 0 && tag == 0x8769) U32(data, (uint)offsets[exifIndex]);
+                if (n == 0 && tag == 0x8825) U32(data, (uint)offsets[gpsIndex]);
+                if (n == ifd1Index && tag == 0x0201) U32(data, (uint)thumbnailAt);
+                if (n == ifd1Index && tag == 0x0202) U32(data, (uint)(_thumbnail?.Length ?? 0));
                 var e = at + 2 + i * 12;
                 U16(buffer.AsSpan(e), tag);
                 U16(buffer.AsSpan(e + 2), type);
@@ -190,6 +216,8 @@ internal sealed class TiffBuilder(bool bigEndian = false)
                     dataPos += data.Length + (data.Length & 1);
                 }
             }
+            // IFD0's "next IFD" links to IFD1.
+            if (n == 0 && ifd1Index >= 0) U32(buffer.AsSpan(at + 2 + ifd.Count * 12), (uint)offsets[ifd1Index]);
         }
         return buffer;
     }

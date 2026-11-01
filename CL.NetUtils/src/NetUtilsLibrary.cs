@@ -35,7 +35,19 @@ public sealed class NetUtilsLibrary : ILibrary
     private DnsblChecker? _dnsblChecker;
     private GeoIpService? _geoIpService;
     private bool _initialized;
+    private bool _initializeRan;
     private string _geoIpState = "off";   // "on", "off", "not configured" or "failed: …"
+    private DnsblChecker? _disabledDnsbl;
+
+    /// <summary>Localized messages (the English defaults until CodeLogic has loaded the translations).</summary>
+    private NetUtilsStrings Strings
+    {
+        get
+        {
+            try { return _context?.Localization.Get<NetUtilsStrings>() ?? InputText.DefaultStrings; }
+            catch { return InputText.DefaultStrings; }
+        }
+    }
 
     // ── Phase 1: Configure ────────────────────────────────────────────────────
 
@@ -69,23 +81,25 @@ public sealed class NetUtilsLibrary : ILibrary
             throw new InvalidOperationException($"{Manifest.Name} configuration is invalid: {errors}");
         }
 
+        _initializeRan = true;
+
         if (!config.Enabled)
         {
             context.Logger.Warning($"{Manifest.Name} is disabled in configuration — skipping initialization.");
             return;
         }
 
-        // DNSBL checker — always created when enabled
+        // DNSBL checker — created when enabled; otherwise Dnsbl hands out a checker that reports "disabled"
         if (config.Dnsbl.Enabled)
         {
-            _dnsblChecker = new DnsblChecker(config.Dnsbl, context.Logger);
+            _dnsblChecker = new DnsblChecker(config.Dnsbl, context.Logger) { Strings = () => Strings };
             context.Logger.Info("DNSBL checker initialized");
         }
 
         // GeoIP service — optional; failure is a warning, not a fatal error
         if (config.GeoIp.Enabled)
         {
-            var geoIp = new GeoIpService(config.GeoIp, context.Logger, context.DataDirectory);
+            var geoIp = new GeoIpService(config.GeoIp, context.Logger, context.DataDirectory) { Strings = () => Strings };
 
             if (!File.Exists(geoIp.DatabasePath) && !geoIp.CanDownload)
             {
@@ -104,7 +118,7 @@ public sealed class NetUtilsLibrary : ILibrary
                 }
                 catch (Exception ex)
                 {
-                    context.Logger.Warning($"GeoIP service initialization failed (service will be unavailable): {ex.Message}");
+                    context.Logger.Warning(InputText.Format(Strings.GeoIpUnavailable, ex.Message));
                     geoIp.Dispose();
                     _geoIpState = $"failed: {ex.Message}";
                 }
@@ -112,7 +126,7 @@ public sealed class NetUtilsLibrary : ILibrary
         }
 
         _initialized = true;
-        context.Logger.Info($"{Manifest.Name} initialized");
+        context.Logger.Info(Strings.LibraryInitialized);
     }
 
     // ── Phase 3: Start ────────────────────────────────────────────────────────
@@ -121,7 +135,7 @@ public sealed class NetUtilsLibrary : ILibrary
     public Task OnStartAsync(LibraryContext context)
     {
         _context = context;
-        context.Logger.Info($"{Manifest.Name} started");
+        context.Logger.Info(Strings.LibraryStarted);
         return Task.CompletedTask;
     }
 
@@ -136,8 +150,9 @@ public sealed class NetUtilsLibrary : ILibrary
         _geoIpService = null;
         _dnsblChecker = null;
         _initialized = false;
+        _initializeRan = false;
 
-        _context?.Logger.Info($"{Manifest.Name} stopped");
+        _context?.Logger.Info(Strings.LibraryStopped);
         return Task.CompletedTask;
     }
 
@@ -165,13 +180,31 @@ public sealed class NetUtilsLibrary : ILibrary
     // ── Public API ────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// The DNSBL checker service.
+    /// The DNSBL checker service. Always available once the library has initialized: while DNSBL checking is switched
+    /// off (<c>enabled</c> or <c>dnsbl.enabled</c> is <see langword="false"/>) it is a checker whose
+    /// <see cref="DnsblChecker.IsEnabled"/> is <see langword="false"/> and whose checks return
+    /// <see cref="DnsblCheckStatus.Error"/> with a "DNSBL checking is disabled" message, without any DNS query.
     /// </summary>
-    /// <exception cref="InvalidOperationException">
-    /// Thrown when the library has not been initialized or is disabled.
-    /// </exception>
-    public DnsblChecker Dnsbl =>
-        _dnsblChecker ?? throw new InvalidOperationException("NetUtils not initialized or disabled");
+    /// <exception cref="InvalidOperationException">Thrown before the library has initialized.</exception>
+    public DnsblChecker Dnsbl
+    {
+        get
+        {
+            if (_dnsblChecker is { } checker) return checker;
+            if (!_initializeRan) throw new InvalidOperationException("NetUtils not initialized");
+            return _disabledDnsbl ??= CreateDisabledDnsbl();
+        }
+    }
+
+    private DnsblChecker CreateDisabledDnsbl()
+    {
+        var checker = DnsblChecker.CreateDisabled(_context?.Logger);
+        checker.Strings = () => Strings;
+        return checker;
+    }
+
+    /// <summary><see langword="true"/> when DNSBL checking is enabled and the checker is running.</summary>
+    public bool HasDnsbl => _dnsblChecker is not null;
 
     /// <summary>
     /// The GeoIP lookup service.

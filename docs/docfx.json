@@ -34,7 +34,7 @@
         "files": ["api/**.yml", "api/index.md"]
       },
       {
-        "files": ["libs/**.md", "libs/**/toc.yml", "toc.yml", "getting-started.md", "index.md"]
+        "files": ["libs/**.md", "libs/**/toc.yml", "toc.yml", "getting-started.md", "versioning.md", "index.md"]
       }
     ],
     "resource": [

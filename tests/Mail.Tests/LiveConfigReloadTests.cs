@@ -106,6 +106,37 @@ public sealed class LiveConfigReloadTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task CreateMessage_uses_the_configured_default_sender()
+    {
+        var config = Config();
+        config["defaultFromEmail"] = "noreply@example.com";
+        config["defaultFromName"] = "Example";
+        Assert.True((await UpdateAsync(config)).Applied);
+
+        var message = _mail.CreateMessage().To("r@example.com").Subject("s").TextBody("b").Build();
+        Assert.Equal("noreply@example.com", message.From);
+        Assert.Equal("Example", message.FromName);
+    }
+
+    [Fact]
+    public async Task Invalid_config_reaching_the_library_is_ignored()
+    {
+        // The framework validates before applying; the library re-checks so a direct call cannot apply it either.
+        var context = _manager.GetLoadedLibraries().Single(l => l.Instance is MailLibrary).Context!;
+        var smtp = _mail.Smtp;
+        var invalid = new CL.Mail.Models.MailConfig { Smtp = { Host = "" } };
+
+        await _mail.OnConfigChangedAsync(context, new CodeLogic.Core.Configuration.ConfigChangedEventArgs
+        {
+            SectionName = "mail",
+            Kind = CodeLogic.Core.Configuration.ConfigChangeKind.Updated,
+            NewValue = invalid
+        }, CancellationToken.None);
+
+        Assert.Same(smtp, _mail.Smtp);
+    }
+
+    [Fact]
     public async Task Library_can_be_disabled_and_enabled_live()
     {
         var config = Config();

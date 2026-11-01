@@ -23,7 +23,9 @@ string hash = BlurHash.Encode(doc, xComponents: 4, yComponents: 3).Value!;    //
 using var placeholder = BlurHash.Decode(hash, 32, 32).Value!;
 ```
 
-Compatible with the reference implementations ([blurha.sh](https://blurha.sh)). `BlurHash.IsValid(text)` checks a hash.
+Compatible with the reference implementations ([blurha.sh](https://blurha.sh)). `BlurHash.IsValid(text)` checks a hash
+(1-9 components per axis, matching length). `Decode` accepts 1-2048 pixels per side and at most
+`BlurHash.MaxDecodePixels` (1 048 576) in total; decode small (32 x 32 is plenty) and let the browser scale it up.
 
 ## Perceptual hashes
 

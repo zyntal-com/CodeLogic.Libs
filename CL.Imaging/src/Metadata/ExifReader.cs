@@ -106,6 +106,81 @@ internal sealed class ExifReader
         return true;
     }
 
+    /// <summary>
+    /// Removes the IFD1 thumbnail in place: IFD0 no longer links to IFD1, and the IFD1 entries, their values and the
+    /// thumbnail image (JPEG or strips) are zeroed. The thumbnail shows the original pixels, so a blur, crop or redaction
+    /// of the main image would not reach it. Returns false when the block has no IFD1.
+    /// </summary>
+    public static bool TryRemoveThumbnail(byte[] tiff)
+    {
+        var reader = Parse(tiff);
+        if (reader is null) return false;
+        var ifd0 = reader.U32(4);
+        if (ifd0 < 8 || ifd0 + 2 > tiff.Length) return false;
+        var nextAt = (long)ifd0 + 2 + reader.U16((int)ifd0) * 12;
+        if (nextAt + 4 > tiff.Length) return false;
+        var ifd1 = reader.U32((int)nextAt);
+        if (ifd1 == 0) return false;
+        Array.Clear(tiff, (int)nextAt, 4);
+        if (ifd1 < 8 || ifd1 + 2 > tiff.Length) return true;
+
+        var entries = new Dictionary<ushort, Entry>();
+        reader.ReadIfd((int)ifd1, entries, []);
+        if (entries.TryGetValue(0x0201, out var jpegOffset) && entries.TryGetValue(0x0202, out var jpegLength) &&
+            reader.UintAt(jpegOffset, 0) is { } thumbAt && reader.UintAt(jpegLength, 0) is { } thumbLength)
+            ClearRange(tiff, thumbAt, thumbLength);
+        if (entries.TryGetValue(0x0111, out var stripOffsets) && entries.TryGetValue(0x0117, out var stripCounts))
+        {
+            for (var i = 0; i < Math.Min(stripOffsets.Count, stripCounts.Count); i++)
+            {
+                if (reader.UintAt(stripOffsets, i) is { } stripAt && reader.UintAt(stripCounts, i) is { } stripLength)
+                    ClearRange(tiff, stripAt, stripLength);
+            }
+        }
+        foreach (var entry in entries.Values)
+            ClearValue(tiff, entry);
+        var count = reader.U16((int)ifd1);
+        ClearRange(tiff, ifd1, 2 + (uint)count * 12 + 4);
+        return true;
+    }
+
+    /// <summary>
+    /// Zeroes the MakerNote (Exif tag 0x927C) in place. It is vendor data that can carry a preview of the original
+    /// pixels and a vendor copy of the GPS position. Returns false when the block has no MakerNote.
+    /// </summary>
+    public static bool TryRemoveMakerNote(byte[] tiff)
+    {
+        var reader = Parse(tiff);
+        if (reader is null || !reader._exif.TryGetValue(0x927C, out var entry)) return false;
+        ClearValue(tiff, entry);
+        return true;
+    }
+
+    private static void ClearValue(byte[] tiff, Entry entry)
+    {
+        var length = Math.Min((long)entry.Count * TypeSize(entry.Type), tiff.Length - entry.ValueOffset);
+        if (length > 0) Array.Clear(tiff, entry.ValueOffset, (int)length);
+    }
+
+    private static void ClearRange(byte[] tiff, uint offset, uint length)
+    {
+        if (offset >= tiff.Length) return;
+        var end = Math.Min((long)offset + length, tiff.Length);
+        Array.Clear(tiff, (int)offset, (int)(end - offset));
+    }
+
+    /// <summary>The <paramref name="index"/>-th SHORT or LONG value of an entry.</summary>
+    private uint? UintAt(Entry entry, int index)
+    {
+        if (index >= entry.Count) return null;
+        return entry.Type switch
+        {
+            3 => U16(entry.ValueOffset + index * 2),
+            4 => U32(entry.ValueOffset + index * 4),
+            _ => null,
+        };
+    }
+
     private static bool TrySetOrientationCore(byte[] tiff, ImageOrientation orientation)
     {
         var reader = Parse(tiff);

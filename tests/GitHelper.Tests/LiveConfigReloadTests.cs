@@ -138,4 +138,53 @@ public sealed class LiveConfigReloadTests : IAsyncLifetime
         Assert.True((await UpdateAsync(config)).Applied);
         Assert.Equal(["App", "Docs"], _git.GetManager().GetRepositoryIds().Order());
     }
+
+    [Fact]
+    public async Task A_disabled_library_reports_healthy_disabled_not_unhealthy()
+    {
+        var config = Config();
+        config["enabled"] = false;
+        Assert.True((await UpdateAsync(config)).Applied);
+
+        var health = await _git.HealthCheckAsync();
+
+        Assert.Equal(HealthStatusLevel.Healthy, health.Status);
+        Assert.Contains("disabled", health.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task An_invalid_config_change_is_rejected_and_the_current_settings_stay()
+    {
+        var context = new LibraryContext
+        {
+            LibraryId = "CL.GitHelper",
+            LibraryDirectory = _root,
+            ConfigDirectory = _root,
+            LocalizationDirectory = _root,
+            LogsDirectory = _root,
+            DataDirectory = _root,
+            Logger = CodeLogic.Core.Logging.NullLogger.Instance,
+            Configuration = new ConfigurationManager(_root),
+            Localization = new CodeLogic.Core.Localization.LocalizationManager(_root),
+            Events = new EventBus()
+        };
+        var invalid = new GitHelperConfig
+        {
+            Enabled = false,    // would disable the library if the change were applied
+            Repositories =
+            [
+                new RepositoryConfiguration { Id = "Dup", RepositoryUrl = "https://example.invalid/a.git", LocalPath = "a" },
+                new RepositoryConfiguration { Id = "Dup", RepositoryUrl = "https://example.invalid/b.git", LocalPath = "b" }
+            ]
+        };
+
+        await _git.OnConfigChangedAsync(context, new ConfigChangedEventArgs
+        {
+            SectionName = "githelper",
+            Kind = ConfigChangeKind.Updated,
+            NewValue = invalid
+        }, CancellationToken.None);
+
+        Assert.Equal(["App", "Docs"], _git.GetManager().GetRepositoryIds().Order());
+    }
 }

@@ -82,7 +82,10 @@ public sealed class DataConnectionConfig
     [ConfigField(Label = "SSL Mode", RequiresRestart = true, Group = "Security", Order = 20)]
     public DataSslMode SslMode { get; set; } = DataSslMode.Default;
 
-    /// <summary>CA certificate file used with <see cref="DataSslMode.VerifyCA"/> and <see cref="DataSslMode.VerifyFull"/>.</summary>
+    /// <summary>
+    /// CA certificate file used with <see cref="DataSslMode.VerifyCA"/> and <see cref="DataSslMode.VerifyFull"/> (MySQL, PostgreSQL).
+    /// SQL Server rejects it at validation: SqlClient trusts the machine's certificate store only.
+    /// </summary>
     [ConfigField(Label = "SSL CA Certificate Path", RequiresRestart = true, Group = "Security", Order = 21)]
     public string? SslCaCertificatePath { get; set; }
 
@@ -151,7 +154,10 @@ public sealed class DataConnectionConfig
     [ConfigField(Label = "Max Batch Size", Min = 1, Max = 10000, Group = "Performance", Order = 61, Collapsed = true)]
     public int MaxBatchSize { get; set; } = 1000;
 
-    /// <summary><c>InsertMany</c> switches to the native bulk path at or above this many rows (0 = never).</summary>
+    /// <summary>
+    /// <c>InsertMany</c> switches to the native bulk path at or above this many rows (0 = never). Not when the database has
+    /// command interceptors or middleware: the bulk copy bypasses the command pipeline, so those inserts stay batched.
+    /// </summary>
     [ConfigField(Label = "Bulk Threshold", Min = 0, Group = "Performance", Order = 62, Collapsed = true)]
     public int BulkThreshold { get; set; } = 5000;
 

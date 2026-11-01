@@ -33,7 +33,7 @@
 | [CodeLogic.GitHelper](CL.GitHelper/) | [![NuGet](https://img.shields.io/nuget/v/CodeLogic.GitHelper?label=)](https://www.nuget.org/packages/CodeLogic.GitHelper) | Git repository automation via LibGit2Sharp |
 | [CodeLogic.TwoFactorAuth](CL.TwoFactorAuth/) | [![NuGet](https://img.shields.io/nuget/v/CodeLogic.TwoFactorAuth?label=)](https://www.nuget.org/packages/CodeLogic.TwoFactorAuth) | TOTP 2FA with QR-code generation |
 
-All packages target **.NET 11** and depend on **CodeLogic 5.0** (range `[5.0.0, 6.0.0)`). On .NET 10, use the 4.9.x packages (CodeLogic `[4.9.0, 5.0.0)`), maintained on the `support/4.x` branch.
+All packages target **.NET 11** and depend on **CodeLogic 5.0** (range `[5.0.0-preview, 6.0.0)` while CodeLogic 5.0 is in preview, `[5.0.0, 6.0.0)` from its stable release). On .NET 10, use the 4.9.x packages (CodeLogic `[4.9.0, 5.0.0)`), maintained on the `support/4.x` branch.
 
 Every library and the CodeLogic framework itself share one version line: **`5.0.<patch>`** (4.9 on the .NET 10 maintenance line).
 The `major.minor` is hand-controlled in the repo-root `version.txt`; the patch is the CI run
