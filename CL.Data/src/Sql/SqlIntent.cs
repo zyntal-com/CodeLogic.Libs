@@ -46,6 +46,10 @@ internal static class SqlClassifier
 
     private static readonly HashSet<string> ReadStarts = new(StringComparer.OrdinalIgnoreCase) { "SELECT", "WITH", "VALUES", "SHOW" };
 
+    // Span lookups: classifying a statement allocates nothing.
+    private static readonly HashSet<string>.AlternateLookup<ReadOnlySpan<char>> WriteWordLookup = WriteWords.GetAlternateLookup<ReadOnlySpan<char>>();
+    private static readonly HashSet<string>.AlternateLookup<ReadOnlySpan<char>> ReadStartLookup = ReadStarts.GetAlternateLookup<ReadOnlySpan<char>>();
+
     /// <summary>True when <paramref name="intent"/> sends the statement to the primary as a write (no retry once sent).</summary>
     public static bool IsWrite(SqlIntent intent, string sql) => intent switch
     {
@@ -137,13 +141,13 @@ internal static class SqlClassifier
             {
                 var start = i;
                 while (i < span.Length && (char.IsLetterOrDigit(span[i]) || span[i] is '_' or '$')) i++;
-                var word = span[start..i].ToString();
+                var word = span[start..i];
                 if (first)
                 {
-                    if (!ReadStarts.Contains(word)) return false;
+                    if (!ReadStartLookup.Contains(word)) return false;
                     first = false;
                 }
-                else if (WriteWords.Contains(word) && !(start > 0 && span[start - 1] == '.'))
+                else if (WriteWordLookup.Contains(word) && !(start > 0 && span[start - 1] == '.'))
                 {
                     return false;
                 }
