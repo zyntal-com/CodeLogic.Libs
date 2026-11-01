@@ -57,10 +57,10 @@ await CodeLogic.StartAsync();
 ## Features
 
 - **Valve A2S UDP query** — `ValveUdpQuery.QueryAsync` returns `Result<ServerQuery>` (info, players, duration) with typed failures (`TimeoutError`, `UnavailableError`, ...); `GetServerInfoAsync` / `GetPlayerListAsync` return `ServerInfo?` and `List<PlayerInfo>`, with `null` / an empty list on failure.
-- **Source RCON** — `ValveRconClient` connects over TCP and runs console commands, returning the raw server response string.
-- **Counter-Strike admin wrappers** — `CounterStrike2` and `CounterStrikeSource` expose named helpers (change map, kick/ban, say, cvars, restart…) over RCON; CS2 adds cheats, friendly-fire, team-balance, and slay.
+- **Source RCON** — `ValveRconClient` connects over TCP and runs console commands verbatim, returning the raw server response string. Never build a raw command from untrusted text.
+- **Counter-Strike admin wrappers** — `CounterStrike2` and `CounterStrikeSource` expose named helpers (change map, kick/ban by user id or name, say, cvars, restart…) over RCON; CS2 adds cheats, friendly-fire, team-balance, and slay. Arguments are validated before sending, so a player name like `x; rcon_password pwned` is refused with a `ValidationError` (`gamenetquery.invalid_rcon_argument`) instead of running a second command.
 - **`status` parsers** — `ValveStatusParser` and `ValveStatusParserCS2` turn raw `status` output into `ServerInfo` / `PlayerInfo`.
-- **Minecraft** — `MinecraftQueryClient` (GameSpy4 UDP query with `GetStatusValue` field lookup) and `MinecraftRconClient` (RCON).
+- **Minecraft** — `MinecraftQueryClient` (GameSpy4 full-stat UDP query: `hostname`, `map`, `numplayers`, `players`, ... via `GetStatusValue`) and `MinecraftRconClient` (RCON).
 
 ## Configuration
 
