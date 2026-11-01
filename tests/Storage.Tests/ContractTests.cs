@@ -201,7 +201,10 @@ public sealed class StorageConfigurationTests
         Assert.False(new StorageConfig { HealthCheckTimeoutSeconds = 0 }.Validate().IsValid);
         Assert.False(new StorageConfig { MaxBufferedDownloadBytes = 0 }.Validate().IsValid);
         Assert.False(new LocalConnectionConfig().Validate().IsValid);
-        Assert.True(new LocalConnectionConfig { RootPath = "root" }.Validate().IsValid);
+        Assert.False(new LocalConnectionConfig { RootPath = "root" }.Validate().IsValid);
+        Assert.False(new LocalConnectionConfig { RootPath = "./data" }.Validate().IsValid);
+        Assert.True(new LocalConnectionConfig { RootPath = Path.GetTempPath() }.Validate().IsValid);
+        Assert.True(new LocalConnectionConfig { RootPath = "root", Enabled = false }.Validate().IsValid);
         Assert.False(new LocalStorageConfig
         {
             Connections = new Dictionary<string, LocalConnectionConfig>

@@ -42,7 +42,6 @@ public sealed class GoogleCloudStorageBackend :
         StorageFeature.ConditionalDelete |
         StorageFeature.AtomicReplace |
         StorageFeature.ServerPagination |
-        StorageFeature.ResumableUpload |
         StorageFeature.Versioning,
         new StorageLimits { MaxPageSize = 1_000, MaxObjectBytes = 5_497_558_138_880, MaxMetadataBytes = 8 * 1024 });
     private readonly StorageClient _client;
@@ -177,15 +176,39 @@ public sealed class GoogleCloudStorageBackend :
         {
             var items = new Dictionary<string, StorageItem>(StringComparer.Ordinal);
             var providerPageSize = Math.Min(options.PageSize, 1_000);
+            // A flat listing asks the server for one level ("/" delimiter): sub-folders come back as prefixes instead
+            // of every descendant object being scanned client-side.
             var listing = _client.ListObjectsAsync(_bucket, listingPrefix, new ListObjectsOptions
             {
                 PageSize = providerPageSize,
-                PageToken = continuation.Value!.ProviderPageToken
+                PageToken = continuation.Value!.ProviderPageToken,
+                Delimiter = options.Recursive ? null : "/"
             });
-            var providerPage = await listing.ReadPageAsync(providerPageSize, cancellationToken).ConfigureAwait(false);
+            IEnumerable<GcsObject> providerItems;
+            string? providerNextPageToken;
+            if (options.Recursive)
+            {
+                var providerPage = await listing.ReadPageAsync(providerPageSize, cancellationToken).ConfigureAwait(false);
+                providerItems = providerPage;
+                providerNextPageToken = providerPage.NextPageToken;
+            }
+            else
+            {
+                // Prefixes are only on the raw response; one raw response is one provider page.
+                await using var responses = listing.AsRawResponses().GetAsyncEnumerator(cancellationToken);
+                var response = await responses.MoveNextAsync().ConfigureAwait(false) ? responses.Current : null;
+                providerItems = response?.Items ?? [];
+                providerNextPageToken = response?.NextPageToken;
+                foreach (var prefix in response?.Prefixes ?? [])
+                {
+                    var directory = FromKey(prefix).TrimEnd('/');
+                    if (directory.Length > 0 && !string.Equals(directory, listingPath, StringComparison.Ordinal))
+                        items[directory] = DirectoryItem(directory);
+                }
+            }
             // The last key before this provider page, so folders straddling a page boundary are reported once.
             var previous = continuation.Value.Previous;
-            foreach (var item in providerPage)
+            foreach (var item in providerItems)
             {
                 var pathValue = FromKey(item.Name);
                 if (pathValue.Length == 0) continue;
@@ -231,9 +254,9 @@ public sealed class GoogleCloudStorageBackend :
             }
             else
             {
-                nextToken = string.IsNullOrEmpty(providerPage.NextPageToken)
+                nextToken = string.IsNullOrEmpty(providerNextPageToken)
                     ? null
-                    : EncodeContinuationToken(new GcsContinuationToken(providerPage.NextPageToken, 0, previous));
+                    : EncodeContinuationToken(new GcsContinuationToken(providerNextPageToken, 0, previous));
             }
             return Result<StoragePage>.Success(new StoragePage(StorageListFilter.Apply(pageItems, options, listingPath), nextToken));
         }

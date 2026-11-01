@@ -46,6 +46,9 @@ Encoding writes only pixels unless asked otherwise:
   true` writes the source EXIF back as JPEG APP1, PNG `eXIf` or WebP `EXIF` (converting the WebP to the extended
   format); after `AutoOrient()` its orientation tag is reset to 1. Other tags are not rewritten. The GPS position is
   kept too, unless `RemoveGps = true`, which zeroes the GPS values and empties the GPS IFD while keeping every other tag.
+  The IFD1 thumbnail and the MakerNote are always removed (zeroed, IFD1 unlinked): they describe the source pixels, so
+  a thumbnail would still show what a blur or crop removed, and MakerNotes can hold previews and a vendor GPS copy.
+  With `RemoveGps = true` no coordinates remain in the written EXIF.
 - **ICC profile**: by default pixels are converted to sRGB and no profile is written. `KeepIccProfile = true` keeps
   the pixels in the source colour space and writes the original profile back byte for byte (JPEG APP2 chunks, PNG
   `iCCP`, WebP `ICCP`).

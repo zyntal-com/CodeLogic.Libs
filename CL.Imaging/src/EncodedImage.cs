@@ -22,14 +22,15 @@ public sealed record ImageEncodeOptions
 
     /// <summary>
     /// Write the source EXIF block into the output (JPEG APP1, PNG <c>eXIf</c>, WebP <c>EXIF</c>); its orientation tag is
-    /// reset to 1 when the pipeline turned the pixels upright. Null uses the inverse of
+    /// reset to 1 when the pipeline turned the pixels upright, and the IFD1 thumbnail and the MakerNote are removed (both
+    /// describe the source pixels and can hold a preview or a vendor GPS copy). Null uses the inverse of
     /// <see cref="ImagingSettings.StripMetadata"/>. Ignored after <see cref="ImagePipeline.StripMetadata"/>.
     /// </summary>
     public bool? KeepMetadata { get; init; }
 
     /// <summary>
-    /// With <see cref="KeepMetadata"/>: remove the GPS position from the EXIF that is written back (all other tags are
-    /// kept). Default false: kept EXIF keeps its GPS. Without kept EXIF there is no GPS in the output anyway.
+    /// With <see cref="KeepMetadata"/>: remove the GPS position from the EXIF that is written back (the GPS values are
+    /// zeroed and the GPS IFD emptied; together with the thumbnail and MakerNote removal no coordinates remain). Default false: kept EXIF keeps its GPS. Without kept EXIF there is no GPS in the output anyway.
     /// </summary>
     public bool RemoveGps { get; init; }
 

@@ -87,7 +87,8 @@ string dataUri = ImageTools.ToDataUri(doc, ImageFormat.Png).Value!;
   managed TIFF/EXIF reader for JPEG APP1, PNG `eXIf` and WebP `EXIF` chunks; malformed EXIF yields fewer fields, never
   a failure.
 - **Metadata on encode.** By default EXIF is dropped (`ImagingSettings.StripMetadata`). `KeepMetadata = true` writes
-  the original EXIF back (orientation reset to 1 after `AutoOrient`), GPS included unless `RemoveGps = true`; `KeepIccProfile = true` writes the original ICC
+  the original EXIF back (orientation reset to 1 after `AutoOrient`; the source thumbnail and MakerNote removed), GPS
+  included unless `RemoveGps = true`; `KeepIccProfile = true` writes the original ICC
   profile back byte for byte and keeps the pixels in that colour space. Without it, pixels are converted to sRGB.
 - **Analysis** (`CL.Imaging.Analysis`): `ImageAnalysis.AverageColor`, `DominantColor`, `Palette(n)` (median cut +
   k-means, deterministic), `HasAlpha`, `IsMostlyTransparent`; `BlurHash.Encode/Decode`; `PerceptualHash.DHash/PHash`
@@ -136,7 +137,7 @@ Without the library, set `ImagingDefaults.Current = ImagingSettings.BuiltIn with
   decoders. Metadata for HEIF/AVIF comes from Skia (orientation only); the EXIF reader covers JPEG, PNG and WebP.
 - **Text** uses the platform's fonts. Minimal Linux containers (NoDependencies assets) may have none, so a family name
   can draw nothing; ship a font and use `ImageFont.FromFile` / `FromBytes`.
-- **EXIF on re-encode** is written back as it was (only the orientation tag is updated); tags such as the EXIF pixel
-  size or thumbnails are not rewritten after resizing. XMP and IPTC are not carried over.
+- **EXIF on re-encode** is written back as it was (only the orientation tag is updated, and the IFD1 thumbnail and
+  MakerNote are removed); tags such as the EXIF pixel size are not rewritten after resizing. XMP and IPTC are not carried over.
 - An `ImageDocument` is not meant for concurrent mutation; reading the same document from several pipelines at once
   is fine because pipelines never write to their source.

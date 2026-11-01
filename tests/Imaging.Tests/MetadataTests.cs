@@ -133,6 +133,65 @@ public sealed class MetadataTests
         static bool ContainsSouthRef(byte[] tiff) => tiff.AsSpan().IndexOf("S\0"u8) >= 0 && tiff.AsSpan().IndexOf("W\0"u8) >= 0;
     }
 
+    private static readonly byte[] ThumbnailBytes = [0xFF, 0xD8, .. "ORIGINAL-FACES-THUMBNAIL"u8, 0xFF, 0xD9];
+    private static readonly byte[] MakerNoteBytes = [.. "VENDOR-GPS-51.5074N-0.1278W-PREVIEW"u8];
+
+    private static byte[] ExifWithThumbnailAndMakerNote(bool bigEndian = false) => new TiffBuilder(bigEndian)
+        .Ifd0().Ascii(0x010F, "Nikon").Ascii(0x0110, "Z8")
+        .Exif().Short(0x8827, 200).Undefined(0x927C, MakerNoteBytes)
+        .Gps().Ascii(1, "N").Rationals(2, (51, 1), (30, 1), (0, 1)).Ascii(3, "W").Rationals(4, (0, 1), (7, 1), (0, 1))
+        .Ifd1().Short(0x0103, 6).Thumbnail(ThumbnailBytes)
+        .Build();
+
+    [Theory]
+    [InlineData(ImageFormat.Jpeg, false)]
+    [InlineData(ImageFormat.Png, true)]
+    [InlineData(ImageFormat.Webp, false)]
+    public void Kept_exif_never_carries_the_source_thumbnail_or_makernote(ImageFormat format, bool bigEndian)
+    {
+        var source = ExifWithThumbnailAndMakerNote(bigEndian);
+        Assert.True(source.AsSpan().IndexOf(ThumbnailBytes) >= 0);
+        using var doc = ImageDocument.Load(InsertJpegApp1(Solid(32, 24, SKEncodedImageFormat.Jpeg), source)).Value!;
+
+        using var blurred = doc.Edit().GaussianBlur(4).Encode(new ImageEncodeOptions { Format = format, KeepMetadata = true, RemoveGps = true }).Value!;
+        var exif = ImageDocument.Load(blurred.Span).Value!.ExifData.ToArray();
+
+        // The thumbnail of the unblurred pixels and the MakerNote (vendor GPS, previews) are gone from the bytes.
+        Assert.True(exif.AsSpan().IndexOf("ORIGINAL-FACES"u8) < 0);
+        Assert.True(exif.AsSpan().IndexOf("VENDOR-GPS"u8) < 0);
+        var m = ImageMetadataReader.Read(blurred.Span).Value!;
+        Assert.Null(m.Gps);
+        Assert.Equal("Z8", m.CameraModel);
+        Assert.Equal(200, m.Iso);
+
+        // Without RemoveGps the thumbnail and MakerNote are still dropped: they describe the source pixels.
+        using var kept = doc.Encode(new ImageEncodeOptions { Format = format, KeepMetadata = true }).Value!;
+        var keptExif = ImageDocument.Load(kept.Span).Value!.ExifData.ToArray();
+        Assert.True(keptExif.AsSpan().IndexOf("ORIGINAL-FACES"u8) < 0);
+        Assert.True(keptExif.AsSpan().IndexOf("VENDOR-GPS"u8) < 0);
+        Assert.NotNull(ImageMetadataReader.Read(kept.Span).Value!.Gps);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Thumbnail_removal_unlinks_ifd1_and_zeroes_its_data(bool bigEndian)
+    {
+        var tiff = ExifWithThumbnailAndMakerNote(bigEndian);
+        Assert.True(ExifReader.TryRemoveThumbnail(tiff));
+        Assert.True(tiff.AsSpan().IndexOf(ThumbnailBytes) < 0);
+        Assert.False(ExifReader.TryRemoveThumbnail(tiff));                       // no IFD1 any more
+        Assert.True(ExifReader.TryRemoveMakerNote(tiff));
+        Assert.True(tiff.AsSpan().IndexOf(MakerNoteBytes) < 0);
+        Assert.Equal("Nikon", ExifReader.Parse(tiff)!.Apply(new ImageMetadata()).CameraMake);
+
+        Assert.False(ExifReader.TryRemoveThumbnail(CameraExif()));               // nothing to remove
+        Assert.False(ExifReader.TryRemoveMakerNote(CameraExif()));
+        var truncated = ExifWithThumbnailAndMakerNote()[..40];                   // malformed: never throws
+        ExifReader.TryRemoveThumbnail(truncated);
+        ExifReader.TryRemoveMakerNote(truncated);
+    }
+
     [Fact]
     public void Defaults_decide_whether_exif_is_kept()
     {
