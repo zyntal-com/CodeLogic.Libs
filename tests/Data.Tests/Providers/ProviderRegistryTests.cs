@@ -70,6 +70,26 @@ public sealed class ProviderRegistryTests
     }
 
     [Fact]
+    public void Endpoints_never_print_secrets()
+    {
+        var config = new DataConnectionConfig { Provider = "fake", ConnectionString = "Server=db1;Password=cs-secret", Host = "db1", Port = 3307, Username = "u", Password = "pw-secret" };
+        foreach (var endpoint in new[] { NodeEndpoint.Primary(config), NodeEndpoint.Replica(config, new ReplicaConfig { Name = "r1", Host = "db2" }) })
+        {
+            Assert.DoesNotContain("secret", endpoint.ToString(), StringComparison.Ordinal);
+            Assert.DoesNotContain("secret", $"{endpoint}", StringComparison.Ordinal);
+        }
+        Assert.Equal("primary (primary, db1:3307)", NodeEndpoint.Primary(config).ToString());
+    }
+
+    [Fact]
+    public void Replica_endpoints_given_a_host_keep_the_primary_connection_string()
+    {
+        var config = new DataConnectionConfig { Provider = "fake", ConnectionString = "Server=db1;Database=app" };
+        var replica = NodeEndpoint.Replica(config, new ReplicaConfig { Name = "r1", Host = "db2" });
+        Assert.Equal(("Server=db1;Database=app", "db2"), (replica.ConnectionString, replica.Host));
+    }
+
+    [Fact]
     public void Dialect_quotes_identifiers_and_escapes_like()
     {
         var dialect = new FakeDialect();
