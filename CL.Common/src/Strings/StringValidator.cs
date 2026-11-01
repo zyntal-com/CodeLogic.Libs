@@ -86,11 +86,25 @@ public static class StringValidator
     /// </summary>
     /// <param name="value">The string to test.</param>
     /// <param name="pattern">A .NET regular expression pattern.</param>
-    public static bool MatchesPattern(string value, string pattern)
+    /// <param name="matchTimeout">
+    /// How long the match may run before it is abandoned and treated as no match (guards against
+    /// catastrophic backtracking, ReDoS). Default: <see cref="DefaultMatchTimeout"/> (one second).
+    /// </param>
+    public static bool MatchesPattern(string value, string pattern, TimeSpan? matchTimeout = null)
     {
         if (string.IsNullOrEmpty(value) || string.IsNullOrEmpty(pattern)) return false;
-        return Regex.IsMatch(value, pattern);
+        try
+        {
+            return Regex.IsMatch(value, pattern, RegexOptions.None, matchTimeout ?? DefaultMatchTimeout);
+        }
+        catch (RegexMatchTimeoutException)
+        {
+            return false;
+        }
     }
+
+    /// <summary>Default timeout for <see cref="MatchesPattern"/>: one second.</summary>
+    public static readonly TimeSpan DefaultMatchTimeout = TimeSpan.FromSeconds(1);
 
     /// <summary>Returns true if the string is null or consists only of whitespace.</summary>
     public static bool IsNullOrWhiteSpace(string? value) => string.IsNullOrWhiteSpace(value);
