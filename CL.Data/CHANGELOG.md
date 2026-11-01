@@ -14,6 +14,7 @@
 
 ### Fixed
 
+- **`SeedAppliedEvent` is published** for every seed a `SeedRunner` applies (and forwarded to the CodeLogic event bus by `DataLibrary`). Before, it was declared and documented but never raised.
 - **Replicas configured by `host` keep the primary's database and credentials** when the primary uses `connectionString` (the documented pattern): the replica starts from the primary's connection string and puts its own host, port and credentials on top. Before, such a replica connected without a database, user or password.
 - **Ordered and limited set-based deletes:** `Query<T>().Where(...).OrderBy(...).Take(n).DeleteAsync(hard: true)` deletes at most `n` rows in that order (MySQL `DELETE ... ORDER BY ... LIMIT`, SQL Server and the others through a key subquery). Before, `Take` and `OrderBy` were silently ignored and **every** matching row was deleted. `Skip`, and `Take` on a soft delete, now fail with `data.validation`.
 - **Set-based updates with `Take`/`Skip`** fail with `data.validation` instead of updating every matching row.

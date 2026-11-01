@@ -149,6 +149,7 @@ public sealed class SeedRunner
         }, ct: ct).ConfigureAwait(false);
 
         if (outcome.IsFailure) return DataErrors.Validation($"Seed '{seed.Id}' failed.", outcome.Error!.Message);
+        _db.Publish(new CL.Data.Events.SeedAppliedEvent(_db.Name, _db.Provider.Name, _db.Options.Time.GetUtcNow(), seed.Id));
         return Result.Success();
     }
 
