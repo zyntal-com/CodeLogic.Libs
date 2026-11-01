@@ -89,14 +89,60 @@ public sealed class LiveConfigReloadTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Steam_sign_in_needs_the_api_key_like_the_rest_of_steam()
+    public async Task Steam_sign_in_works_without_an_api_key()
     {
         var config = Config();
         config["steam"]!["apiKey"] = "";
         var result = await UpdateAsync(config);
 
-        Assert.False(result.Applied);
+        Assert.True(result.Applied, result.ToString());
         Assert.True(_social.HasSteamOpenId);
+        Assert.False(_social.HasSteam);
+        Assert.False(_social.HasSteamAuth);
+    }
+
+    [Fact]
+    public async Task Steam_without_a_key_and_without_sign_in_is_invalid()
+    {
+        var config = Config();
+        config["steam"]!["apiKey"] = "";
+        config["steam"]!["openIdEnabled"] = false;
+        var result = await UpdateAsync(config);
+
+        Assert.False(result.Applied);
+        Assert.True(_social.HasSteam);
+    }
+
+    [Fact]
+    public async Task Non_discord_default_webhook_url_is_refused()
+    {
+        var discord = _social.Discord;
+        var config = Config();
+        config["discord"]!["defaultWebhookUrl"] = "http://169.254.169.254/latest/meta-data";
+        var result = await UpdateAsync(config);
+
+        Assert.False(result.Applied);
+        Assert.Same(discord, _social.Discord);
+    }
+
+    [Fact]
+    public async Task Invalid_config_reaching_the_library_is_ignored()
+    {
+        // The framework validates before applying; the library re-checks so a direct call cannot apply it either.
+        var context = _manager.GetLoadedLibraries().Single(l => l.Instance is SocialConnectLibrary).Context!;
+        var steam = _social.Steam;
+        var invalid = new CL.SocialConnect.Models.SocialConnectConfig();
+        invalid.Steam.Enabled = true;
+        invalid.Steam.CacheTtlSeconds = 0;
+
+        await _social.OnConfigChangedAsync(context, new CodeLogic.Core.Configuration.ConfigChangedEventArgs
+        {
+            SectionName = "socialconnect",
+            Kind = CodeLogic.Core.Configuration.ConfigChangeKind.Updated,
+            NewValue = invalid
+        }, CancellationToken.None);
+
+        Assert.Same(steam, _social.Steam);
     }
 
     [Fact]

@@ -28,14 +28,45 @@ All notable changes to **CodeLogic.SocialConnect** are documented here. Versions
   off) with `UnauthorizedError` `social.steam.openid_expired`. `SteamOpenIdResult` gains the required
   `ResponseNonce` and `NonceIssuedAtUtc`: record accepted nonces and refuse a repeat to stop replays inside
   the window. Code that constructs `SteamOpenIdResult` itself must set both.
+- **Discord webhook URLs are restricted to Discord (SSRF).** `SendMessageAsync` / `SendEmbedAsync` / `SendAsync`
+  posted to any URL they were given. Only `https` URLs on `discord.com` / `discordapp.com` (and their `ptb.` /
+  `canary.` subdomains) with a `/api[/v{n}]/webhooks/{id}/{token}` path are accepted now; anything else fails
+  with `ValidationError` `social.discord.invalid_url` before a request, and redirects are not followed. A
+  `Discord.DefaultWebhookUrl` that is not such a URL fails configuration validation.
+- **`WebhookSentEvent.WebhookUrl` no longer carries the webhook token.** It holds the redacted URL
+  (`https://discord.com/api/webhooks/{id}/***`); the new `WebhookId` property holds the id.
+- **Steam profile reads validate the Steam ID.** `GetPlayerAsync`, `GetPlayerBansAsync` and `GetOwnedGamesAsync`
+  spliced `steamId` and the API key unescaped into the query string, so `"7656…&key=…"` could add or override
+  parameters. A Steam ID that is not a SteamID64 (17 digits, `7656119…`) now fails with `ValidationError`
+  `social.steam.invalid_steamid` before a request, and both values are URL-escaped.
 
 ### Added
+
+- `DiscordWebhookService.IsValidWebhookUrl(url)` and `DiscordWebhookService.RedactWebhookUrl(url)`.
+- `SteamIds.IsSteamId64(value)` (`CL.SocialConnect.Models.Steam`).
+- `WebhookSentEvent.WebhookId`.
 
 - `SteamAuthenticationService(SteamConfig, HttpMessageHandler, ILogger?, IEventBus?)` constructor for
   tests and outbound proxies, matching `SteamOpenIdService`.
 
+### Fixed
+
+- **Steam sign-in works without a Steam Web API key**, as documented. Validation demanded `ApiKey` whenever
+  Steam was enabled, so OpenID could not be used on its own. With `Steam.Enabled` and `OpenIdEnabled` on and no
+  key, the config is valid and only `OpenId` is created (`HasSteam` is `false`). Ticket authentication
+  (`AuthEnabled`) now requires the key explicitly.
+- **Live config changes are validated by the library too.** An invalid configuration that reaches
+  `OnConfigChangedAsync` is logged and ignored, and the running services keep the last valid one; later changes
+  are compared with the configuration actually running.
+- `DiscordUser.GetAvatarUrl` no longer throws on a non-numeric discriminator, and escapes the id and avatar hash.
+
 ### Documentation
 
+- The model reference matches the code: the Discord and Steam models are (non-sealed) classes with `List<>`
+  collections, `DiscordEmbed.Timestamp` is a `DateTime?`, and the embed sub-models use `required` members.
+  The examples use collection expressions and compile against the library.
+- `DiscordUser` and `DiscordOAuthToken` are documented as data models for applications that run Discord OAuth2
+  themselves; the library does not implement Discord OAuth2.
 - Configuration examples in the README and the docs use the camelCase keys the CodeLogic loader reads.
   The PascalCase keys shown before are matched case-sensitively and were ignored, leaving defaults active.
 

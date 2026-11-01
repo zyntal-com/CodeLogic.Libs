@@ -48,6 +48,7 @@ public sealed class SocialConnectLibrary : ILibrary, IConfigReloadable
     private SteamProfileService? _steam;
     private SteamAuthenticationService? _auth;
     private SteamOpenIdService? _openId;
+    private SocialConnectConfig? _applied;
 
     // ── Phase 1: Configure ────────────────────────────────────────────────────
 
@@ -86,6 +87,7 @@ public sealed class SocialConnectLibrary : ILibrary, IConfigReloadable
             return Task.CompletedTask;
         }
 
+        _applied = config;
         BuildDiscord(context, config);
         BuildSteam(context, config);
 
@@ -109,12 +111,19 @@ public sealed class SocialConnectLibrary : ILibrary, IConfigReloadable
         _openId = null;
         if (!config.Enabled || !config.Steam.Enabled) return;
 
-        // Steam profile service
-        _steam = new SteamProfileService(config.Steam, context.Logger, context.Events);
-        context.Logger.Info("Steam profile service initialized");
+        // Steam profile service (needs the Web API key; Steam sign-in does not)
+        if (!string.IsNullOrWhiteSpace(config.Steam.ApiKey))
+        {
+            _steam = new SteamProfileService(config.Steam, context.Logger, context.Events);
+            context.Logger.Info("Steam profile service initialized");
+        }
+        else
+        {
+            context.Logger.Info("Steam profile service not created: no Steam API key (Steam sign-in only)");
+        }
 
-        // Steam authentication service (optional, requires AppId)
-        if (config.Steam.AuthEnabled)
+        // Steam authentication service (optional, requires AppId and the API key)
+        if (config.Steam.AuthEnabled && !string.IsNullOrWhiteSpace(config.Steam.ApiKey))
         {
             _auth = new SteamAuthenticationService(config.Steam, context.Logger, context.Events);
             context.Logger.Info("Steam authentication service initialized");
@@ -135,12 +144,23 @@ public sealed class SocialConnectLibrary : ILibrary, IConfigReloadable
     /// changed: Discord settings replace <see cref="Discord"/>; Steam settings replace
     /// <see cref="Steam"/>, <see cref="Auth"/> and <see cref="OpenId"/> (the profile cache starts empty). Services can be
     /// switched on or off, and so can the whole library. A replaced service is disposed only after
-    /// its request timeout, so requests already running on it finish.
+    /// its request timeout, so requests already running on it finish. A configuration that fails
+    /// <see cref="SocialConnectConfig.Validate"/> is logged and ignored: the running services keep the last valid one.
     /// </summary>
     public Task OnConfigChangedAsync(LibraryContext context, ConfigChangedEventArgs change, CancellationToken cancellationToken)
     {
         if (change.NewValue is not SocialConnectConfig current) return Task.CompletedTask;
-        var previous = change.GetOld<SocialConnectConfig>();
+
+        var validation = current.Validate();
+        if (!validation.IsValid)
+        {
+            context.Logger.Error($"{Manifest.Name}: ignored invalid configuration, keeping the current one: {string.Join("; ", validation.Errors)}");
+            return Task.CompletedTask;
+        }
+
+        // Compare with what is actually running, not with the previous (possibly ignored) value.
+        var previous = _applied ?? change.GetOld<SocialConnectConfig>();
+        _applied = current;
 
         if (!ConfigDiff.ValueEquals(ActiveDiscord(previous), ActiveDiscord(current)))
         {
@@ -159,7 +179,7 @@ public sealed class SocialConnectLibrary : ILibrary, IConfigReloadable
             RetireLater(oldSteam, previous?.Steam.TimeoutSeconds ?? 0);
             RetireLater(oldAuth, previous?.Steam.TimeoutSeconds ?? 0);
             RetireLater(oldOpenId, previous?.Steam.TimeoutSeconds ?? 0);
-            if (_steam is null) context.Logger.Info("Steam services turned off");
+            if (_steam is null && _auth is null && _openId is null) context.Logger.Info("Steam services turned off");
         }
 
         return Task.CompletedTask;
@@ -257,7 +277,7 @@ public sealed class SocialConnectLibrary : ILibrary, IConfigReloadable
     /// Thrown when Steam is not initialized or disabled.
     /// </exception>
     public SteamProfileService Steam =>
-        _steam ?? throw new InvalidOperationException("Steam service not available — check config.Steam.Enabled");
+        _steam ?? throw new InvalidOperationException("Steam service not available — check config.Steam.Enabled and config.Steam.ApiKey");
 
     /// <summary>
     /// The Steam authentication service for validating session tickets.
@@ -266,7 +286,7 @@ public sealed class SocialConnectLibrary : ILibrary, IConfigReloadable
     /// Thrown when Steam authentication is not initialized or disabled.
     /// </exception>
     public SteamAuthenticationService Auth =>
-        _auth ?? throw new InvalidOperationException("Steam auth service not available — check config.Steam.AuthEnabled");
+        _auth ?? throw new InvalidOperationException("Steam auth service not available — check config.Steam.AuthEnabled and config.Steam.ApiKey");
 
     /// <summary>
     /// The Steam OpenID service for "Sign in through Steam" on websites.
