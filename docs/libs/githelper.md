@@ -93,7 +93,21 @@ Result<GitDiagnostics> push = await repo.PushAsync(new GitPushOptions { Force = 
 | `GitPullOptions` | `RemoteName` (`"origin"`), `Strategy` (`MergeStrategy.Merge`), `FetchOptions` (`new()`), `CancellationToken` |
 | `GitPushOptions` | `RemoteName` (`"origin"`), `BranchName?`, `Force` (`false`), `PushTags` (`false`), `OnProgress?`, `CancellationToken` |
 
-`MergeStrategy` is `Merge`, `Rebase`, or `FastForwardOnly`. The `OnProgress?` callbacks receive a `GitProgress` (stage, percentage, objects/bytes received) so you can surface transfer progress.
+`MergeStrategy` is `Merge`, `Rebase`, or `FastForwardOnly`. The `OnProgress?` callbacks receive a `GitProgress` (stage, percentage, objects/bytes received) so you can surface transfer progress. They run on a libgit2 worker thread; an exception they throw is logged and ignored.
+
+**Pull.** `PullAsync` fetches from `RemoteName`, then integrates the current branch's upstream on that remote (or the remote branch with the same name when the branch has no upstream there):
+
+- `Merge` fast-forwards when it can and otherwise creates a merge commit. When the merge stops on conflicts it returns a `ConflictError` (`git.merge_conflict`) and leaves the conflicted files in the working tree, as `git pull` does; `ResetHardAsync` discards them.
+- `Rebase` replays local commits on top of the fetched tip. A rebase that stops on conflicts is aborted, leaving the branch as it was, and returns `git.merge_conflict`.
+- `FastForwardOnly` returns `git.non_fast_forward` when the branches have diverged and changes nothing.
+
+When `RemoteName` is left at `"origin"`, `FetchOptions.RemoteName` is used instead. `FetchOptions` also supplies `Prune`, `FetchTags`, `OnProgress` and, when set, the fetch step's cancellation token. A branch with no upstream on the remote returns `git.branch_not_found`.
+
+**Push.** `PushAsync` sends the configured credentials. `PushTags` also pushes every local tag; tags are never force-pushed, even with `Force`. A reference the remote refuses (for example a protected branch) returns a `ConflictError` with `git.push_rejected` and the remote's reason.
+
+### Cancellation and timeouts
+
+The `CancellationToken` on each options model is checked by libgit2 at every progress callback, so cancelling stops a clone, fetch or push that is already transferring data and returns `git.cancelled`. Each repository's network operations (clone, fetch, the fetch step of pull, push) are also bounded by `TimeoutSeconds` (or `DefaultTimeoutSeconds` when it is `0`); a transfer that runs longer returns a `TimeoutError` with `git.timeout`. Both take effect at the next progress callback: a connection that hangs before any data arrives is bounded only by the operating system's network timeouts. A clone that fails or is cancelled removes the directory it created.
 
 ## Commit
 
@@ -174,6 +188,8 @@ Credentials are configured **per repository** on the repository entry, and only 
 - **PAT only** — set just `Password` to a Personal Access Token and leave `Username` null. The library sends the username as `x-access-token`, the placeholder GitHub accepts for PAT-only authentication.
 - **Anonymous** — leave both fields null for public, read-only access.
 
+Clone, fetch, pull and push all use these credentials. They are sent **only to the scheme, host and port of `RepositoryUrl`**: a submodule or second remote on another host, a redirect to another host, or a plain-`http` URL on the same host gets no token, and that request fails with `git.authentication_failed` (a warning is logged). URLs with embedded credentials (`https://user:token@host/...`) and the configured token are redacted from log lines, error messages and `RepositoryInfo.RemoteUrl`.
+
 ```json
 {
   "id": "Private",
@@ -211,6 +227,8 @@ A failure's `Error` has a kind (its subtype) and a stable `Code`; the codes are 
 | `ValidationError` | `git.empty_commit_message`, `git.nothing_to_commit`, `git.ssh_not_supported` |
 | `UnauthorizedError` | `git.authentication_failed` |
 | `ConflictError` | `git.directory_not_empty` (clone target), `git.uncommitted_changes` (`EnsureUpToDateAsync`), `git.checkout_conflict`, `git.non_fast_forward` |
+| `ConflictError` (pull, push) | `git.merge_conflict` (pull stopped on conflicts), `git.push_rejected` (the remote refused a reference) |
+| `TimeoutError` | `git.timeout` (a network operation ran past `TimeoutSeconds`) |
 | `UnavailableError` | `git.cancelled` |
 | `InternalError` | `git.clone_failed`, `git.fetch_failed`, `git.pull_failed`, `git.push_failed`, `git.commit_failed`, `git.status_failed`, `git.info_failed`, `git.list_branches_failed`, `git.checkout_failed`, `git.reset_failed`, `git.log_failed` |
 
@@ -225,9 +243,9 @@ var line = pull.Error switch
 };
 ```
 
-**`GitDiagnostics`** (the value of fetch, pull and push) — `StartedAt`, `CompletedAt?`, `Duration?`, `ObjectCount`, `BytesTransferred` (filled by fetch), `FilesChanged`, `CommitsProcessed`, `Messages` (`List<string>`; a pull includes its fetch step's messages), `Metrics` (dictionary).
+**`GitDiagnostics`** (the value of fetch, pull and push) — `StartedAt`, `CompletedAt?`, `Duration?`, `ObjectCount`, `BytesTransferred` (filled by fetch, pull and push), `FilesChanged`, `CommitsProcessed`, `Messages` (`List<string>`; a pull includes its fetch step's messages), `Metrics` (dictionary).
 
-**`RepositoryInfo`** (returned by `CloneAsync`, `EnsureUpToDateAsync`, `GetRepositoryInfoAsync`) — `Id`, `Name`, `LocalPath`, `RemoteUrl`, `CurrentBranch`, `HeadCommitSha`, `IsBare`, `State`, `LocalBranchCount`, `RemoteBranchCount`, `TagCount`, `StashCount`, `IsDirty`, `ModifiedFiles`, `StagedFiles`, `UntrackedFiles`.
+**`RepositoryInfo`** (returned by `CloneAsync`, `EnsureUpToDateAsync`, `GetRepositoryInfoAsync`) — `Id`, `Name`, `LocalPath`, `RemoteUrl`, `CurrentBranch`, `HeadCommitSha`, `IsBare`, `State`, `LocalBranchCount`, `RemoteBranchCount`, `TagCount`, `StashCount`, `IsDirty`, `ModifiedFiles`, `StagedFiles`, `UntrackedFiles`. `RemoteUrl` has any credentials in the URL replaced by `***`. A bare repository counts as cloned; its `IsBare` is `true` and the working-tree counters are 0, and `EnsureUpToDateAsync` on it only fetches.
 
 ## Manager and batch operations
 
@@ -324,7 +342,7 @@ The library writes `config.githelper.json` (section `githelper`) with defaults o
 |---------|------|---------|-------------|
 | `Enabled` | `bool` | `true` | Master switch; when `false` the library is inactive and the health check reports *disabled*. |
 | `BaseDirectory` | `string` | `""` | Root directory for relative `LocalPath` values. Empty = the library data directory. |
-| `DefaultTimeoutSeconds` | `int` | `300` | Default per-operation timeout (1–3600). |
+| `DefaultTimeoutSeconds` | `int` | `300` | Network operation timeout for repositories whose `TimeoutSeconds` is `0` (1–3600). |
 | `MaxConcurrentOperations` | `int` | `3` | Maximum concurrent operations for batch calls (1–20). |
 | `EnableRepositoryCaching` | `bool` | `true` | Keep opened repositories in an in-memory pool. |
 | `CacheTimeoutMinutes` | `int` | `30` | Idle eviction window (0–1440). `0` = never expire. |
@@ -343,11 +361,11 @@ The library writes `config.githelper.json` (section `githelper`) with defaults o
 | `Password` | `string?` | `null` | Password or Personal Access Token (secret). |
 | `SshKeyPath` | `string?` | `null` | Reserved — **not currently wired**. |
 | `SshPassphrase` | `string?` | `null` | Reserved — **not currently wired** (secret). |
-| `AutoFetch` | `bool` | `false` | Enable periodic background fetch. |
-| `AutoFetchIntervalMinutes` | `int` | `0` | Interval for auto-fetch; `0` disables it. |
-| `TimeoutSeconds` | `int` | `300` | Per-repository operation timeout (1–3600). |
+| `AutoFetch` | `bool` | `false` | Fetch once when the library starts (and when the repository is added or changed live). |
+| `AutoFetchIntervalMinutes` | `int` | `0` | Fetch in the background every *n* minutes while the library runs; `0` disables it. A fetch still running at the next tick is not started twice, and stopping the library cancels it. |
+| `TimeoutSeconds` | `int` | `300` | Timeout for this repository's network operations (0–3600; `0` = `DefaultTimeoutSeconds`). |
 
-`RepositoryConfiguration.IsValid()` returns `true` when both `RepositoryUrl` and `LocalPath` are non-empty.
+`RepositoryConfiguration.IsValid()` returns `true` when both `RepositoryUrl` and `LocalPath` are non-empty. `GitHelperConfig.Validate()` rejects an empty repository list, duplicate repository ids (case-insensitive), a negative `AutoFetchIntervalMinutes` and out-of-range timeouts.
 
 ### Changing config while running
 
@@ -357,13 +375,14 @@ Config changes apply live: `config.githelper.json` applies live when changed thr
 - **Added repository**: available at once.
 - **Untouched repositories**: keep their open instances.
 - **Library-wide settings** (cache, timeouts, concurrency) apply at once. A changed `baseDirectory` re-resolves every relative `localPath`.
-- Added or changed repositories with `autoFetch` are fetched in the background.
+- Added or changed repositories with `autoFetch` are fetched in the background, and `autoFetchIntervalMinutes` timers are added, retimed or stopped.
 - Repositories added with `RegisterRepository` are kept across changes and never written to the file.
 - **`enabled`** can be switched either way.
+- A configuration that fails `Validate()` is rejected, as an invalid file stops initialization: the library logs the errors and keeps its current settings.
 
 ## Health check
 
-`HealthCheckAsync()` reports whether the library is operational. When `Enabled` is `false` it reports *disabled* rather than failing. For per-repository status, use the manager's `HealthCheckAsync()`, which returns an id → healthy map.
+`HealthCheckAsync()` reports whether the library is operational. When `Enabled` is `false` it reports `Healthy` with a message saying the library is disabled, rather than `Unhealthy`. For per-repository status, use the manager's `HealthCheckAsync()`, which returns an id → healthy map.
 
 ```csharp
 var status = await git.HealthCheckAsync();
