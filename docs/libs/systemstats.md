@@ -9,7 +9,7 @@
 | **Package** | [`CodeLogic.SystemStats`](https://www.nuget.org/packages/CodeLogic.SystemStats) |
 | **Library class** | `CL.SystemStats.SystemStatsLibrary` |
 | **Config file** | `config.systemstats.json` (section `systemstats`) |
-| **Dependencies** | System.Diagnostics.PerformanceCounter 9.x · System.Management 9.x |
+| **Dependencies** | System.Diagnostics.PerformanceCounter 11.x |
 
 ## Install & load
 
@@ -35,10 +35,11 @@ There is one API but two providers, selected at runtime. Unknown platforms fall 
 
 | Metric | Windows | Linux |
 |--------|---------|-------|
-| CPU info | Registry | `/proc/cpuinfo` |
+| CPU info | Registry (model, vendor, nominal MHz) + `GetLogicalProcessorInformationEx` (cores) | `/proc/cpuinfo` + `cpufreq/cpuinfo_max_freq` |
 | CPU usage | `PerformanceCounter` | `/proc/stat` (dual-sample delta) |
 | Memory | P/Invoke `GlobalMemoryStatusEx` | `/proc/meminfo` |
 | Uptime | `Environment.TickCount64` | `/proc/uptime` |
+| Temperatures | not available | `/sys/class/thermal`, `/sys/class/hwmon` |
 
 Because the providers read different sources, a few fields differ by platform; these are called out alongside the models below. Every data method returns a `Task<Result<T>>` — check `IsSuccess` / `IsFailure`, read `.Value` on success, and `.Error?.Message` on failure.
 
@@ -67,7 +68,9 @@ if (info.IsSuccess && stats.IsSuccess)
 }
 ```
 
-`GetCpuStatsAsync()` publishes `HighCpuUsageEvent` when `OverallUsagePercent` reaches `HighCpuThresholdPercent`.
+Each `GetCpuStatsAsync()` reading is the average of the last `CpuSamplesForAverage` provider samples (default 3, the newest included), overall and per core, so one spike does not trip an alert; with caching on, a new sample is taken once per `CacheDurationSeconds`. Set it to `1` for raw samples. `GetCpuStatsAsync()` publishes `HighCpuUsageEvent` when the smoothed `OverallUsagePercent` reaches `HighCpuThresholdPercent`.
+
+`CpuInfo.PhysicalCoreCount` counts physical cores: on Linux the distinct `(physical id, core id)` pairs in `/proc/cpuinfo` (every processor when the kernel reports no topology, as on many ARM boards); on Windows the processor-core records of `GetLogicalProcessorInformationEx`. `LogicalCoreCount` counts hardware threads. `MaxSpeedMHz` is the registry's nominal clock on Windows and `cpuinfo_max_freq` on Linux (the highest current `cpu MHz` when cpufreq is absent).
 
 ```csharp
 public sealed record CpuInfo(
@@ -132,7 +135,7 @@ if (up.IsSuccess)
 
 ## Processes
 
-Enumerate every process, look one up by PID, or rank the heaviest by CPU or memory. Process monitoring honours `EnableProcessMonitoring`; ranking methods default to `MaxTopProcesses` but take an explicit count.
+Enumerate every process, look one up by PID, or rank the heaviest by CPU or memory. With `EnableProcessMonitoring` set to `false`, all four calls fail with an unavailable error (`systemstats.process_monitoring_disabled`) without touching any process, and snapshots carry empty process lists. Snapshots rank `MaxTopProcesses` processes; the ranking methods take an explicit count.
 
 ```csharp
 Result<IReadOnlyList<ProcessStats>> all     = await sys.GetAllProcessesAsync();
@@ -164,9 +167,24 @@ public sealed record ProcessStats(
 }
 ```
 
-> **Per-process CPU is sampled, so these calls take time to return.** `GetTopProcessesByCpuAsync` measures each process's `CpuUsagePercent` by sampling its processor time twice over `CpuSamplingIntervalMs` (default 100 ms), so the call blocks for roughly that interval; `GetSystemSnapshotAsync` does the same when it ranks top processes. Use `TotalCpuTime` for cumulative CPU consumption, and rank by `WorkingSetBytes` for memory. `CpuSamplesForAverage` is currently reserved and **not yet applied** to per-process sampling. On Linux, `HandleCount` is the open file-descriptor count; `StartTime` and `TotalCpuTime` are `null` when unavailable.
+> **Per-process CPU is sampled, so these calls take time to return.** `GetTopProcessesByCpuAsync` measures each process's `CpuUsagePercent` by sampling its processor time twice over `CpuSamplingIntervalMs` (default 100 ms), so the call blocks for roughly that interval; `GetSystemSnapshotAsync` does the same when it ranks top processes. Use `TotalCpuTime` for cumulative CPU consumption, and rank by `WorkingSetBytes` for memory. On Linux, `HandleCount` is the open file-descriptor count; `StartTime` and `TotalCpuTime` are `null` when unavailable.
 
 `GetProcessStatsAsync`, `GetTopProcessesByCpuAsync`, and `GetTopProcessesByMemoryAsync` bypass the cache so they always return fresh data; `GetAllProcessesAsync` is cached.
+
+## Temperatures
+
+```csharp
+Result<IReadOnlyList<TemperatureReading>> temps = await sys.GetTemperaturesAsync();
+if (temps.IsSuccess)
+    foreach (var t in temps.Value!)
+        Console.WriteLine($"{t.Sensor}: {t.Celsius:F1} °C");
+```
+
+On Linux the readings come from `/sys/class/thermal/thermal_zone*` (sensor `thermal_zone0:x86_pkg_temp`) and `/sys/class/hwmon/hwmon*/temp*_input` (sensor `coretemp:Package id 0`). Windows offers no sensors the library can read without WMI and administrator rights, so the call fails with `systemstats.temperature_unavailable` there, and on Linux machines without sensors. With `EnableTemperatureMonitoring` set to `false` it fails with `systemstats.temperature_monitoring_disabled` and reads nothing. Readings are cached like the other reads (key `temperatures`).
+
+```csharp
+public record TemperatureReading(string Sensor, double Celsius);
+```
 
 ## System snapshot
 
@@ -193,11 +211,11 @@ public sealed record SystemSnapshot(
     DateTime                    TakenAt);
 ```
 
-Taking a snapshot publishes `SystemSnapshotTakenEvent`, and because it reads CPU and memory stats it also runs the CPU and memory threshold checks (so it can publish `HighCpuUsageEvent` / `HighMemoryUsageEvent`).
+A snapshot takes fresh (uncached) CPU, memory and uptime readings; its CPU reading is smoothed like `GetCpuStatsAsync()`. Taking a snapshot publishes `SystemSnapshotTakenEvent`, and because it reads CPU and memory stats it also runs the CPU and memory threshold checks (so it can publish `HighCpuUsageEvent` / `HighMemoryUsageEvent`).
 
 ## Caching
 
-When `EnableCaching` is on, these reads are cached for `CacheDurationSeconds`: `cpu_info`, `cpu_stats`, `mem_info`, `mem_stats`, `uptime`, and `all_processes`. Per-process lookups and the top-N rankings always bypass the cache. Clear everything manually through the service:
+When `EnableCaching` is on, these reads are cached for `CacheDurationSeconds`: `cpu_info`, `cpu_stats`, `mem_info`, `mem_stats`, `uptime`, `temperatures`, and `all_processes`. Per-process lookups and the top-N rankings always bypass the cache. Clear everything manually through the service:
 
 ```csharp
 sys.Stats.ClearCache();
@@ -236,12 +254,16 @@ The library writes `config.systemstats.json` (section `systemstats`) with defaul
 | `EnableCaching` | `bool` | `true` | Cache common reads for `CacheDurationSeconds`. When off, every call samples live. |
 | `CacheDurationSeconds` | `int` | `5` | Cache lifetime in seconds (1–600). |
 | `CpuSamplingIntervalMs` | `int` | `100` | Delay between consecutive CPU samples in ms (1–10000). |
-| `CpuSamplesForAverage` | `int` | `3` | Samples averaged per CPU reading (1–20). Currently reserved — not yet applied. |
-| `EnableTemperatureMonitoring` | `bool` | `true` | Reserved switch for temperature sampling support. |
-| `EnableProcessMonitoring` | `bool` | `true` | Enable process enumeration and ranking. |
+| `CpuSamplesForAverage` | `int` | `3` | A CPU reading is the average of the last N samples (1–20); `1` = no smoothing. |
+| `EnableTemperatureMonitoring` | `bool` | `true` | `false`: `GetTemperaturesAsync` fails with `systemstats.temperature_monitoring_disabled`. |
+| `EnableProcessMonitoring` | `bool` | `true` | `false`: process calls fail with `systemstats.process_monitoring_disabled`; snapshots have empty process lists. |
 | `MaxTopProcesses` | `int` | `10` | Default count for the top-process queries (1–200). |
 | `HighCpuThresholdPercent` | `double` | `90.0` | Overall CPU usage that triggers `HighCpuUsageEvent` (1–100). |
 | `HighMemoryThresholdPercent` | `double` | `90.0` | Memory usage that triggers `HighMemoryUsageEvent` (1–100). |
+
+## Error codes
+
+Failures carry a stable `Error.Code` from `SystemStatsErrorCodes`: `systemstats.cpu_info`, `cpu_stats`, `mem_info`, `mem_stats`, `uptime`, `process` (not found), `processes`, and the unavailable errors `process_monitoring_disabled`, `temperature_monitoring_disabled` and `temperature_unavailable`.
 
 ## Health check
 
