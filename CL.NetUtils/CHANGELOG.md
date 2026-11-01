@@ -22,9 +22,22 @@ All notable changes to **CodeLogic.NetUtils** are documented here. Versions foll
   validation fails.
 - **SharpCompress dependency removed.** The GeoIP archive is read with the built-in `System.Formats.Tar`
   and `System.IO.Compression` (`tar.gz` and `zip`).
+- **`GeoIp.DatabaseType` is validated.** It becomes the default file name, so a value with path separators or
+  `..` could place the database outside the data directory. It must now be an edition id (letters, digits, `-`,
+  `_`, `.`, at most 64 characters); otherwise configuration validation fails and `GeoIpService` throws
+  `ArgumentException`.
+- **Malformed DNSBL zones are no longer queried.** A zone that is not a DNS name (blank line, IP literal,
+  spaces, control characters, a single label) is skipped and reported in `FailedServices`, so the check is
+  `Indeterminate`. Zones are trimmed, and `MatchedService` / `FailedServices` hold the trimmed name.
 
 ### Added
 
+- `NetUtilsLibrary.HasDnsbl` and `DnsblChecker.IsEnabled`.
+- GeoIP serves the **Country, Enterprise, ASN and ISP** editions as well as City: the edition is read from the
+  database metadata (`GeoIpService.LoadedDatabaseType`). New `IpLocationResult.AutonomousSystemNumber` and
+  `AutonomousSystemOrganization`; `IsSuccessful` is also `true` for an ASN/ISP result without a country.
+- `GeoIp.DownloadUrl` accepts a `{DatabaseType}` placeholder, and the default URL uses it, so the configured
+  edition is downloaded (`GeoIpConfig.DatabaseTypePlaceholder`, `GeoIpConfig.IsValidDatabaseType`).
 - `DnsblCheckStatus` (`NotBlacklisted`, `Blacklisted`, `Indeterminate`, `Error`), `DnsblCheckResult.Status`,
   `DnsblCheckResult.FailedServices` and `DnsblCheckResult.Indeterminate(...)`.
 - `DnsblCheckRequest.ParallelQueries` (default `true`).
@@ -32,7 +45,21 @@ All notable changes to **CodeLogic.NetUtils** are documented here. Versions foll
 
 ### Fixed
 
-- **A corrupt GeoIP download can no longer replace a working database (re-audit R2).** The extracted file is opened with the MaxMind reader, must be a City database, and must answer a test lookup. Only then is it renamed into place. The open reader switches without a gap, and on any failure the old file and reader stay in use. Readers load the database into memory, so the file is never locked.
+- **`NetUtilsLibrary.Dnsbl` no longer throws when DNSBL checking is disabled** (audit 2026-11-01). The docs
+  said it is always available, but with `dnsbl.enabled` (or `enabled`) off it threw `InvalidOperationException`.
+  It now returns a checker whose checks answer `Status = Error` with "DNSBL checking is disabled", without a
+  DNS query. It still throws before the library has initialized.
+- **GeoIP is no longer City-only** (audit 2026-11-01). `DatabaseType` was documented as any edition, but only a
+  City database installed and every lookup called `City()`. A downloaded database must now be of the same kind
+  as `DatabaseType` (a Country download never replaces a City database).
+- **`NetUtilsStrings` is used** (audit 2026-11-01). The localization model was registered but nothing read it.
+  Lifecycle and DNSBL/GeoIP log lines, and the error messages in `DnsblCheckResult` / `IpLocationResult`
+  (invalid address, DNSBL disabled, GeoIP not initialized, location not found), now come from it; new strings
+  `InvalidIpAddressFormat`, `DnsblDisabled`, `GeoIpNotInitialized`, `LocationNotFound`. The English defaults
+  match the previous messages.
+- **Caller input can no longer forge log lines.** IP addresses and zones are logged with control characters
+  replaced and cut to 64 characters.
+- **A corrupt GeoIP download can no longer replace a working database (re-audit R2).** The extracted file is opened with the MaxMind reader, must be a supported edition of the configured kind, and must answer a test lookup. Only then is it renamed into place. The open reader switches without a gap, and on any failure the old file and reader stay in use. Readers load the database into memory, so the file is never locked.
 - **`GeoIp.AutoUpdate` now works:** before, nothing read it. On startup it refreshes an existing database when credentials are set; a failed refresh is logged and the existing database stays in use. A missing database is downloaded regardless.
 - **`Dnsbl.ParallelQueries` is honoured.** Zones were always queried one at a time. Now the zones of a
   list are queried concurrently by default, and with `ParallelQueries = false` one at a time, stopping at

@@ -28,7 +28,7 @@ public sealed class SystemStatsLibrary : ILibrary
         Id = "CL.SystemStats",
         Name = "System Stats Library",
         Version = CL.Internal.InternalLibraryVersion.Current,
-        Description = "Cross-platform system statistics (CPU, memory, processes) for CodeLogic 4 applications",
+        Description = "Cross-platform system statistics (CPU, memory, processes) for CodeLogic 5 applications",
         Author = "Zyntal.com",
         Tags = ["system", "stats", "cpu", "memory", "processes", "monitoring"]
     };
@@ -165,6 +165,10 @@ public sealed class SystemStatsLibrary : ILibrary
     /// <summary>Gets the top processes sorted by memory usage.</summary>
     public Task<Result<IReadOnlyList<Models.ProcessStats>>> GetTopProcessesByMemoryAsync(int topCount) =>
         Stats.GetTopProcessesByMemoryAsync(topCount);
+
+    /// <summary>Gets the temperature sensor readings (honours <c>EnableTemperatureMonitoring</c>).</summary>
+    public Task<Result<IReadOnlyList<Models.TemperatureReading>>> GetTemperaturesAsync() =>
+        Stats.GetTemperaturesAsync();
 
     /// <summary>Gets a full system snapshot.</summary>
     public Task<Result<Models.SystemSnapshot>> GetSystemSnapshotAsync() =>

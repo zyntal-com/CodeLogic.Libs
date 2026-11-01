@@ -12,13 +12,43 @@ All notable changes to **CodeLogic.SystemStats** are documented here. Versions f
   kind subtypes (`NotFoundError`, `ValidationError`, ...). This library's API is unchanged, and
   its results can now be matched exhaustively with `switch`.
 
+### Added
+
+- `GetTemperaturesAsync()` on `SystemStatsService` and `SystemStatsLibrary`, the `TemperatureReading` record and a
+  default `ISystemStatsProvider.GetTemperaturesAsync()` (unavailable). Linux reads `/sys/class/thermal` and
+  `/sys/class/hwmon`; Windows reports `systemstats.temperature_unavailable`.
+- `SystemStatsErrorCodes` with every error code the library returns.
+
 ### Changed
 
-- `System.Diagnostics.PerformanceCounter` and `System.Management` 11.0 (RC3 until .NET 11 GA).
+- `System.Diagnostics.PerformanceCounter` 11.0 (RC3 until .NET 11 GA).
+- **`System.Management` dependency removed** (audit 2026-11-01): nothing used it.
+- `GetSystemSnapshotAsync()` is composed by `SystemStatsService` (fresh CPU, memory and uptime, the top
+  `MaxTopProcesses` processes) instead of the provider's `GetSystemSnapshotAsync`, so it honours the switches below.
+- Windows per-core CPU counters are created once and read after the sampling interval; before, each core got a
+  new counter sampled over 10 ms, one core after another.
 - **Cache refreshes are coalesced.** When a cached value (CPU info and stats, memory info and stats, uptime,
   the process list) expired, every concurrent caller sampled the provider itself, so a burst of requests ran
   as many CPU samplings or process enumerations at once. Concurrent callers now share one refresh per key; a
   failed or throwing refresh is shared by the callers waiting on it and is not cached.
+
+### Fixed
+
+- **`EnableProcessMonitoring` is honoured** (audit 2026-11-01). It was never read. With it off, the process calls
+  fail with an unavailable error `systemstats.process_monitoring_disabled` without touching any process, and
+  snapshots have empty process lists.
+- **`EnableTemperatureMonitoring` is honoured** (audit 2026-11-01): it gates the new `GetTemperaturesAsync()`
+  (`systemstats.temperature_monitoring_disabled`).
+- **`CpuSamplesForAverage` is honoured** (audit 2026-11-01). It was never read. A CPU reading (and the
+  `HighCpuUsageEvent` threshold check) now uses the average of the last N samples, overall and per core; `1` gives
+  raw samples.
+- **Windows `CpuInfo` is real data** (audit 2026-11-01). It reported `Vendor = "Windows"`, `MaxSpeedMHz = 0` and the
+  logical count as the physical core count. Vendor and nominal clock now come from the registry, physical cores and
+  logical processors from `GetLogicalProcessorInformationEx`.
+- **Linux `PhysicalCoreCount` counts cores, not sockets** (audit 2026-11-01): the distinct
+  `(physical id, core id)` pairs of `/proc/cpuinfo`. `MaxSpeedMHz` prefers `cpufreq/cpuinfo_max_freq` over the
+  current `cpu MHz`, and ARM model/vendor lines are recognised.
+- The Linux `GetProcessStatsAsync` disposes the `Process` it opens.
 
 ### Documentation
 

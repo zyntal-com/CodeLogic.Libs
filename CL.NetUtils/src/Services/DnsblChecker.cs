@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Sockets;
+using CL.NetUtils.Localization;
 using CL.NetUtils.Models;
 using CodeLogic.Core.Logging;
 
@@ -14,6 +15,7 @@ public class DnsblChecker
     private readonly DnsblConfig _config;
     private readonly ILogger? _logger;
     private readonly Func<string, CancellationToken, Task<IPAddress[]>> _resolve;
+    private readonly bool _enabled;
 
     /// <summary>
     /// Initializes a new <see cref="DnsblChecker"/>.
@@ -26,12 +28,30 @@ public class DnsblChecker
     }
 
     /// <summary>Test seam: resolves DNSBL names through <paramref name="resolve"/> instead of the system resolver.</summary>
-    internal DnsblChecker(DnsblConfig config, ILogger? logger, Func<string, CancellationToken, Task<IPAddress[]>> resolve)
+    internal DnsblChecker(DnsblConfig config, ILogger? logger, Func<string, CancellationToken, Task<IPAddress[]>> resolve, bool enabled = true)
     {
         _config = config ?? throw new ArgumentNullException(nameof(config));
         _logger = logger;
         _resolve = resolve;
+        _enabled = enabled;
     }
+
+    /// <summary>
+    /// A checker that queries nothing: every check returns <see cref="DnsblCheckStatus.Error"/> with a "DNSBL checking
+    /// is disabled" message. <see cref="NetUtilsLibrary.Dnsbl"/> hands it out while DNSBL checking is switched off.
+    /// </summary>
+    internal static DnsblChecker CreateDisabled(ILogger? logger) =>
+        new(new DnsblConfig { Enabled = false }, logger, static (_, _) => Task.FromResult(Array.Empty<IPAddress>()), enabled: false);
+
+    /// <summary>
+    /// <see langword="false"/> when DNSBL checking is switched off (<c>netutils.enabled</c> or <c>netutils.dnsbl.enabled</c>
+    /// is <see langword="false"/>). A disabled checker sends no query; each check returns
+    /// <see cref="DnsblCheckStatus.Error"/> with a "disabled" <see cref="DnsblCheckResult.ErrorMessage"/>.
+    /// </summary>
+    public bool IsEnabled => _enabled;
+
+    /// <summary>Supplies the (localized) messages; set by <see cref="NetUtilsLibrary"/>.</summary>
+    internal Func<NetUtilsStrings> Strings { get; set; } = static () => InputText.DefaultStrings;
 
     /// <summary>
     /// Checks whether <paramref name="ipAddress"/> appears on any configured DNSBL,
@@ -78,13 +98,18 @@ public class DnsblChecker
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
+        var strings = Strings();
+        var shown = InputText.ForLog(ipAddress);
         try
         {
             if (!IPAddress.TryParse(ipAddress, out var ip))
             {
-                _logger?.Warning($"Invalid IP address: {ipAddress}");
-                return DnsblCheckResult.Error(ipAddress, IpAddressType.Unknown, "Invalid IP address format");
+                _logger?.Warning(InputText.Format(strings.InvalidIpAddress, shown));
+                return DnsblCheckResult.Error(ipAddress, IpAddressType.Unknown, strings.InvalidIpAddressFormat);
             }
+
+            if (!_enabled)
+                return DnsblCheckResult.Error(ipAddress, GetAddressType(ip.IsIPv4MappedToIPv6 ? ip.MapToIPv4() : ip), strings.DnsblDisabled);
 
             // An IPv4 client seen through a dual-stack socket (::ffff:a.b.c.d) is listed in the IPv4 zones.
             if (ip.IsIPv4MappedToIPv6)
@@ -92,14 +117,14 @@ public class DnsblChecker
 
             if (IsLocalOrPrivateIp(ip))
             {
-                _logger?.Debug($"Skipping DNSBL check for local/private IP: {ipAddress}");
+                _logger?.Debug($"Skipping DNSBL check for local/private IP: {shown}");
                 return DnsblCheckResult.NotBlacklisted(ipAddress, GetAddressType(ip));
             }
 
             if (request.IsAllowedAsync is not null &&
                 await request.IsAllowedAsync(ipAddress, cancellationToken).ConfigureAwait(false))
             {
-                _logger?.Debug($"IP {ipAddress} is on the caller-supplied allowlist — skipping DNSBL");
+                _logger?.Debug($"IP {shown} is on the caller-supplied allowlist — skipping DNSBL");
                 return DnsblCheckResult.NotBlacklisted(ipAddress, GetAddressType(ip));
             }
 
@@ -109,12 +134,12 @@ public class DnsblChecker
             if (ip.AddressFamily == AddressFamily.InterNetworkV6)
                 return await CheckIpv6Async(ip, ipAddress, request, cancellationToken).ConfigureAwait(false);
 
-            _logger?.Debug($"DNSBL check skipped for unsupported address family: {ipAddress}");
+            _logger?.Debug($"DNSBL check skipped for unsupported address family: {shown}");
             return DnsblCheckResult.NotBlacklisted(ipAddress, IpAddressType.Unknown);
         }
         catch (Exception ex)
         {
-            _logger?.Error($"Error checking DNSBL for {ipAddress}", ex);
+            _logger?.Error($"Error checking DNSBL for {shown}", ex);
             return DnsblCheckResult.Error(ipAddress, IpAddressType.Unknown, ex.Message);
         }
     }
@@ -147,29 +172,25 @@ public class DnsblChecker
         CancellationToken cancellationToken)
     {
         var failed = new List<string>();
-        var label = type == IpAddressType.IPv4 ? "IPv4" : "IPv6";
+        var strings = Strings();
+        var shown = InputText.ForLog(ipAddress);
 
-        var listedBy = await CheckListAsync(reversed, primaries, request, failed, cancellationToken).ConfigureAwait(false);
+        var listedBy = await CheckListAsync(reversed, primaries, request, failed, cancellationToken).ConfigureAwait(false)
+            ?? await CheckListAsync(reversed, fallbacks, request, failed, cancellationToken).ConfigureAwait(false);
         if (listedBy is not null)
         {
-            _logger?.Warning($"{label} {ipAddress} is blacklisted by {listedBy}");
-            return DnsblCheckResult.Blacklisted(ipAddress, type, listedBy, failed);
-        }
-
-        listedBy = await CheckListAsync(reversed, fallbacks, request, failed, cancellationToken).ConfigureAwait(false);
-        if (listedBy is not null)
-        {
-            _logger?.Warning($"{label} {ipAddress} is blacklisted by fallback service {listedBy}");
+            _logger?.Warning(InputText.Format(strings.IpBlacklisted, shown, InputText.ForLog(listedBy)));
             return DnsblCheckResult.Blacklisted(ipAddress, type, listedBy, failed);
         }
 
         if (failed.Count > 0)
         {
-            _logger?.Warning($"{label} {ipAddress} is not listed by the zones that answered, but {failed.Count} zone(s) could not be checked: {string.Join(", ", failed)}");
+            _logger?.Warning($"{shown} is not listed by the zones that answered, but {failed.Count} zone(s) could not be checked: " +
+                             string.Join(", ", failed.Select(InputText.ForLog)));
             return DnsblCheckResult.Indeterminate(ipAddress, type, failed);
         }
 
-        _logger?.Debug($"{label} {ipAddress} is not blacklisted");
+        _logger?.Debug(InputText.Format(strings.IpClean, shown));
         return DnsblCheckResult.NotBlacklisted(ipAddress, type);
     }
 
@@ -184,30 +205,44 @@ public class DnsblChecker
         if (services.Count == 0)
             return null;
 
-        if (request.ParallelQueries && services.Count > 1)
+        // Only well-formed DNS names are queried; a malformed entry (blank line, IP literal, spaces) counts as a zone
+        // that could not be checked, so it cannot silently turn a check clean.
+        var zones = new List<string>(services.Count);
+        foreach (var service in services)
         {
-            var outcomes = await Task.WhenAll(services.Select(service =>
-                CheckServiceAsync($"{reversed}.{service}", service, request.Timeout, request.DetailedLogging, cancellationToken))).ConfigureAwait(false);
+            if (InputText.NormalizeZone(service, reversed.Length) is { } zone)
+                zones.Add(zone);   // reported (MatchedService, FailedServices) in normalized form
+            else
+            {
+                _logger?.Warning($"Ignoring invalid DNSBL zone '{InputText.ForLog(service)}' (not a DNS name)");
+                failed.Add(InputText.ForLog(service));
+            }
+        }
+
+        if (request.ParallelQueries && zones.Count > 1)
+        {
+            var outcomes = await Task.WhenAll(zones.Select(zone =>
+                CheckServiceAsync($"{reversed}.{zone}", zone, request.Timeout, request.DetailedLogging, cancellationToken))).ConfigureAwait(false);
 
             string? listed = null;
-            for (var i = 0; i < services.Count; i++)
+            for (var i = 0; i < zones.Count; i++)
             {
                 if (outcomes[i] == ZoneOutcome.Listed)
-                    listed ??= services[i];
+                    listed ??= zones[i];
                 else if (outcomes[i] == ZoneOutcome.Failed)
-                    failed.Add(services[i]);
+                    failed.Add(zones[i]);
             }
             return listed;
         }
 
-        foreach (var service in services)
+        foreach (var zone in zones)
         {
-            var outcome = await CheckServiceAsync($"{reversed}.{service}", service, request.Timeout, request.DetailedLogging, cancellationToken)
+            var outcome = await CheckServiceAsync($"{reversed}.{zone}", zone, request.Timeout, request.DetailedLogging, cancellationToken)
                 .ConfigureAwait(false);
             if (outcome == ZoneOutcome.Listed)
-                return service;
+                return zone;
             if (outcome == ZoneOutcome.Failed)
-                failed.Add(service);
+                failed.Add(zone);
         }
         return null;
     }
