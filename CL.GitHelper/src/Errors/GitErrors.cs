@@ -38,6 +38,12 @@ public static class GitErrors
     public const string NonFastForwardCode = "git.non_fast_forward";
     /// <summary>The operation was cancelled by the caller — <see cref="UnavailableError"/>.</summary>
     public const string CancelledCode = "git.cancelled";
+    /// <summary>A network operation ran longer than the repository's timeout — <see cref="TimeoutError"/>.</summary>
+    public const string TimeoutCode = "git.timeout";
+    /// <summary>A pull's merge or rebase stopped on conflicting changes — <see cref="ConflictError"/>.</summary>
+    public const string MergeConflictCode = "git.merge_conflict";
+    /// <summary>The remote refused one or more of the pushed references — <see cref="ConflictError"/>.</summary>
+    public const string PushRejectedCode = "git.push_rejected";
 
     /// <summary>Clone failed for another reason — <see cref="InternalError"/>.</summary>
     public const string CloneFailedCode = "git.clone_failed";
