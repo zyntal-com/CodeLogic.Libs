@@ -264,10 +264,13 @@ public sealed class CloneOptions
     /// <summary>Create a bare repository (no working tree).</summary>
     public bool Bare { get; set; }
 
-    /// <summary>Invoked with progress updates during the clone. May be null.</summary>
+    /// <summary>
+    /// Invoked with progress updates during the clone (on a libgit2 worker thread). May be null.
+    /// Exceptions it throws are logged and ignored.
+    /// </summary>
     public Action<GitProgress>? OnProgress { get; set; }
 
-    /// <summary>Token that can cancel a long-running clone.</summary>
+    /// <summary>Token that can cancel a long-running clone, also mid-transfer.</summary>
     public CancellationToken CancellationToken { get; set; }
 }
 
@@ -285,10 +288,13 @@ public sealed class FetchOptions
     /// <summary>Also fetch tags from the remote.</summary>
     public bool FetchTags { get; set; } = true;
 
-    /// <summary>Invoked with progress updates during the fetch. May be null.</summary>
+    /// <summary>
+    /// Invoked with progress updates during the fetch (on a libgit2 worker thread). May be null.
+    /// Exceptions it throws are logged and ignored.
+    /// </summary>
     public Action<GitProgress>? OnProgress { get; set; }
 
-    /// <summary>Token that can cancel the operation.</summary>
+    /// <summary>Token that can cancel the operation, also mid-transfer.</summary>
     public CancellationToken CancellationToken { get; set; }
 }
 
@@ -297,13 +303,21 @@ public sealed class FetchOptions
 /// </summary>
 public sealed class PullOptions
 {
-    /// <summary>Name of the remote to pull from (default: "origin").</summary>
+    /// <summary>
+    /// Name of the remote to pull from (default: "origin"). When left at "origin",
+    /// <see cref="FetchOptions"/>' <see cref="CL.GitHelper.Models.FetchOptions.RemoteName"/> is used instead.
+    /// The current branch is integrated with its upstream on that remote, or with the
+    /// remote branch of the same name when it has no upstream there.
+    /// </summary>
     public string RemoteName { get; set; } = "origin";
 
-    /// <summary>Integration strategy to apply after fetch.</summary>
+    /// <summary>Integration strategy to apply after fetch (merge, rebase or fast-forward only).</summary>
     public MergeStrategy Strategy { get; set; } = MergeStrategy.Merge;
 
-    /// <summary>Fetch options used for the fetch step.</summary>
+    /// <summary>
+    /// Fetch options used for the fetch step (prune, tags, progress). Its cancellation token, when
+    /// set, applies to the fetch; otherwise <see cref="CancellationToken"/> does.
+    /// </summary>
     public FetchOptions FetchOptions { get; set; } = new();
 
     /// <summary>Token that can cancel the operation.</summary>
@@ -348,13 +362,19 @@ public sealed class PushOptions
     /// <summary>Whether to force-push (rewrites remote history — use with care).</summary>
     public bool Force { get; set; }
 
-    /// <summary>Also push all local tags.</summary>
+    /// <summary>
+    /// Also push all local tags. Tags are never force-pushed, even with <see cref="Force"/>, so a
+    /// tag that already points elsewhere on the remote is rejected (<c>git.push_rejected</c>).
+    /// </summary>
     public bool PushTags { get; set; }
 
-    /// <summary>Invoked with progress updates during the push. May be null.</summary>
+    /// <summary>
+    /// Invoked with progress updates during the push (on a libgit2 worker thread). May be null.
+    /// Exceptions it throws are logged and ignored.
+    /// </summary>
     public Action<GitProgress>? OnProgress { get; set; }
 
-    /// <summary>Token that can cancel the operation.</summary>
+    /// <summary>Token that can cancel the operation, also mid-transfer.</summary>
     public CancellationToken CancellationToken { get; set; }
 }
 

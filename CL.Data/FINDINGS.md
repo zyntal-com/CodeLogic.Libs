@@ -104,6 +104,17 @@ the current numbers) and for time relative to Dapper or raw ADO.NET in the same 
 
 **Found while testing:** a `SqlFn` call with only captured arguments, such as `SqlFn.BucketUtc(at, 60)` in a `Select`, was evaluated on the client and threw "SqlFn functions can only be used inside CL.Data query expressions". `SqlFn` calls are now always translated. There was no conformance test running `BucketUtc` against a real server, which is why 4.1 was missed; one exists now, for dates before and after 2038.
 
+## Security and completeness audit, CL.Data items (2026-11-01)
+
+| # | Claim | Verdict | Fix |
+|---|---|---|---|
+| 4 | Bookkeeping reads go to replicas | True: reproduced with SQLite replica files (sync tried to create `cl_data_schema` twice) | `SqlIntent.ReadPrimary` for schema state, migration and seed history, the cache bus and all four introspectors. `RoutingTests` covers it. |
+| 12 | Raw read APIs are always reads (replicas, retries, no invalidation) | True | `SqlIntent` with conservative `Auto` classification (`SqlClassifier`); provider maintenance and `pg_notify` use `SideEffect`. |
+| 6 | Backup restore splices manifest values into DDL; `file` not contained | True | `BackupValidator`: strict type/collation/option/default grammar and path containment, checked before anything is dropped. |
+| 4.x | Array parameters collide in cache keys; batch EXPLAIN re-runs statements; bulk path bypasses interceptors; `NodeEndpoint` prints the password; SQL Server default-constraint drop without `QUOTENAME` | True | Fixed each; see the CHANGELOG. |
+| 4.x | Insert-ignore on tenant entities is an existence oracle | True, inherent to a shared key space | Documented: put the tenant column into the key or unique index. |
+| 3 | `SeedAppliedEvent`, table hints, compiled `WithCache`/`ReadFrom`, host-only replicas, SQLite locks in docs, provider changelogs, `SslCaCertificatePath` on SQL Server | True | Implemented, or documented/rejected where the driver cannot do it (Sparse and column Charset are `[Obsolete]`, SQL Server rejects a CA file). |
+
 ## Strong-name signing (2026-10-31)
 
 All CodeLogic and CodeLogic.Libs assemblies are strong-named with one key pair, token `53a89305eedc5d98` (see AGENTS.md).
@@ -115,14 +126,13 @@ Ordinary builds public-sign; releases are fully signed from the `CL_STRONG_NAME_
 - **Incremental builds:** an incremental build doesn't notice a changed `CLStrongNameKeyFile`, so packing over an old build ships public-signed DLLs. Release runners always build clean, and the verification step catches it regardless.
 - **Unsigned dependencies:** referencing unsigned assemblies produced no CS8002 warnings on .NET 11. The 15 libraries, their tests, the CodeLogic samples and the generator all build signed with 0 warnings.
 
-## Local-only state (nothing pushed)
+## Repository state (2026-11-01)
 
-- **Libs:** `feature/cl-data` with every WP branch (`cl-data/<wp>`) merged in locally.
-- **CodeLogic:** `feature/result-throw-if-failure` adds `Result.ThrowIfFailure()` and `ResultFailedException`, and moves the README and docs to 5.x. The libraries build against this local source (`CodeLogicFromNuGet=false`). At the end: publish CodeLogic and switch the libraries back to NuGet.
-- **4.x fix:** see the table above. The branch `fix/4x-span-contains` builds on top of `origin/support/4.x`, which already has 485cb9a, the two-argument span `Contains` fix. It adds only the three-argument form (enum and nullable arrays), so the two complement each other. The local `support/4.x` label is stale; compare against `origin/support/4.x`.
+- **Libs:** CL.Data and its four providers are on `main` (merged through PR 37, `feat/data-fraghunt-v3`). The work-package branches (`feature/cl-data`, `cl-data/<wp>`) are history.
+- **Published:** `CodeLogic.Data`, `CodeLogic.Common` and `CodeLogic.Storage` **5.0.115-preview** are on nuget.org.
+- **CodeLogic dependency:** the libraries build against the published **CodeLogic 5.0.33-preview** (`CodeLogicPackageVersion` in `Directory.Build.props`) when the sibling `../CodeLogic` clone is absent, as in CI.
+- **4.x fix:** the branch `fix/4x-span-contains` builds on top of `origin/support/4.x`, which already has 485cb9a, the two-argument span `Contains` fix. It adds only the three-argument form (enum and nullable arrays), so the two complement each other.
 - **Old database libraries:** no code, project, CI or release references remain (WP-B2). What's left is history: the parity checklist, a release-workflow comment about 4.8.86, and the 4.9 benchmark baseline project.
-- **Unblocked on 2026-10-31:** CodeLogic **5.0.30-preview** is published (PR #18), with `ThrowIfFailure` and strong-name signing, and `CodeLogicPackageVersion` is bumped to it. The original note follows.
-- **CI cannot pass until CodeLogic 5 is published.** CI builds with `-p:CodeLogicFromNuGet=true`, but the libraries and tests use `Result.ThrowIfFailure()` and `ResultFailedException`. Those exist only on the local CodeLogic branch, not in `CodeLogic 5.0.29-preview` on nuget.org. Publish CodeLogic and bump `CodeLogicPackageVersion` before any CI run means anything.
 
 ## Test environment notes
 

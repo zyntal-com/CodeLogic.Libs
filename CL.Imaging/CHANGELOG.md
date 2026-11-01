@@ -43,4 +43,13 @@
 ### Changed
 
 - Package versions are pinned (SkiaSharp and SkiaSharp.NativeAssets.Linux.NoDependencies 4.154.0) instead of floating (`4.*`).
+- **Kept EXIF no longer carries the source thumbnail or MakerNote.** `KeepMetadata = true` zeroes the IFD1 thumbnail
+  (and unlinks IFD1) and the MakerNote before writing the EXIF back. Both describe the source pixels (MakerNotes can
+  embed previews and a vendor GPS copy), so a blurred face stayed visible in the thumbnail and coordinates survived
+  `RemoveGps`. Other tags are still written back as they were.
+- `BlurHash.IsValid`/`Decode` reject size flags above 80 (ten component rows; the spec allows 1-9 per axis), and
+  `Decode` caps the output at `BlurHash.MaxDecodePixels` (1 048 576 pixels, new constant) and evaluates the
+  separable cosine basis from tables, so a hash from a request cannot buy seconds of CPU per call.
+- Reading a stream with no byte limit (`MaxBytes = 0`) rents at most 16 MiB up front instead of whatever the stream
+  reports as its length; larger images grow the buffer as they are read.
 

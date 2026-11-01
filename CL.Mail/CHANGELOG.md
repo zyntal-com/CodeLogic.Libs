@@ -48,11 +48,13 @@ All notable changes to **CodeLogic.Mail** are documented here. Versions follow
   | `SmtpRejected` | `mail.smtp_rejected` | `ValidationError` (`Details` has the SMTP status) |
   | `SmtpError` | `mail.smtp_error` | `InternalError` |
   | `AttachmentNotFound` | `mail.attachment_not_found` | `NotFoundError` |
+  | `InvalidAttachment` (new) | `mail.invalid_attachment` | `ValidationError` |
   | `ImapConfigInvalid` | `mail.imap_config_invalid` | `ValidationError` |
   | `ImapAuthenticationFailed` | `mail.imap_authentication_failed` | `UnauthorizedError` |
   | `ImapTimeout` | `mail.imap_timeout` | `TimeoutError` |
   | `ImapConnectionFailed` (new) | `mail.imap_connection_failed` | `UnavailableError` |
   | `ImapError` | `mail.imap_error` | `InternalError` |
+  | `ImapRejected` (new) | `mail.imap_rejected` | `ValidationError` (`Details` has the IMAP response) |
   | `FolderNotFound` | `mail.folder_not_found` | `NotFoundError` |
   | `MessageNotFound` | `mail.message_not_found` | `NotFoundError` |
   | `Cancelled` (new) | `mail.cancelled` | `UnavailableError` |
@@ -94,6 +96,19 @@ All notable changes to **CodeLogic.Mail** are documented here. Versions follow
   `mail.imap_connection_failed` (`UnavailableError`) instead of `Unknown` / `ImapError`.
 - A template file that deserializes to nothing is `mail.template_rendering_failed` (was
   `TemplateNotFound`).
+- **Attachment paths must be fully qualified.** A relative path fails with the new code
+  `mail.invalid_attachment` (`ValidationError`) instead of being resolved against the working directory.
+- **More headers are reserved.** Custom headers can no longer set `Sender`, `Reply-To`, `Date`, `Message-Id`,
+  `Return-Path`, `Received` or `Resent-*` (in addition to From/To/Cc/Bcc/Subject/MIME-Version/Importance/
+  Content-*); use the new `MailMessage.ReplyTo` / `MailBuilder.ReplyTo(...)` for a reply address.
+- **`Imap.EnableIdle` is enforced.** `StartIdleAsync` fails with `mail.imap_config_invalid` while it is `false`
+  (the default); it was documented as the switch but never read.
+- **IMAP failures keep their kind.** Every IMAP operation reported `mail.imap_error` (`InternalError`) for any
+  exception. Now an unreachable server, dropped connection or TLS failure is `mail.imap_connection_failed`,
+  bad credentials `mail.imap_authentication_failed`, a timeout `mail.imap_timeout`, a missing folder or message
+  `mail.folder_not_found` / `mail.message_not_found`, cancellation `mail.cancelled`, and a `NO`/`BAD` answer the
+  new `mail.imap_rejected` (`ValidationError`). A reconnect inside an operation reports the real cause instead of
+  an `InvalidOperationException` wrapped in `mail.imap_error`.
 
 ### Security
 
@@ -104,6 +119,38 @@ All notable changes to **CodeLogic.Mail** are documented here. Versions follow
   directly in the template directory. Anything else fails with the new code
   `MailErrorCodes.InvalidTemplateId` (`mail.invalid_template_id`, `ValidationError`) for load, save and
   layout lookup. `FileMailTemplateProvider.IsValidTemplateId` lets callers check an ID up front.
+
+- **Unknown `SecurityMode` values fail closed.** A value outside `None`/`StartTls`/`SslTls` (e.g. a number in
+  the JSON) fell back to MailKit's `Auto` (opportunistic TLS, plaintext if the server offers no STARTTLS). It is
+  now a configuration error: `MailConfig.Validate` refuses it, `SendAsync` fails with `mail.smtp_config_invalid`
+  and IMAP with `mail.imap_config_invalid`.
+- **`Smtp.AttachmentBaseDirectory`** (new, optional): when set, attachments outside it (after resolving `..`
+  and link targets) fail with `mail.invalid_attachment`.
+- **The IMAP connection is serialized.** IDLE and public calls shared one `ImapClient` without a lock, which
+  MailKit does not support. Calls now take the connection one at a time; a call made while IDLE runs ends the
+  IDLE command gracefully, runs, and IDLE resumes.
+
+### Fixed
+
+- **`DefaultFromEmail` / `DefaultFromName` are used.** They were documented as the fallback sender but never
+  read, so `Build()` threw without `From()`. `MailLibrary.CreateMessage()` and `SendTemplatedAsync` now return
+  builders that fall back to them; the new `MailBuilder(defaultFromEmail, defaultFromName)` constructor does the
+  same for builders you create. An invalid `DefaultFromEmail` (or a `DefaultFromName` with a line break) fails
+  configuration validation.
+- **IDLE survives a dropped connection.** After a reconnect the loop kept using the folder of the disposed
+  client, so push notifications died silently after the first server drop. The folder is now resolved again on
+  the new connection, and messages that arrived in between are reported.
+- **`ConnectAsync` no longer leaks the previous connection**: an existing client is disconnected and disposed
+  before the new one is created, and a client whose connect or login fails is disposed.
+- **Live config changes are validated by the library too.** An invalid configuration that reaches
+  `OnConfigChangedAsync` is logged and ignored; later changes are compared with the configuration running.
+
+### Added
+
+- `MailMessage.ReplyTo` and `MailBuilder.ReplyTo(email)`.
+- `MailBuilder(string? defaultFromEmail, string? defaultFromName = null)`.
+- `SmtpConfig.AttachmentBaseDirectory`.
+- `MailErrorCodes.InvalidAttachment` (`mail.invalid_attachment`) and `MailErrorCodes.ImapRejected` (`mail.imap_rejected`).
 
 ### Documentation
 

@@ -27,6 +27,12 @@ public sealed class GitManager : IDisposable
     private Timer? _cleanupTimer;
     private bool _disposed;
 
+    // Background fetch per repository with AutoFetchIntervalMinutes > 0, once StartAutoFetch has run.
+    private readonly Lock _autoFetchLock = new();
+    private readonly Dictionary<string, AutoFetchEntry> _autoFetch = new(StringComparer.OrdinalIgnoreCase);
+    private readonly CancellationTokenSource _shutdown = new();
+    private bool _autoFetchStarted;
+
     /// <summary>
     /// Initialises the manager.
     /// </summary>
@@ -124,6 +130,7 @@ public sealed class GitManager : IDisposable
 
         _config.Repositories.Add(configuration);
         _runtimeIds[configuration.Id] = 0;
+        UpdateAutoFetchTimers();
         _logger?.Info($"Registered repository: {configuration.Id}");
     }
 
@@ -141,6 +148,7 @@ public sealed class GitManager : IDisposable
 
         _config.Repositories.Remove(cfg);
         _runtimeIds.TryRemove(repositoryId, out _);
+        UpdateAutoFetchTimers();
         _logger?.Info($"Unregistered repository: {repositoryId}");
         return true;
     }
@@ -168,7 +176,8 @@ public sealed class GitManager : IDisposable
         try
         {
             var evictAll = !string.Equals(baseDirectory, _baseDirectory, StringComparison.Ordinal)
-                           || !next.EnableRepositoryCaching;
+                           || !next.EnableRepositoryCaching
+                           || next.DefaultTimeoutSeconds != _config.DefaultTimeoutSeconds;
             var evict = evictAll
                 ? _cache.Keys.ToList()
                 : diff.Removed.Keys.Concat(diff.Changed.Keys).ToList();
@@ -184,6 +193,7 @@ public sealed class GitManager : IDisposable
         {
             _cacheLock.Release();
         }
+        UpdateAutoFetchTimers();
 
         // Not awaited: a long clone or fetch on a retired instance must not block the config change.
         foreach (var repository in retired)
@@ -195,6 +205,7 @@ public sealed class GitManager : IDisposable
     /// <summary>Disposes every cached repository once idle and stops the cleanup timer (library disabled live).</summary>
     internal void Retire()
     {
+        StopAutoFetch();
         _cleanupTimer?.Dispose();
         _cleanupTimer = null;
         foreach (var id in _cache.Keys.ToList())
@@ -222,6 +233,108 @@ public sealed class GitManager : IDisposable
             _cleanupTimer.Dispose();
             _cleanupTimer = null;
         }
+    }
+
+    // ── Background auto-fetch ─────────────────────────────────────────────────
+
+    /// <summary>
+    /// Starts a background fetch timer for every repository whose
+    /// <see cref="RepositoryConfiguration.AutoFetchIntervalMinutes"/> is above 0. Config changes
+    /// add, retime or remove timers from then on. A fetch still running when its next tick comes
+    /// is not started twice; <see cref="Dispose"/> and <see cref="Retire"/> cancel running fetches.
+    /// </summary>
+    internal void StartAutoFetch()
+    {
+        lock (_autoFetchLock)
+        {
+            if (_disposed) return;
+            _autoFetchStarted = true;
+        }
+        UpdateAutoFetchTimers();
+    }
+
+    /// <summary>Repository ID → auto-fetch interval for every timer currently scheduled.</summary>
+    internal IReadOnlyDictionary<string, TimeSpan> AutoFetchSchedule
+    {
+        get
+        {
+            lock (_autoFetchLock)
+                return _autoFetch.ToDictionary(e => e.Key, e => e.Value.Interval, StringComparer.OrdinalIgnoreCase);
+        }
+    }
+
+    private void UpdateAutoFetchTimers()
+    {
+        lock (_autoFetchLock)
+        {
+            if (!_autoFetchStarted || _disposed) return;
+
+            var wanted = _config.Repositories
+                .Where(r => r.AutoFetchIntervalMinutes > 0)
+                .GroupBy(r => r.Id, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => TimeSpan.FromMinutes(g.First().AutoFetchIntervalMinutes),
+                    StringComparer.OrdinalIgnoreCase);
+
+            foreach (var id in _autoFetch.Keys.ToList())
+            {
+                if (wanted.TryGetValue(id, out var interval) && interval == _autoFetch[id].Interval) continue;
+                _autoFetch[id].Timer.Dispose();
+                _autoFetch.Remove(id);
+            }
+
+            foreach (var (id, interval) in wanted)
+            {
+                if (_autoFetch.ContainsKey(id)) continue;
+                var entry = new AutoFetchEntry(interval);
+                entry.Timer = _time.CreateTimer(_ => _ = AutoFetchAsync(id, entry), null, interval, interval);
+                _autoFetch[id] = entry;
+            }
+        }
+    }
+
+    /// <summary>One scheduled fetch. Skipped while the previous fetch of the same repository still runs.</summary>
+    internal async Task AutoFetchAsync(string repositoryId, AutoFetchEntry? entry = null)
+    {
+        if (entry is not null && Interlocked.Exchange(ref entry.Running, 1) == 1) return;
+        try
+        {
+            if (_disposed || _shutdown.IsCancellationRequested || GetConfiguration(repositoryId) is null) return;
+            var repository = await GetRepositoryAsync(repositoryId).ConfigureAwait(false);
+            var result = await repository.FetchAsync(new FetchOptions { CancellationToken = _shutdown.Token })
+                .ConfigureAwait(false);
+            if (result.IsSuccess) _logger?.Debug($"Auto-fetch OK: {repositoryId}");
+            else _logger?.Warning($"Auto-fetch failed for '{repositoryId}': {result.Error!.Message}");
+        }
+        catch (Exception ex) when (ex is ObjectDisposedException or ArgumentException)
+        {
+            // Disposed or removed by a config change between the tick and the fetch.
+        }
+        catch (Exception ex)
+        {
+            _logger?.Error($"Auto-fetch error for '{repositoryId}': {ex.Message}", ex);
+        }
+        finally
+        {
+            if (entry is not null) Volatile.Write(ref entry.Running, 0);
+        }
+    }
+
+    private void StopAutoFetch()
+    {
+        lock (_autoFetchLock)
+        {
+            _autoFetchStarted = false;
+            foreach (var entry in _autoFetch.Values) entry.Timer.Dispose();
+            _autoFetch.Clear();
+        }
+        try { _shutdown.Cancel(); } catch (ObjectDisposedException) { }
+    }
+
+    internal sealed class AutoFetchEntry(TimeSpan interval)
+    {
+        public TimeSpan Interval { get; } = interval;
+        public ITimer Timer { get; set; } = null!;
+        public int Running;
     }
 
     // ── Cache management ──────────────────────────────────────────────────────
@@ -427,7 +540,7 @@ public sealed class GitManager : IDisposable
     private GitRepository CreateRepository(RepositoryConfiguration cfg)
     {
         var resolved = ResolvePath(cfg.LocalPath);
-        return new GitRepository(cfg, resolved, _logger);
+        return new GitRepository(cfg, resolved, _logger, _config.DefaultTimeoutSeconds);
     }
 
     private string ResolvePath(string localPath)
@@ -468,11 +581,13 @@ public sealed class GitManager : IDisposable
     public void Dispose()
     {
         if (_disposed) return;
+        StopAutoFetch();
+        _disposed = true;
         _cleanupTimer?.Dispose();
         foreach (var e in _cache.Values) e.Repository.Dispose();
         _cache.Clear();
         _cacheLock.Dispose();
-        _disposed = true;
+        _shutdown.Dispose();
     }
 
     // ── Internal types ────────────────────────────────────────────────────────

@@ -97,4 +97,13 @@ public sealed class SqlServerProviderTests
         Provider.Validate(config, "c", errors);
         Assert.Contains(errors, e => e.Path == "c.failoverHosts");
     }
+
+    [Fact]
+    public void A_ca_certificate_file_is_rejected_instead_of_ignored()
+    {
+        var config = new DataConnectionConfig { Provider = "sqlserver", Host = "a", Database = "d", SslMode = DataSslMode.VerifyFull, SslCaCertificatePath = "ca.pem" };
+        List<CodeLogic.Core.Configuration.ConfigFieldError> errors = [];
+        Provider.Validate(config, "c", errors);
+        Assert.Contains(errors, e => e.Path == "c.sslCaCertificatePath");
+    }
 }

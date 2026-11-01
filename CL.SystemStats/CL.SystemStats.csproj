@@ -14,11 +14,12 @@
     <PackageId>CodeLogic.SystemStats</PackageId>
     <PackageTags>cpu;memory;process;monitoring;cross-platform</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
-  </PropertyGroup>  <!-- Always restore these so the project compiles on all platforms.
-       The Windows provider uses them at runtime; the Linux provider doesn't. -->
+  </PropertyGroup>
+  <!-- Always restored so the project compiles on all platforms. The Windows provider uses it at runtime;
+       the Linux provider doesn't. -->
   <ItemGroup>
     <PackageReference Include="System.Diagnostics.PerformanceCounter" Version="11.0.0-rc.3.26522.148" />
-    <PackageReference Include="System.Management" Version="11.0.0-rc.3.26522.148" />
+    <InternalsVisibleTo Include="SystemStats.Tests" />
   </ItemGroup>
   <ItemGroup>
     <None Include="README.md" Pack="true" PackagePath="/" />

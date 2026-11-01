@@ -111,7 +111,17 @@ public record TotpValidationResult
     /// </summary>
     public int? WindowOffset { get; init; }
 
-    /// <summary>Human-readable error message when <see cref="IsValid"/> is <c>false</c>.</summary>
+    /// <summary>
+    /// The generic <see cref="ErrorMessage"/> returned when validation could not run (for example a malformed
+    /// secret key). The underlying exception is logged, never returned, so the message is safe to show a user.
+    /// </summary>
+    public const string ValidationErrorMessage = "The code could not be validated.";
+
+    /// <summary>
+    /// Human-readable error message when <see cref="IsValid"/> is <c>false</c>: <c>"Invalid code"</c> for a
+    /// code that did not match, <see cref="ValidationErrorMessage"/> when validation failed. Never contains
+    /// exception text.
+    /// </summary>
     public string? ErrorMessage { get; init; }
 
     /// <summary>Creates a successful validation result.</summary>

@@ -37,6 +37,20 @@ public sealed class MySqlProviderTests
         Assert.Equal("db9", new MySqlConnectionStringBuilder(Provider.BuildConnectionString(config, replica).ValueOrThrow()).Server);
     }
 
+    [Fact]
+    public void Replicas_given_a_host_inherit_the_primary_connection_string()
+    {
+        var config = new DataConnectionConfig
+        {
+            Provider = "mysql", ConnectionString = "Server=db1;Port=3307;Database=app;User ID=u;Password=p",
+            Replicas = [new ReplicaConfig { Name = "r1", Host = "db9" }],
+        };
+        var replica = NodeEndpoint.Replica(config, config.Replicas[0]);
+        var cs = new MySqlConnectionStringBuilder(Provider.BuildConnectionString(config, replica).ValueOrThrow());
+        Assert.Equal(("db9", 3307u, "app", "u", "p"), (cs.Server, cs.Port, cs.Database, cs.UserID, cs.Password));
+        Assert.DoesNotContain("p", replica.ToString().Replace("replica", "").Replace("primary", ""), StringComparison.Ordinal);
+    }
+
     [Table]
     private sealed class Typed
     {

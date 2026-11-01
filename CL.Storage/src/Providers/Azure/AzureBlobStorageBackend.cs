@@ -39,7 +39,6 @@ public sealed class AzureBlobStorageBackend :
         StorageFeature.ConditionalDelete |
         StorageFeature.AtomicReplace |
         StorageFeature.ServerPagination |
-        StorageFeature.ResumableUpload |
         StorageFeature.Versioning,
         new StorageLimits
         {

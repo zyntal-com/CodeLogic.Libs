@@ -99,7 +99,7 @@ internal static class StreamBuffer
     public static Result<PooledBuffer> ReadAll(Stream stream, long maxBytes)
     {
         if (TooLong(stream, maxBytes) is { } tooLong) return tooLong;
-        var buffer = ArrayPool<byte>.Shared.Rent(InitialSize(stream));
+        var buffer = ArrayPool<byte>.Shared.Rent(InitialSize(stream, maxBytes));
         var length = 0;
         try
         {
@@ -127,7 +127,7 @@ internal static class StreamBuffer
     public static async ValueTask<Result<PooledBuffer>> ReadAllAsync(Stream stream, long maxBytes, CancellationToken ct)
     {
         if (TooLong(stream, maxBytes) is { } tooLong) return tooLong;
-        var buffer = ArrayPool<byte>.Shared.Rent(InitialSize(stream));
+        var buffer = ArrayPool<byte>.Shared.Rent(InitialSize(stream, maxBytes));
         var length = 0;
         try
         {
@@ -162,11 +162,20 @@ internal static class StreamBuffer
     private static Error OverLimit(long maxBytes) =>
         ImagingErrors.TooLarge($"The image data is larger than the limit of {maxBytes:N0} bytes.");
 
-    private static int InitialSize(Stream stream)
+    /// <summary>The most rented up front when no byte limit applies; a larger stream grows the buffer as it is read.</summary>
+    internal const int MaxInitialRent = 16 * 1024 * 1024;
+
+    /// <summary>
+    /// The first buffer size: what a seekable stream says remains (plus one byte to see the end), but never more than
+    /// the limit allows, and without a limit never more than <see cref="MaxInitialRent"/>, so a stream that reports a
+    /// huge length does not make it rent that much before a byte is read.
+    /// </summary>
+    internal static int InitialSize(Stream stream, long maxBytes)
     {
-        if (!stream.CanSeek) return 64 * 1024;
+        var cap = maxBytes > 0 ? Math.Min(maxBytes + 1, Array.MaxLength) : MaxInitialRent;
+        if (!stream.CanSeek) return (int)Math.Clamp(64 * 1024, 256, Math.Max(256, cap));
         var remaining = stream.Length - stream.Position;
-        return (int)Math.Clamp(remaining + 1, 256, Array.MaxLength);
+        return (int)Math.Clamp(remaining + 1, 256, Math.Max(256, cap));
     }
 
     private static byte[] Grow(byte[] buffer, int length)

@@ -12,6 +12,41 @@ namespace CL.Common.Compression;
 public static class CompressionHelper
 {
     /// <summary>
+    /// Default cap on the decompressed size accepted by the <c>Decompress*</c> methods: 100 MiB.
+    /// Pass a larger <c>maxOutputBytes</c> explicitly when you expect bigger payloads.
+    /// </summary>
+    public const long DefaultMaxDecompressedBytes = 100L * 1024 * 1024;
+
+    /// <summary>Error code returned when decompressed output exceeds the caller's cap. Kind: validation.</summary>
+    public const string OutputLimitExceededCode = "compression.output_limit_exceeded";
+
+    private static Error OutputLimitExceeded(long maxOutputBytes) =>
+        Error.Validation(OutputLimitExceededCode,
+            $"Decompressed data exceeds the limit of {maxOutputBytes} bytes.");
+
+    /// <summary>Copies at most <paramref name="maxBytes"/> bytes; returns false if the source has more.</summary>
+    private static bool CopyBounded(Stream source, Stream destination, long maxBytes)
+    {
+        var buffer = System.Buffers.ArrayPool<byte>.Shared.Rent(81920);
+        try
+        {
+            long total = 0;
+            int read;
+            while ((read = source.Read(buffer, 0, buffer.Length)) > 0)
+            {
+                total += read;
+                if (total > maxBytes) return false;
+                destination.Write(buffer, 0, read);
+            }
+            return true;
+        }
+        finally
+        {
+            System.Buffers.ArrayPool<byte>.Shared.Return(buffer);
+        }
+    }
+
+    /// <summary>
     /// Compresses the given byte array using GZip compression.
     /// </summary>
     /// <param name="data">The raw bytes to compress. Must not be null.</param>
@@ -39,19 +74,25 @@ public static class CompressionHelper
     /// Decompresses a GZip-compressed byte array.
     /// </summary>
     /// <param name="data">The GZip-compressed bytes to decompress. Must not be null.</param>
+    /// <param name="maxOutputBytes">
+    /// The most decompressed bytes accepted (default <see cref="DefaultMaxDecompressedBytes"/>). Larger output
+    /// fails with <see cref="OutputLimitExceededCode"/> instead of exhausting memory (decompression bomb).
+    /// </param>
     /// <returns>
     /// A <see cref="Result{T}"/> containing the decompressed bytes on success,
-    /// or a failure result if decompression fails.
+    /// or a failure result if decompression fails or the output exceeds <paramref name="maxOutputBytes"/>.
     /// </returns>
-    public static Result<byte[]> DecompressGzip(byte[] data)
+    public static Result<byte[]> DecompressGzip(byte[] data, long maxOutputBytes = DefaultMaxDecompressedBytes)
     {
         ArgumentNullException.ThrowIfNull(data);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxOutputBytes);
         try
         {
             using var input = new MemoryStream(data);
             using var gzip = new GZipStream(input, CompressionMode.Decompress);
             using var output = new MemoryStream();
-            gzip.CopyTo(output);
+            if (!CopyBounded(gzip, output, maxOutputBytes))
+                return Result<byte[]>.Failure(OutputLimitExceeded(maxOutputBytes));
             return Result<byte[]>.Success(output.ToArray());
         }
         catch (Exception ex)
@@ -88,19 +129,25 @@ public static class CompressionHelper
     /// Decompresses a Brotli-compressed byte array.
     /// </summary>
     /// <param name="data">The Brotli-compressed bytes to decompress. Must not be null.</param>
+    /// <param name="maxOutputBytes">
+    /// The most decompressed bytes accepted (default <see cref="DefaultMaxDecompressedBytes"/>). Larger output
+    /// fails with <see cref="OutputLimitExceededCode"/> instead of exhausting memory (decompression bomb).
+    /// </param>
     /// <returns>
     /// A <see cref="Result{T}"/> containing the decompressed bytes on success,
-    /// or a failure result if decompression fails.
+    /// or a failure result if decompression fails or the output exceeds <paramref name="maxOutputBytes"/>.
     /// </returns>
-    public static Result<byte[]> DecompressBrotli(byte[] data)
+    public static Result<byte[]> DecompressBrotli(byte[] data, long maxOutputBytes = DefaultMaxDecompressedBytes)
     {
         ArgumentNullException.ThrowIfNull(data);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxOutputBytes);
         try
         {
             using var input = new MemoryStream(data);
             using var brotli = new BrotliStream(input, CompressionMode.Decompress);
             using var output = new MemoryStream();
-            brotli.CopyTo(output);
+            if (!CopyBounded(brotli, output, maxOutputBytes))
+                return Result<byte[]>.Failure(OutputLimitExceeded(maxOutputBytes));
             return Result<byte[]>.Success(output.ToArray());
         }
         catch (Exception ex)
@@ -140,19 +187,25 @@ public static class CompressionHelper
     /// e.g. one produced by <see cref="CompressZstandard"/> or the <c>zstd</c> CLI).
     /// </summary>
     /// <param name="data">The Zstandard-compressed bytes to decompress. Must not be null.</param>
+    /// <param name="maxOutputBytes">
+    /// The most decompressed bytes accepted (default <see cref="DefaultMaxDecompressedBytes"/>). Larger output
+    /// fails with <see cref="OutputLimitExceededCode"/> instead of exhausting memory (decompression bomb).
+    /// </param>
     /// <returns>
     /// A <see cref="Result{T}"/> containing the decompressed bytes on success,
-    /// or a failure result if decompression fails.
+    /// or a failure result if decompression fails or the output exceeds <paramref name="maxOutputBytes"/>.
     /// </returns>
-    public static Result<byte[]> DecompressZstandard(byte[] data)
+    public static Result<byte[]> DecompressZstandard(byte[] data, long maxOutputBytes = DefaultMaxDecompressedBytes)
     {
         ArgumentNullException.ThrowIfNull(data);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxOutputBytes);
         try
         {
             using var input = new MemoryStream(data);
             using var zstd = new ZstandardStream(input, CompressionMode.Decompress);
             using var output = new MemoryStream();
-            zstd.CopyTo(output);
+            if (!CopyBounded(zstd, output, maxOutputBytes))
+                return Result<byte[]>.Failure(OutputLimitExceeded(maxOutputBytes));
             return Result<byte[]>.Success(output.ToArray());
         }
         catch (Exception ex)
@@ -190,19 +243,25 @@ public static class CompressionHelper
     /// Decompresses an LZ4-compressed byte array produced by <see cref="CompressLz4"/>.
     /// </summary>
     /// <param name="data">The LZ4-compressed bytes to decompress. Must not be null.</param>
+    /// <param name="maxOutputBytes">
+    /// The most decompressed bytes accepted (default <see cref="DefaultMaxDecompressedBytes"/>). Larger output
+    /// fails with <see cref="OutputLimitExceededCode"/> instead of exhausting memory (decompression bomb).
+    /// </param>
     /// <returns>
     /// A <see cref="Result{T}"/> containing the decompressed bytes on success,
-    /// or a failure result if decompression fails.
+    /// or a failure result if decompression fails or the output exceeds <paramref name="maxOutputBytes"/>.
     /// </returns>
-    public static Result<byte[]> DecompressLz4(byte[] data)
+    public static Result<byte[]> DecompressLz4(byte[] data, long maxOutputBytes = DefaultMaxDecompressedBytes)
     {
         ArgumentNullException.ThrowIfNull(data);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxOutputBytes);
         try
         {
             using var input = new MemoryStream(data);
             using var lz4 = LZ4Stream.Decode(input);
             using var output = new MemoryStream();
-            lz4.CopyTo(output);
+            if (!CopyBounded(lz4, output, maxOutputBytes))
+                return Result<byte[]>.Failure(OutputLimitExceeded(maxOutputBytes));
             return Result<byte[]>.Success(output.ToArray());
         }
         catch (Exception ex)
@@ -233,17 +292,18 @@ public static class CompressionHelper
     /// Decompresses a Base64-encoded GZip-compressed string produced by <see cref="CompressString"/>.
     /// </summary>
     /// <param name="compressed">The Base64-encoded compressed string. Must not be null.</param>
+    /// <param name="maxOutputBytes">The most decompressed bytes accepted (default <see cref="DefaultMaxDecompressedBytes"/>).</param>
     /// <returns>
     /// A <see cref="Result{T}"/> containing the original UTF-8 text on success,
     /// or a failure result if decompression or Base64 decoding fails.
     /// </returns>
-    public static Result<string> DecompressString(string compressed)
+    public static Result<string> DecompressString(string compressed, long maxOutputBytes = DefaultMaxDecompressedBytes)
     {
         ArgumentNullException.ThrowIfNull(compressed);
         try
         {
             var bytes = Convert.FromBase64String(compressed);
-            var decompressResult = DecompressGzip(bytes);
+            var decompressResult = DecompressGzip(bytes, maxOutputBytes);
             return decompressResult.IsSuccess
                 ? Result<string>.Success(Encoding.UTF8.GetString(decompressResult.Value!))
                 : Result<string>.Failure(decompressResult.Error!);

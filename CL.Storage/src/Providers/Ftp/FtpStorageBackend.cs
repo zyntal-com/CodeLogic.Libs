@@ -496,6 +496,16 @@ public sealed class FtpStorageBackend : IStorageBackend, IStorageAttributeServic
     }
 
     /// <summary>
+    /// Defence in depth for arguments spliced into a raw FTP command: the control connection is line based, so a
+    /// control character (CR/LF above all) would end the command and start another. <see cref="StoragePath.Normalize"/>
+    /// already rejects them; this keeps a raw command safe if a path ever reaches it by another route.
+    /// </summary>
+    internal static Error? RawArgumentError(string argument) =>
+        StoragePath.IndexOfControlCharacter(argument) >= 0
+            ? StorageErrors.InvalidPath("An FTP command argument cannot contain control characters.")
+            : null;
+
+    /// <summary>
     /// Removes a directory only if it is empty, with a raw <c>RMD</c>: the server itself refuses a directory that
     /// holds anything, hidden names included, so there is no window between a check and the removal. (FluentFTP's
     /// <c>DeleteDirectory</c> deletes the contents first, and its listing can miss names LIST hides.) When the server
@@ -503,6 +513,7 @@ public sealed class FtpStorageBackend : IStorageBackend, IStorageAttributeServic
     /// </summary>
     private static async Task<Result> RemoveEmptyDirectoryAsync(AsyncFtpClient client, ResolvedRemotePath resolved, CancellationToken cancellationToken)
     {
+        if (RawArgumentError(resolved.RemotePath) is { } invalid) return Result.Failure(invalid);
         var reply = await client.Execute($"RMD {resolved.RemotePath}", cancellationToken).ConfigureAwait(false);
         if (reply.Success) return Result.Success();
         FtpListItem[] children;
@@ -775,8 +786,8 @@ public sealed class FtpStorageBackend : IStorageBackend, IStorageAttributeServic
     {
         if (!AllowRawCommands)
             return Result<StorageCommandResult>.Failure(StorageErrors.Unsupported("Raw commands are disabled for this connection (AllowRawCommands)."));
-        if (string.IsNullOrWhiteSpace(command) || command.IndexOfAny(['\r', '\n']) >= 0)
-            return Result<StorageCommandResult>.Failure(StorageErrors.InvalidContent("A command must be one non-empty line."));
+        if (string.IsNullOrWhiteSpace(command) || StoragePath.IndexOfControlCharacter(command) >= 0)
+            return Result<StorageCommandResult>.Failure(StorageErrors.InvalidContent("A command must be one non-empty line without control characters."));
         AsyncFtpClient? client = null;
         try
         {
@@ -796,6 +807,7 @@ public sealed class FtpStorageBackend : IStorageBackend, IStorageAttributeServic
     {
         var resolved = _paths.Resolve(path);
         if (resolved.IsFailure) return Result<StorageSpaceInfo>.Failure(resolved.Error!);
+        if (RawArgumentError(resolved.Value!.RemotePath) is { } invalid) return Result<StorageSpaceInfo>.Failure(invalid);
         AsyncFtpClient? client = null;
         try
         {

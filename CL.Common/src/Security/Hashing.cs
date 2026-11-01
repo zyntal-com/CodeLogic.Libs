@@ -54,63 +54,131 @@ public static class Hashing
     }
 
     /// <summary>
-    /// Hashes a password using PBKDF2-SHA256 with a random salt.
-    /// The returned string contains both the salt and hash encoded as Base64,
-    /// suitable for storage in a database.
+    /// Default PBKDF2-SHA256 iteration count for new password hashes: 600 000, the current OWASP
+    /// recommendation. Stored in each hash, so raising it later never invalidates existing hashes.
+    /// </summary>
+    public const int DefaultPasswordIterations = 600_000;
+
+    /// <summary>
+    /// Iteration count assumed for legacy hashes (plain Base64 salt + hash, written by CL.Common before 5.0)
+    /// when <see cref="VerifyPassword"/> is called without an explicit count: 100 000, the old default.
+    /// </summary>
+    public const int LegacyPasswordIterations = 100_000;
+
+    /// <summary>Prefix of the self-describing password hash format produced by <see cref="HashPassword"/>.</summary>
+    public const string PasswordHashPrefix = "$pbkdf2-sha256$v1$";
+
+    private const int SaltSize = 16;
+    private const int HashSize = 32;
+    private const int MaxStoredIterations = 100_000_000; // refuse absurd counts read from storage (DoS guard)
+
+    /// <summary>
+    /// Hashes a password using PBKDF2-SHA256 with a random 16-byte salt and returns a self-describing string
+    /// <c>$pbkdf2-sha256$v1${iterations}${base64 salt}${base64 hash}</c>. The iteration count travels with the
+    /// hash, so <see cref="VerifyPassword"/> needs no extra parameter and the default can be raised later.
     /// </summary>
     /// <param name="password">The plaintext password to hash. Must not be null.</param>
-    /// <param name="iterations">The number of PBKDF2 iterations. Higher values are more secure but slower. Default: 100000.</param>
-    /// <returns>A Base64-encoded string containing the 16-byte salt followed by the 32-byte hash.</returns>
+    /// <param name="iterations">The number of PBKDF2 iterations. Default: <see cref="DefaultPasswordIterations"/> (600 000).</param>
+    /// <returns>The self-describing hash string, suitable for storage in a database.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="password"/> is null.</exception>
-    public static string HashPassword(string password, int iterations = 100000)
+    /// <exception cref="ArgumentOutOfRangeException">Thrown when <paramref name="iterations"/> is less than 1.</exception>
+    public static string HashPassword(string password, int iterations = DefaultPasswordIterations)
     {
         ArgumentNullException.ThrowIfNull(password);
-        var salt = RandomNumberGenerator.GetBytes(16);
+        ArgumentOutOfRangeException.ThrowIfLessThan(iterations, 1);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(iterations, MaxStoredIterations);
+        var salt = RandomNumberGenerator.GetBytes(SaltSize);
         var hash = Rfc2898DeriveBytes.Pbkdf2(
             Encoding.UTF8.GetBytes(password),
             salt,
             iterations,
             HashAlgorithmName.SHA256,
-            32);
+            HashSize);
 
-        var result = new byte[salt.Length + hash.Length];
-        Buffer.BlockCopy(salt, 0, result, 0, salt.Length);
-        Buffer.BlockCopy(hash, 0, result, salt.Length, hash.Length);
-        return Convert.ToBase64String(result);
+        return $"{PasswordHashPrefix}{iterations}${Convert.ToBase64String(salt)}${Convert.ToBase64String(hash)}";
     }
 
     /// <summary>
-    /// Verifies a plaintext password against a hashed password produced by <see cref="HashPassword"/>.
+    /// Verifies a plaintext password against a hash produced by <see cref="HashPassword"/>.
     /// Uses constant-time comparison to prevent timing attacks.
     /// </summary>
+    /// <remarks>
+    /// Self-describing hashes (<see cref="PasswordHashPrefix"/>) carry their own iteration count and
+    /// <paramref name="iterations"/> is ignored. Legacy hashes (plain Base64 of salt + hash, from releases
+    /// before 5.0) are verified with <paramref name="iterations"/>; call <see cref="NeedsRehash"/> after a
+    /// successful login and store a fresh <see cref="HashPassword"/> result when it returns true.
+    /// </remarks>
     /// <param name="password">The plaintext password to verify. Must not be null.</param>
-    /// <param name="hashedPassword">The Base64-encoded salt+hash string returned by <see cref="HashPassword"/>. Must not be null.</param>
-    /// <param name="iterations">The number of PBKDF2 iterations used when hashing. Must match the value used in <see cref="HashPassword"/>. Default: 100000.</param>
-    /// <returns><c>true</c> if the password matches the hash; otherwise <c>false</c>.</returns>
+    /// <param name="hashedPassword">The stored hash. Must not be null.</param>
+    /// <param name="iterations">Iterations for legacy hashes only. Default: <see cref="LegacyPasswordIterations"/> (100 000).</param>
+    /// <returns><c>true</c> if the password matches the hash; otherwise <c>false</c> (including malformed hashes).</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="password"/> or <paramref name="hashedPassword"/> is null.</exception>
-    public static bool VerifyPassword(string password, string hashedPassword, int iterations = 100000)
+    public static bool VerifyPassword(string password, string hashedPassword, int iterations = LegacyPasswordIterations)
     {
         ArgumentNullException.ThrowIfNull(password);
         ArgumentNullException.ThrowIfNull(hashedPassword);
 
+        if (!TryParsePasswordHash(hashedPassword, iterations, out var storedIterations, out var salt, out var storedHash, out _))
+            return false;
+
+        var computedHash = Rfc2898DeriveBytes.Pbkdf2(
+            Encoding.UTF8.GetBytes(password),
+            salt,
+            storedIterations,
+            HashAlgorithmName.SHA256,
+            storedHash.Length);
+
+        return CryptographicOperations.FixedTimeEquals(storedHash, computedHash);
+    }
+
+    /// <summary>
+    /// Returns true when a stored hash should be replaced with a fresh <see cref="HashPassword"/> result:
+    /// it is in the legacy format, uses fewer than <paramref name="iterations"/> iterations, or cannot be parsed.
+    /// Call it after a successful <see cref="VerifyPassword"/>, while the plaintext is at hand.
+    /// </summary>
+    /// <param name="hashedPassword">The stored hash. Must not be null.</param>
+    /// <param name="iterations">The iteration count new hashes should have. Default: <see cref="DefaultPasswordIterations"/>.</param>
+    public static bool NeedsRehash(string hashedPassword, int iterations = DefaultPasswordIterations)
+    {
+        ArgumentNullException.ThrowIfNull(hashedPassword);
+        if (!TryParsePasswordHash(hashedPassword, LegacyPasswordIterations, out var storedIterations, out _, out _, out var legacy))
+            return true;
+        return legacy || storedIterations < iterations;
+    }
+
+    private static bool TryParsePasswordHash(string stored, int legacyIterations, out int iterations,
+        out byte[] salt, out byte[] hash, out bool legacy)
+    {
+        iterations = 0;
+        salt = [];
+        hash = [];
+        legacy = false;
         try
         {
-            var decoded = Convert.FromBase64String(hashedPassword);
-            if (decoded.Length < 48) return false;
+            if (stored.StartsWith(PasswordHashPrefix, StringComparison.Ordinal))
+            {
+                var parts = stored[PasswordHashPrefix.Length..].Split('$');
+                if (parts.Length != 3) return false;
+                if (!int.TryParse(parts[0], System.Globalization.NumberStyles.None,
+                        System.Globalization.CultureInfo.InvariantCulture, out iterations)) return false;
+                if (iterations < 1 || iterations > MaxStoredIterations) return false;
+                salt = Convert.FromBase64String(parts[1]);
+                hash = Convert.FromBase64String(parts[2]);
+                return salt.Length >= SaltSize && hash.Length >= HashSize;
+            }
 
-            var salt = decoded[..16];
-            var storedHash = decoded[16..];
-
-            var computedHash = Rfc2898DeriveBytes.Pbkdf2(
-                Encoding.UTF8.GetBytes(password),
-                salt,
-                iterations,
-                HashAlgorithmName.SHA256,
-                32);
-
-            return CryptographicOperations.FixedTimeEquals(storedHash, computedHash);
+            // Legacy: Base64(16-byte salt + 32-byte hash), iteration count supplied by the caller.
+            if (stored.StartsWith('$')) return false;
+            var decoded = Convert.FromBase64String(stored);
+            if (decoded.Length != SaltSize + HashSize) return false;
+            if (legacyIterations < 1 || legacyIterations > MaxStoredIterations) return false;
+            salt = decoded[..SaltSize];
+            hash = decoded[SaltSize..];
+            iterations = legacyIterations;
+            legacy = true;
+            return true;
         }
-        catch
+        catch (FormatException)
         {
             return false;
         }

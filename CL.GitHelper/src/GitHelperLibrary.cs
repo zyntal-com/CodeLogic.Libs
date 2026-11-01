@@ -36,6 +36,8 @@ public sealed class GitHelperLibrary : ILibrary, IConfigReloadable
 
     private LibraryContext? _context;
     private GitManager? _manager;
+    private bool _disabled;
+    private bool _started;
 
     // ── Phase 1: Configure ────────────────────────────────────────────────────
 
@@ -63,9 +65,11 @@ public sealed class GitHelperLibrary : ILibrary, IConfigReloadable
 
         if (!config.Enabled)
         {
+            _disabled = true;
             context.Logger.Warning($"{Manifest.Name} is disabled in configuration — skipping initialization.");
             return;
         }
+        _disabled = false;
 
         // Resolve the base directory for relative repository paths.
         var baseDir = ResolveBaseDirectory(context, config);
@@ -100,14 +104,24 @@ public sealed class GitHelperLibrary : ILibrary, IConfigReloadable
     /// their instances. Library-wide settings (cache, timeouts, concurrency, base directory) apply at
     /// once. Repositories added with <see cref="RegisterRepository"/> are kept. Added or changed
     /// repositories with <see cref="RepositoryConfiguration.AutoFetch"/> are fetched in the background.
-    /// <see cref="GitHelperConfig.Enabled"/> can be switched either way.
+    /// <see cref="GitHelperConfig.Enabled"/> can be switched either way. A configuration that fails
+    /// <see cref="GitHelperConfig.Validate"/> is rejected: it is logged and the current settings stay in effect,
+    /// as an invalid file stops initialization.
     /// </summary>
     public async Task OnConfigChangedAsync(LibraryContext context, ConfigChangedEventArgs change, CancellationToken cancellationToken)
     {
         if (change.NewValue is not GitHelperConfig current) return;
 
+        var validation = current.Validate();
+        if (!validation.IsValid)
+        {
+            context.Logger.Error($"{Manifest.Name}: config change rejected, keeping the current settings — {validation}");
+            return;
+        }
+
         if (!current.Enabled)
         {
+            _disabled = true;
             var old = _manager;
             if (old is null) return;
             _manager = null;
@@ -115,6 +129,7 @@ public sealed class GitHelperLibrary : ILibrary, IConfigReloadable
             context.Logger.Info($"{Manifest.Name} disabled by a config change");
             return;
         }
+        _disabled = false;
 
         var baseDir = ResolveBaseDirectory(context, current);
 
@@ -123,6 +138,7 @@ public sealed class GitHelperLibrary : ILibrary, IConfigReloadable
             _manager = new GitManager(current, baseDir, context.Logger);
             context.Logger.Info($"{Manifest.Name} enabled by a config change — {current.Repositories.Count} repository configuration(s)");
             await ProbeRepositoriesAsync();
+            if (_started) _manager.StartAutoFetch();
             AutoFetchInBackground(context, current.Repositories.Where(r => r.AutoFetch).Select(r => r.Id));
             return;
         }
@@ -170,8 +186,10 @@ public sealed class GitHelperLibrary : ILibrary, IConfigReloadable
     {
         _context = context;
         context.Logger.Info($"Starting {Manifest.Name}");
+        _started = true;
 
         if (_manager is null) return;
+        _manager.StartAutoFetch();
 
         // Trigger auto-fetch on repositories that have it enabled.
         var autoFetchIds = _context
@@ -213,6 +231,7 @@ public sealed class GitHelperLibrary : ILibrary, IConfigReloadable
     public Task OnStopAsync()
     {
         _context?.Logger.Info($"Stopping {Manifest.Name}");
+        _started = false;
         _manager?.Dispose();
         _manager = null;
         _context?.Logger.Info($"{Manifest.Name} stopped");
@@ -224,6 +243,10 @@ public sealed class GitHelperLibrary : ILibrary, IConfigReloadable
     /// <inheritdoc/>
     public async Task<HealthStatus> HealthCheckAsync()
     {
+        // Disabled on purpose is not a fault.
+        if (_disabled)
+            return HealthStatus.Healthy($"{Manifest.Name} is disabled in configuration.");
+
         if (_manager is null)
             return HealthStatus.Unhealthy("Git manager not initialized.");
 

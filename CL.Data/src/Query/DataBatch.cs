@@ -77,14 +77,23 @@ public sealed class DataBatch
         return result;
     }
 
-    /// <summary>Adds a raw query (scalars or mapped rows, like <c>SqlQueryAsync</c>).</summary>
-    public BatchResult<List<T>> Sql<T>(SqlText sql)
+    /// <summary>
+    /// Adds a raw query (scalars or mapped rows, like <c>SqlQueryAsync</c>). Its <see cref="SqlIntent"/> is worked out from the
+    /// text (<see cref="SqlIntent.Auto"/>); one write makes the whole batch a write (primary, no retry once sent, cache dropped).
+    /// </summary>
+    public BatchResult<List<T>> Sql<T>(SqlText sql) => Sql<T>(sql, SqlIntent.Auto);
+
+    /// <summary>Adds a raw query with an explicit <paramref name="intent"/> (see <see cref="Sql{T}(SqlText)"/>).</summary>
+    public BatchResult<List<T>> Sql<T>(SqlText sql, SqlIntent intent)
     {
         var result = new BatchResult<List<T>>();
         var accessor = RowReader.AccessorFor<T>();
         if (accessor.IsFailure) return Fail(result, accessor.Error!);
         _items.Add(new Item(null, sql, async (reader, ct) =>
-            result.Set(await RowReader.ReadAllAsync(reader, accessor.Value, _db.NamingPolicy, ct).ConfigureAwait(false))));
+            result.Set(await RowReader.ReadAllAsync(reader, accessor.Value, _db.NamingPolicy, ct).ConfigureAwait(false)))
+        {
+            Intent = intent,
+        });
         return result;
     }
 
@@ -100,6 +109,7 @@ public sealed class DataBatch
         List<RenderedSql> separate = [];
         List<string> parts = [];
         List<SqlParameterValue> parameters = [];
+        bool isWrite = false, invalidates = false, primary = false;
         try
         {
             foreach (var item in _items)
@@ -112,8 +122,12 @@ public sealed class DataBatch
                 else
                 {
                     var raw = item.Raw!.Value;
-                    separate.Add(new RenderedSql(raw.Render(dialect), raw.Parameters));
+                    var text = raw.Render(dialect);
+                    separate.Add(new RenderedSql(text, raw.Parameters));
                     parts.Add(raw.Render(dialect, parameters.Count));
+                    isWrite |= SqlClassifier.IsWrite(item.Intent, text);
+                    invalidates |= SqlClassifier.Invalidates(item.Intent, text);
+                    primary |= item.Intent == SqlIntent.ReadPrimary;
                 }
                 parameters.AddRange(separate[^1].Parameters);
             }
@@ -124,7 +138,12 @@ public sealed class DataBatch
         }
         var combined = string.Join(";\n", parts);
 
-        var context = new CommandContext(_db, new CommandSpec(combined, parameters), CommandKind.Query, ct) { Operation = "batch" };
+        var context = new CommandContext(_db, new CommandSpec(combined, parameters), CommandKind.Query, ct)
+        {
+            Operation = "batch",
+            IsWrite = isWrite,
+            ReadFrom = primary ? CL.Data.Routing.ReadPreference.Primary : null,
+        };
         var result = await _db.RunAsync(context, (Items: _items, Separate: separate, Db: _db),
             static async (cmd, state, token) =>
             {
@@ -152,6 +171,7 @@ public sealed class DataBatch
                 }
                 return true;
             }).ConfigureAwait(false);
+        if (invalidates) _db.InvalidateCache(["*"]);   // raw SQL may change any table
         return result.ToResult();
     }
 
@@ -171,5 +191,8 @@ public sealed class DataBatch
         return result;
     }
 
-    private sealed record Item(SqlStatement? Statement, SqlText? Raw, Func<DbDataReader, CancellationToken, ValueTask> Read);
+    private sealed record Item(SqlStatement? Statement, SqlText? Raw, Func<DbDataReader, CancellationToken, ValueTask> Read)
+    {
+        public SqlIntent Intent { get; init; }
+    }
 }

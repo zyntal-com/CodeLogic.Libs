@@ -49,7 +49,7 @@ Guard IMAP access with `HasImap` — reading `Imap` when no `Imap` section is co
 
 ## Sending with MailBuilder
 
-`mail.CreateMessage()` returns a `MailBuilder`. Chain sender, recipients, subject, and bodies, then `Build()` and hand the result to `mail.Smtp.SendAsync`. At least one of `HtmlBody` / `TextBody` is required.
+`mail.CreateMessage()` returns a `MailBuilder`. Chain sender, recipients, subject, and bodies, then `Build()` and hand the result to `mail.Smtp.SendAsync`. At least one of `HtmlBody` / `TextBody` is required. Without `From(...)`, the builder from `CreateMessage()` (and `SendTemplatedAsync`) uses `DefaultFromEmail` / `DefaultFromName` from the configuration; `new MailBuilder()` has no default, and `new MailBuilder(defaultFromEmail, defaultFromName)` takes one explicitly.
 
 ```csharp
 var message = mail.CreateMessage()
@@ -69,7 +69,7 @@ if (result.IsSuccess)
     Console.WriteLine($"Sent, message id: {result.Value!.MessageId}");
 ```
 
-`Build()` throws `InvalidOperationException` when a required field (sender, recipients, subject, or a body) is missing — so call it inside the application flow, not from untrusted input without a try/catch.
+`Build()` throws `InvalidOperationException` when a required field (sender — explicit or default —, recipients, subject, or a body) is missing — so call it inside the application flow, not from untrusted input without a try/catch.
 
 ### The MailBuilder methods
 
@@ -77,18 +77,23 @@ if (result.IsSuccess)
 |--------|--------|
 | `From(email)` / `From(email, displayName)` | Sender address (and optional display name). |
 | `To(email)` / `To(params string[])` | One or more `To` recipients. |
+| `ReplyTo(email)` | A `Reply-To` address (repeatable). |
 | `Cc(...)` / `Bcc(...)` | One or more `Cc` / `Bcc` recipients. |
 | `Subject(string)` | Message subject. |
 | `TextBody(string)` / `HtmlBody(string)` | Plain-text and/or HTML body. |
 | `Body(textBody, htmlBody)` | Both bodies in one call. |
-| `Attach(filePath)` / `Attach(params string[])` | Attach files by path (see below). |
-| `Header(name, value)` | Add a custom MIME header. |
+| `Attach(filePath)` / `Attach(params string[])` | Attach files by fully qualified path (see below). |
+| `Header(name, value)` | Add a custom MIME header (not the sender, recipient, date, id or content headers; see the model below). |
 | `Priority(MailPriority)` | `Low`, `Normal` (default), or `High`. |
 | `Build()` | Produce the immutable `MailMessage`. |
 
 ### Attachments
 
-Attach files by absolute path. Since 5.0 every attachment must exist when `SendAsync` runs: a missing file fails the send with a `NotFoundError` (`MailErrorCodes.AttachmentNotFound`) before anything is sent. (4.x silently dropped missing attachments.)
+Attach files by fully qualified path. Since 5.0 every attachment is checked when `SendAsync` runs, before anything is sent:
+
+- a relative path fails with a `ValidationError` (`MailErrorCodes.InvalidAttachment`); it is not resolved against the working directory;
+- a missing file fails with a `NotFoundError` (`MailErrorCodes.AttachmentNotFound`) (4.x silently dropped missing attachments);
+- with `Smtp.AttachmentBaseDirectory` set, a file outside that directory (after resolving `..`, and the target of a symbolic link) fails with `MailErrorCodes.InvalidAttachment`. Set it whenever attachment paths can be influenced by users.
 
 ```csharp
 var message = mail.CreateMessage()
@@ -137,17 +142,20 @@ public sealed record MailMessage
     public IReadOnlyList<string> To { get; init; }          // required, >= 1
     public IReadOnlyList<string> Cc { get; init; }
     public IReadOnlyList<string> Bcc { get; init; }
+    public IReadOnlyList<string> ReplyTo { get; init; }     // validated like recipients
     public string Subject { get; init; }                    // required
     public string? TextBody { get; init; }                  // >= 1 body required
     public string? HtmlBody { get; init; }
-    public IReadOnlyList<string> Attachments { get; init; } // file paths
-    public IReadOnlyDictionary<string, string> Headers { get; init; } // no CR/LF; not From/To/Subject/Content-*...
+    public IReadOnlyList<string> Attachments { get; init; } // fully qualified file paths
+    public IReadOnlyDictionary<string, string> Headers { get; init; } // no CR/LF/NUL; reserved names refused (below)
     public MailPriority Priority { get; init; }             // default Normal
     public DateTimeOffset CreatedAt { get; init; }
 }
 ```
 
 `MailPriority` is `Low` / `Normal` / `High`; it maps to the standard `X-Priority` / `Importance` headers.
+
+Custom `Headers` cannot set what the service writes itself or what identifies the sender or the message: `From`, `Sender`, `Reply-To` (use `ReplyTo`), `To`, `Cc`, `Bcc`, `Subject`, `Date`, `Message-Id`, `MIME-Version`, `Importance`, `Return-Path`, `Received`, `Content-*` and `Resent-*`. Such a header fails with `MailErrorCodes.InvalidHeader`.
 
 ## Configuration
 
@@ -177,10 +185,11 @@ public sealed record MailMessage
 | `Smtp.Port` | `int` | `587` | SMTP server port. |
 | `Smtp.Username` | `string` | `""` | SMTP username. |
 | `Smtp.Password` | `string` | `""` | SMTP password (use an app password where the provider requires it). |
-| `Smtp.SecurityMode` | `MailSecurityMode` | `StartTls` | `None`, `StartTls` (STARTTLS, port 587), or `SslTls` (implicit TLS, port 465). |
+| `Smtp.SecurityMode` | `MailSecurityMode` | `StartTls` | `None`, `StartTls` (STARTTLS, port 587), or `SslTls` (implicit TLS, port 465). Any other value is a configuration error (no fallback to opportunistic TLS). |
 | `Smtp.TimeoutSeconds` | `int` | `30` | SMTP connect/operation timeout in seconds. |
-| `DefaultFromEmail` | `string?` | `null` | Fallback sender address when a message omits `From`. |
-| `DefaultFromName` | `string?` | `null` | Fallback sender display name. |
+| `Smtp.AttachmentBaseDirectory` | `string?` | `null` | When set (fully qualified), attachments must be files inside it. |
+| `DefaultFromEmail` | `string?` | `null` | Fallback sender address when a message built with `CreateMessage()` / `SendTemplatedAsync` omits `From`. Must be a valid address. |
+| `DefaultFromName` | `string?` | `null` | Fallback sender display name, used with `DefaultFromEmail`. |
 | `TemplateDirectory` | `string` | `templates` | Template folder; relative to the library data dir unless an absolute path is given. |
 
 ### Changing config while running
@@ -192,7 +201,7 @@ Config changes apply live: `config.mail.json` applies live when changed through 
 - **IMAP settings** (added, changed or removed): `mail.Imap` is replaced and the old connection is closed. Re-read `mail.Imap` — don't keep the old instance — and call `StartIdleAsync` again if you were idling.
 - **`enabled`**: can be switched either way.
 
-Other settings (default sender, ...) are read when used and need nothing rebuilt.
+Other settings (default sender, ...) are read when used and need nothing rebuilt. A configuration that fails validation is logged and ignored; the services keep the last valid one.
 
 ## Health check
 
@@ -241,11 +250,13 @@ Every failure is an `Error` whose `Code` is a `MailErrorCodes` constant, and eac
 | `SmtpRejected` | `mail.smtp_rejected` | `ValidationError` (`Details` has the SMTP status) |
 | `SmtpError` | `mail.smtp_error` | `InternalError` |
 | `AttachmentNotFound` | `mail.attachment_not_found` | `NotFoundError` |
+| `InvalidAttachment` (new) | `mail.invalid_attachment` | `ValidationError` |
 | `ImapConfigInvalid` | `mail.imap_config_invalid` | `ValidationError` |
 | `ImapAuthenticationFailed` | `mail.imap_authentication_failed` | `UnauthorizedError` |
 | `ImapTimeout` | `mail.imap_timeout` | `TimeoutError` |
 | `ImapConnectionFailed` (new) | `mail.imap_connection_failed` | `UnavailableError` |
 | `ImapError` | `mail.imap_error` | `InternalError` |
+| `ImapRejected` (new) | `mail.imap_rejected` | `ValidationError` (`Details` has the IMAP response) |
 | `FolderNotFound` | `mail.folder_not_found` | `NotFoundError` |
 | `MessageNotFound` | `mail.message_not_found` | `NotFoundError` |
 | `Cancelled` (new) | `mail.cancelled` | `UnavailableError` |

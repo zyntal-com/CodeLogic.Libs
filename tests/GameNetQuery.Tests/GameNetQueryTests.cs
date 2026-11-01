@@ -421,6 +421,109 @@ public class ValveUdpQueryResultTests
             r.Error?.ToString());
     }
 
+    private static byte[] FullInfoResponse(string name = "Fake Server")
+    {
+        var b = new List<byte>(Header) { 0x49, 17 };
+        foreach (var s in new[] { name, "de_inferno", "csgo", "Counter-Strike 2" })
+        {
+            b.AddRange(Encoding.UTF8.GetBytes(s));
+            b.Add(0);
+        }
+        b.AddRange(BitConverter.GetBytes((short)730));
+        b.AddRange([3, 24, 1]);                       // players, max, bots
+        b.AddRange([(byte)'d', (byte)'l', 0, 1]);     // server type, environment, visibility, VAC
+        b.AddRange(Encoding.UTF8.GetBytes("1.40.2.1\0"));
+        b.Add(0x80 | 0x10 | 0x40 | 0x20 | 0x01);      // EDF: port, SteamID, SourceTV, keywords, game id
+        b.AddRange(BitConverter.GetBytes((short)27015));
+        b.AddRange(BitConverter.GetBytes(90071992547409920L));
+        b.AddRange(BitConverter.GetBytes((short)27020));
+        b.AddRange(Encoding.UTF8.GetBytes("SourceTV\0"));
+        b.AddRange(Encoding.UTF8.GetBytes("secure, competitive,valve_ds\0"));
+        b.AddRange(BitConverter.GetBytes(730L));
+        return [.. b];
+    }
+
+    [Fact]
+    public async Task Version_and_tags_come_from_the_A2S_INFO_tail()
+    {
+        var (server, port) = FakeServer(req => req[4] == 0x54 ? FullInfoResponse() : null);
+        using var _ = server;
+
+        var r = await ValveUdpQuery.QueryAsync("127.0.0.1", port, includePlayers: false, timeoutMs: 2000);
+
+        Assert.True(r.IsSuccess, r.IsFailure ? r.Error!.ToString() : null);
+        Assert.Equal("1.40.2.1", r.Value!.Info.Version);
+        Assert.Equal(["secure", "competitive", "valve_ds"], r.Value.Info.Tags);
+        Assert.Equal(3, r.Value.Info.PlayerCount);
+    }
+
+    [Fact]
+    public async Task A_reply_from_another_endpoint_is_ignored()
+    {
+        // A third party that sees (or guesses) the client's port answers first; only the queried server counts.
+        using var rogue = new System.Net.Sockets.UdpClient(new System.Net.IPEndPoint(System.Net.IPAddress.Loopback, 0));
+        var server = new System.Net.Sockets.UdpClient(new System.Net.IPEndPoint(System.Net.IPAddress.Loopback, 0));
+        using var serverScope = server;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                while (true)
+                {
+                    var req = await server.ReceiveAsync();
+                    var spoof = FullInfoResponse("Spoofed");
+                    await rogue.SendAsync(spoof, spoof.Length, req.RemoteEndPoint);
+                    await Task.Delay(50);
+                    var real = FullInfoResponse();
+                    await server.SendAsync(real, real.Length, req.RemoteEndPoint);
+                }
+            }
+            catch (ObjectDisposedException) { }
+            catch (System.Net.Sockets.SocketException) { }
+        });
+        var port = (ushort)((System.Net.IPEndPoint)server.Client.LocalEndPoint!).Port;
+
+        var r = await ValveUdpQuery.QueryAsync("127.0.0.1", port, includePlayers: false, timeoutMs: 2000);
+
+        Assert.True(r.IsSuccess, r.IsFailure ? r.Error!.ToString() : null);
+        Assert.Equal("Fake Server", r.Value!.Info.Hostname);
+    }
+
+    [Fact]
+    public void Endpoint_match_treats_ipv4_mapped_addresses_as_ipv4()
+    {
+        var expected = new System.Net.IPEndPoint(System.Net.IPAddress.Parse("203.0.113.7"), 27015);
+        Assert.True(ValveUdpQuery.IsFrom(new(System.Net.IPAddress.Parse("::ffff:203.0.113.7"), 27015), expected));
+        Assert.False(ValveUdpQuery.IsFrom(new(System.Net.IPAddress.Parse("203.0.113.8"), 27015), expected));
+        Assert.False(ValveUdpQuery.IsFrom(new(System.Net.IPAddress.Parse("203.0.113.7"), 27016), expected));
+    }
+
+    [Fact]
+    public async Task Unterminated_string_is_a_malformed_response()
+    {
+        byte[] truncated = [.. Header, 0x49, 17, .. Encoding.UTF8.GetBytes("no terminator")];
+        var (server, port) = FakeServer(_ => truncated);
+        using var _ = server;
+
+        var r = await ValveUdpQuery.QueryAsync("127.0.0.1", port, includePlayers: false, timeoutMs: 2000);
+
+        Assert.Equal("gamenetquery.malformed_response", r.Error!.Code);
+    }
+
+    [Fact]
+    public void ReadNullTerminatedString_stays_inside_the_buffer()
+    {
+        byte[] data = [(byte)'a', (byte)'b', 0, (byte)'c'];
+        var index = 0;
+        Assert.Equal("ab", ValveUdpQuery.ReadNullTerminatedString(data, ref index));
+        Assert.Equal(3, index);
+        Assert.Throws<InvalidDataException>(() => ValveUdpQuery.ReadNullTerminatedString(data, ref index));   // "c" has no NUL
+        index = 4;
+        Assert.Throws<InvalidDataException>(() => ValveUdpQuery.ReadNullTerminatedString(data, ref index));   // at the end
+        index = 9;
+        Assert.Throws<InvalidDataException>(() => ValveUdpQuery.ReadNullTerminatedString(data, ref index));   // past the end
+    }
+
     [Fact]
     public async Task Legacy_helpers_still_return_null_and_empty_on_failure()
     {

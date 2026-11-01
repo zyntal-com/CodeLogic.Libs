@@ -48,8 +48,42 @@ public sealed class DdlPerson
     [Column(Size = 64, Unique = true)] public string Handle { get; set; } = "";
 }
 
+[Table(Name = "ddl_hinted")]
+[PostgresTable(Unlogged = true, FillFactor = 70, Tablespace = "fast")]
+[SqlServerTable(FileGroup = "FG1", DataCompression = "page")]
+public sealed class DdlHinted
+{
+    [Column(Primary = true)] public long Id { get; set; }
+}
+
+[Table(Name = "ddl_badhint")]
+[SqlServerTable(DataCompression = "PAGE); DROP TABLE x; --")]
+public sealed class DdlBadHint
+{
+    [Column(Primary = true)] public long Id { get; set; }
+}
+
 public sealed class DdlGoldenTests
 {
+    [Fact]
+    public void Table_hints_shape_create_table()
+    {
+        var map = EntityAccessorRegistry.Get<DdlHinted>().ValueOrThrow().Map;
+        string CreateOn(DataProvider provider) =>
+            provider.Ddl.Generate(new CreateTableChange(SchemaBuilder.FromMap(map, provider, new DataConnectionConfig()).ValueOrThrow()))[0];
+
+        var pg = CreateOn(PostgreSqlDataProvider.Instance);
+        Assert.StartsWith("CREATE UNLOGGED TABLE \"public\".\"ddl_hinted\" (", pg, StringComparison.Ordinal);
+        Assert.EndsWith(") WITH (fillfactor = 70) TABLESPACE \"fast\"", pg, StringComparison.Ordinal);
+        Assert.EndsWith(") ON [FG1] WITH (DATA_COMPRESSION = PAGE)", CreateOn(SqlServerDataProvider.Instance), StringComparison.Ordinal);
+        Assert.DoesNotContain("UNLOGGED", CreateOn(SqliteDataProvider.Instance), StringComparison.Ordinal);
+
+        var bad = EntityAccessorRegistry.Get<DdlBadHint>().ValueOrThrow().Map;
+        var sql = SqlServerDataProvider.Instance.Ddl.Generate(new CreateTableChange(
+            SchemaBuilder.FromMap(bad, SqlServerDataProvider.Instance, new DataConnectionConfig()).ValueOrThrow()))[0];
+        Assert.DoesNotContain("DROP", sql, StringComparison.Ordinal);
+    }
+
     private static TableSchema Desired(DataProvider provider)
     {
         EntityAccessorRegistry.Get<DdlOwner>().ValueOrThrow();
@@ -113,7 +147,14 @@ public sealed class DdlGoldenTests
         Assert.Equal(["DROP TABLE \"t\"", "ALTER TABLE \"t__cl_rebuild\" RENAME TO \"t\""], rebuild.Skip(2));
 
         var renamed = new RenameColumnChange("t", "dbo", "Old", "New");
-        Assert.Equal(["EXEC sp_rename N'dbo.t.Old', N'New', N'COLUMN'"], SqlServerDataProvider.Instance.Ddl.Generate(renamed));
+        Assert.Equal(["EXEC sp_rename N'[dbo].[t].[Old]', N'New', N'COLUMN'"], SqlServerDataProvider.Instance.Ddl.Generate(renamed));
+        Assert.Equal(["EXEC sp_rename N'[o''x].[t]]].[a.b]', N'it''s', N'COLUMN'"],
+            SqlServerDataProvider.Instance.Ddl.Generate(new RenameColumnChange("t]", "o'x", "a.b", "it's")));
+
+        var dropped = SqlServerDataProvider.Instance.Ddl.Generate(new DropColumnChange("t", "dbo", "Old", new TableSchema("t", "dbo", [], [])));
+        Assert.Contains("OBJECT_ID(N'[dbo].[t]')", dropped[0], StringComparison.Ordinal);
+        Assert.EndsWith("IF @df IS NOT NULL BEGIN DECLARE @dropdf nvarchar(max) = N'ALTER TABLE [dbo].[t] DROP CONSTRAINT ' + QUOTENAME(@df); EXEC sp_executesql @dropdf; END", dropped[0], StringComparison.Ordinal);
+        Assert.Equal("ALTER TABLE [dbo].[t] DROP COLUMN [Old]", dropped[1]);
         Assert.Equal(["ALTER TABLE `t` RENAME COLUMN `Old` TO `New`"], MySqlDataProvider.Instance.Ddl.Generate(renamed with { Schema = null }));
     }
 

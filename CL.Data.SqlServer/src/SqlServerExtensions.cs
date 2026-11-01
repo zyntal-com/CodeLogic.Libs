@@ -25,8 +25,9 @@ public readonly struct SqlServerFeatures(Database db)
             return DataErrors.Unsupported($"UPDATE STATISTICS needs SQL Server; this connection uses {db.Provider.Name}.");
         var table = db.Admin.QuotedTable<T>();
         if (table.IsFailure) return table.Error!;
-        // A read (not ExecuteSql): statistics change no rows, so cached results stay valid.
-        var done = await db.SqlReadAsync(SqlText.Raw($"UPDATE STATISTICS {table.Value}{(fullScan ? " WITH FULLSCAN" : "")}"), static _ => 0, ct)
+        // A side effect on the primary (never a replica, never retried once sent); statistics change no rows, so cached results stay valid.
+        var done = await db.SqlReadAsync(SqlText.Raw($"UPDATE STATISTICS {table.Value}{(fullScan ? " WITH FULLSCAN" : "")}"), static _ => 0,
+                SqlIntent.SideEffect, ct)
             .ConfigureAwait(false);
         return done.IsFailure ? done.Error! : Result.Success();
     }

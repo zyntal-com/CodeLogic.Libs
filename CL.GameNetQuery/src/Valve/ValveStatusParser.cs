@@ -90,6 +90,7 @@ public static class ValveStatusParser
             players.Add(new PlayerInfo
             {
                 Name = match.Groups["name"].Value,
+                UserId = int.TryParse(match.Groups["userid"].Value, out var id) ? id : null,
                 UniqueId = uniqueId,
                 Ping = int.TryParse(match.Groups["ping"].Value, out var p) ? p : 0,
                 Loss = int.TryParse(match.Groups["loss"].Value, out var l) ? l : 0,

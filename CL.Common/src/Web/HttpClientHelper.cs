@@ -22,6 +22,20 @@ public static class HttpClientHelper
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase
     };
 
+    /// <summary>
+    /// The most characters of a failed response body copied into <see cref="Error.Message"/>. Bodies can be
+    /// large and may echo request data or secrets, so they are cut to this length.
+    /// </summary>
+    public const int MaxErrorBodyLength = 256;
+
+    private static Error HttpFailure(HttpResponseMessage response, string body)
+    {
+        var excerpt = body.Length <= MaxErrorBodyLength
+            ? body
+            : string.Concat(body.AsSpan(0, MaxErrorBodyLength), $"... ({body.Length} chars)");
+        return Error.Internal(ErrorCode.Internal, $"HTTP {(int)response.StatusCode}: {excerpt}");
+    }
+
     // ── GET ───────────────────────────────────────────────────────────────────
 
     /// <summary>Sends a GET request and returns the response body as a string.</summary>
@@ -34,7 +48,7 @@ public static class HttpClientHelper
             using var response = await client.SendAsync(request);
             var body = await response.Content.ReadAsStringAsync();
             if (!response.IsSuccessStatusCode)
-                return Error.Internal(ErrorCode.Internal, $"HTTP {(int)response.StatusCode}: {body}");
+                return HttpFailure(response, body);
             return body;
         }
         catch (Exception ex) { return Error.Internal(ErrorCode.ConnectionFailed, "GET request failed", ex.Message); }
@@ -72,7 +86,7 @@ public static class HttpClientHelper
             using var response = await client.SendAsync(request);
             var responseBody = await response.Content.ReadAsStringAsync();
             if (!response.IsSuccessStatusCode)
-                return Error.Internal(ErrorCode.Internal, $"HTTP {(int)response.StatusCode}: {responseBody}");
+                return HttpFailure(response, responseBody);
             return responseBody;
         }
         catch (Exception ex) { return Error.Internal(ErrorCode.ConnectionFailed, "POST request failed", ex.Message); }
@@ -110,7 +124,7 @@ public static class HttpClientHelper
             using var response = await client.SendAsync(request);
             var responseBody = await response.Content.ReadAsStringAsync();
             if (!response.IsSuccessStatusCode)
-                return Error.Internal(ErrorCode.Internal, $"HTTP {(int)response.StatusCode}: {responseBody}");
+                return HttpFailure(response, responseBody);
             return responseBody;
         }
         catch (Exception ex) { return Error.Internal(ErrorCode.ConnectionFailed, "PUT request failed", ex.Message); }
@@ -129,7 +143,7 @@ public static class HttpClientHelper
             if (!response.IsSuccessStatusCode)
             {
                 var body = await response.Content.ReadAsStringAsync();
-                return Error.Internal(ErrorCode.Internal, $"HTTP {(int)response.StatusCode}: {body}");
+                return HttpFailure(response, body);
             }
             return Result.Success();
         }
@@ -211,7 +225,7 @@ public static class HttpClientHelper
             using var response = await client.SendAsync(request).ConfigureAwait(false);
             var responseBody = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
-                return Error.Internal(ErrorCode.Internal, $"HTTP {(int)response.StatusCode}: {responseBody}");
+                return HttpFailure(response, responseBody);
             return responseBody;
         }
         catch (Exception ex) { return Error.Internal(ErrorCode.ConnectionFailed, $"{method} request failed", ex.Message); }

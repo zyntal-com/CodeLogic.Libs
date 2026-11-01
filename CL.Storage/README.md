@@ -42,8 +42,9 @@ IStorageService media = storage.GetStorage("media");
 `storage` (the `StorageLibrary`) owns connections, cross-connection transfers, the queue, sync, and
 diagnostics; an `IStorageService` is one connection's file operations. Every connection mounts exactly one
 local root, bucket or container prefix, or remote directory. Paths are relative, slash-separated paths
-below that mount: a leading `/` is ignored, and `..` segments (or a local path that resolves outside the
-root) fail with `storage.invalid_path`.
+below that mount: a leading `/` is ignored, and `..` segments, control characters (NUL, CR, LF and the rest of
+U+0000 to U+001F, U+007F), or a local path that resolves outside the root fail with `storage.invalid_path`. A
+local `RootPath` must be absolute.
 
 Applications that manage connections themselves can skip configuration files entirely with
 `new StorageLibrary(new StorageLibraryOptions { RuntimeOnly = true })` and

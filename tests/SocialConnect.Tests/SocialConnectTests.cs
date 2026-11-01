@@ -197,6 +197,75 @@ public sealed class DiscordWebhookValidationTests
     private static DiscordWebhookService NewService() =>
         new(new DiscordConfig { DefaultWebhookUrl = "https://discord.com/api/webhooks/1/abc" });
 
+    [Theory]
+    [InlineData("https://discord.com/api/webhooks/123456789012345678/abc-DEF_123")]
+    [InlineData("https://discordapp.com/api/webhooks/1/tok")]
+    [InlineData("https://ptb.discord.com/api/webhooks/1/tok")]
+    [InlineData("https://canary.discordapp.com/api/webhooks/1/tok")]
+    [InlineData("https://discord.com/api/v10/webhooks/1/tok?wait=true")]
+    [InlineData("https://DISCORD.com/api/webhooks/1/tok/")]
+    public void Discord_webhook_urls_are_accepted(string url) =>
+        Assert.True(DiscordWebhookService.IsValidWebhookUrl(url));
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("not a url")]
+    [InlineData("http://discord.com/api/webhooks/1/tok")]                 // not https
+    [InlineData("https://discord.com:8443/api/webhooks/1/tok")]           // non-default port
+    [InlineData("https://user:pw@discord.com/api/webhooks/1/tok")]        // user info
+    [InlineData("https://discord.com.evil.example/api/webhooks/1/tok")]   // look-alike host
+    [InlineData("https://evil.discord.com/api/webhooks/1/tok")]           // other subdomain
+    [InlineData("https://169.254.169.254/api/webhooks/1/tok")]            // IP literal
+    [InlineData("https://localhost/api/webhooks/1/tok")]
+    [InlineData("https://discord.com/api/users/@me")]                     // not a webhook path
+    [InlineData("https://discord.com/api/webhooks/abc/tok")]              // non-numeric id
+    [InlineData("https://discord.com/api/webhooks/1/tok/slack")]          // extra segment
+    [InlineData("https://discord.com/api/webhooks/1/../../users/tok")]
+    [InlineData("https://discord.com/api/webhooks/1/tok#frag")]
+    [InlineData("file:///etc/passwd")]
+    public void Other_urls_are_refused(string? url) =>
+        Assert.False(DiscordWebhookService.IsValidWebhookUrl(url));
+
+    [Fact]
+    public async Task Send_to_a_non_discord_url_fails_before_any_request()
+    {
+        using var service = NewService();
+        var result = await service.SendMessageAsync("hi", "http://127.0.0.1:1/api/webhooks/1/tok");
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("social.discord.invalid_url", result.Error!.Code);
+    }
+
+    [Theory]
+    [InlineData("https://discord.com/api/webhooks/42/secret-token", "https://discord.com/api/webhooks/42/***")]
+    [InlineData("https://discord.com/api/v10/webhooks/42/secret?wait=true", "https://discord.com/api/v10/webhooks/42/***")]
+    [InlineData("https://example.com/hook/secret", "***")]
+    public void Redacted_url_never_contains_the_token(string url, string expected)
+    {
+        var redacted = DiscordWebhookService.RedactWebhookUrl(url);
+        Assert.Equal(expected, redacted);
+        Assert.DoesNotContain("secret", redacted);
+    }
+
+    [Fact]
+    public void Config_with_a_non_discord_default_webhook_is_invalid()
+    {
+        var config = new SocialConnectConfig { Discord = { DefaultWebhookUrl = "https://example.com/hook" } };
+        Assert.False(config.Validate().IsValid);
+    }
+
+    [Fact]
+    public void Steam_sign_in_alone_needs_no_api_key()
+    {
+        var config = new SocialConnectConfig { Steam = { Enabled = true, OpenIdEnabled = true } };
+        Assert.True(config.Validate().IsValid);
+
+        config.Steam.AuthEnabled = true;
+        config.Steam.AppId = "480";
+        Assert.False(config.Validate().IsValid);   // ticket auth needs the key
+    }
+
     [Fact]
     public async Task SendMessage_fails_when_content_exceeds_2000_chars()
     {
@@ -221,6 +290,42 @@ public sealed class DiscordWebhookValidationTests
         var result = await service.SendEmbedAsync(embeds);
 
         Assert.True(result.IsFailure);
+    }
+}
+
+// ── Steam ID validation (offline — refused before any request) ─────────────────────
+
+public sealed class SteamIdValidationTests
+{
+    [Theory]
+    [InlineData("76561197960435530", true)]
+    [InlineData("76561198012345678", true)]
+    [InlineData("7656119796043553", false)]       // 16 digits
+    [InlineData("765611979604355300", false)]     // 18 digits
+    [InlineData("12345678901234567", false)]      // wrong prefix
+    [InlineData("7656119796043553x", false)]
+    [InlineData("\uFF17\uFF16\uFF15\uFF16\uFF11\uFF11\uFF19\uFF17\uFF19\uFF16\uFF10\uFF14\uFF13\uFF15\uFF15\uFF13\uFF10", false)] // full-width digits
+    [InlineData("", false)]
+    [InlineData(null, false)]
+    public void IsSteamId64(string? value, bool expected) => Assert.Equal(expected, SteamIds.IsSteamId64(value));
+
+    [Theory]
+    [InlineData("76561197960435530&key=attacker")]
+    [InlineData("76561197960435530,76561197960435531")]
+    [InlineData("../../ISteamUser")]
+    [InlineData(" ")]
+    public async Task Profile_reads_refuse_a_malformed_steamid(string steamId)
+    {
+        using var service = new CL.SocialConnect.Services.Steam.SteamProfileService(
+            new SteamConfig { ApiKey = "k", ApiBaseUrl = "http://127.0.0.1:1" });
+
+        var player = await service.GetPlayerAsync(steamId);
+        var bans = await service.GetPlayerBansAsync(steamId);
+        var games = await service.GetOwnedGamesAsync(steamId);
+
+        Assert.Equal("social.steam.invalid_steamid", player.Error!.Code);
+        Assert.Equal("social.steam.invalid_steamid", bans.Error!.Code);
+        Assert.Equal("social.steam.invalid_steamid", games.Error!.Code);
     }
 }
 

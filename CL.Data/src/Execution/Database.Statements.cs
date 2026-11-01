@@ -295,17 +295,36 @@ public sealed partial class Database
         foreach (var parameter in context.Spec.Parameters)
         {
             sb.Append('\u0001');
-            switch (parameter.BoxedValue)
-            {
-                case null: sb.Append('\u0002'); break;
-                case byte[] bytes: sb.Append("b:").Append(Convert.ToBase64String(bytes)); break;
-                case DateTimeOffset dto: sb.Append("o:").Append(dto.ToString("O", System.Globalization.CultureInfo.InvariantCulture)); break;
-                case DateTime dt: sb.Append("d:").Append(dt.ToString("O", System.Globalization.CultureInfo.InvariantCulture)); break;
-                case IFormattable f: sb.Append(parameter.BoxedValue.GetType().Name).Append(':').Append(f.ToString(null, System.Globalization.CultureInfo.InvariantCulture)); break;
-                case var other: sb.Append(other.GetType().Name).Append(':').Append(other); break;
-            }
+            AppendKeyValue(sb, parameter.BoxedValue, 0);
         }
         return CL.Common.Hashing.FastHash.XxHash128(sb.ToString().AsSpan());
+    }
+
+    /// <summary>
+    /// Writes <paramref name="value"/> into a cache key. Arrays and other sequences (PostgreSQL <c>= ANY(@p)</c>, table-valued
+    /// parameters) are written element by element, so two calls with different elements never share a cached result.
+    /// </summary>
+    internal static void AppendKeyValue(System.Text.StringBuilder sb, object? value, int depth)
+    {
+        switch (value)
+        {
+            case null or DBNull: sb.Append('\u0002'); break;
+            case byte[] bytes: sb.Append("b:").Append(Convert.ToBase64String(bytes)); break;
+            case string text: sb.Append("s:").Append(text.Length).Append(':').Append(text); break;
+            case DateTimeOffset dto: sb.Append("o:").Append(dto.ToString("O", System.Globalization.CultureInfo.InvariantCulture)); break;
+            case DateTime dt: sb.Append("d:").Append(dt.ToString("O", System.Globalization.CultureInfo.InvariantCulture)); break;
+            case IFormattable f: sb.Append(value.GetType().Name).Append(':').Append(f.ToString(null, System.Globalization.CultureInfo.InvariantCulture)); break;
+            case System.Collections.IEnumerable items when depth < 4:
+                sb.Append(value.GetType().Name).Append('[');
+                foreach (var item in items)
+                {
+                    AppendKeyValue(sb, item, depth + 1);
+                    sb.Append('\u0003');
+                }
+                sb.Append(']');
+                break;
+            default: sb.Append(value.GetType().FullName).Append(':').Append(value); break;
+        }
     }
 
     /// <summary>Tags of a cached result: one per table read, plus the connection-wide tag.</summary>

@@ -74,6 +74,44 @@ public abstract class BackupConformance(ProviderFixture fixture) : ConformanceSu
     }
 
     [SkippableFact]
+    public async Task Restore_refuses_a_tampered_manifest_before_touching_any_table()
+    {
+        RequireProvider();
+        await FreshTablesAsync();
+        (await Db.Repository<SchemaParent>().InsertAsync(new SchemaParent { Code = "T", Region = "eu", Ref = Guid.NewGuid(), Seen = DateTimeOffset.UtcNow })).ValueOrThrow();
+        var directory = TempDirectory();
+        try
+        {
+            (await Db.Backup.BackupAsync(directory, ["sch_parent"])).ValueOrThrow();
+            var path = Path.Combine(directory, DataBackup.ManifestFile);
+            var original = File.ReadAllText(path);
+
+            async Task RefusedAsync(Action<System.Text.Json.Nodes.JsonNode> tamper)
+            {
+                var manifest = System.Text.Json.Nodes.JsonNode.Parse(original)!;
+                tamper(manifest["tables"]![0]!);
+                File.WriteAllText(path, manifest.ToJsonString());
+                var restored = await Db.Backup.RestoreAsync(directory);
+                Assert.Equal(DataErrors.ValidationCode, restored.Error!.Code);
+                Assert.Equal(1L, (await Db.Query<SchemaParent>().CountAsync()).ValueOrThrow());   // nothing was dropped
+            }
+
+            var injected = "0); DROP TABLE " + Db.Provider.Dialect.QuoteIdentifier("sch_child") + "; --";
+            await RefusedAsync(t => t["definition"]!["columns"]![1]!["storeType"] = "integer " + injected);
+            await RefusedAsync(t => t["definition"]!["columns"]![1]!["defaultSql"] = injected);
+            await RefusedAsync(t => t["definition"]!["columns"]![1]!["defaultSql"] = "(SELECT 1)");
+            await RefusedAsync(t => t["definition"]!["columns"]![1]!["collation"] = "x " + injected);
+            await RefusedAsync(t => t["definition"]!["options"] = new System.Text.Json.Nodes.JsonObject { ["engine"] = "InnoDB " + injected });
+            await RefusedAsync(t => t["file"] = Path.Combine("..", "elsewhere.jsonl"));
+            Assert.NotNull((await Db.Provider.Introspector!.ReadTableAsync(Db, "sch_child")).ValueOrThrow());
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [SkippableFact]
     public async Task Snapshots_are_sqlite_only()
     {
         RequireProvider();

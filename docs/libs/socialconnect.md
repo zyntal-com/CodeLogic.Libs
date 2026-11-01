@@ -27,15 +27,16 @@ await CodeLogic.StartAsync();
 var social = Libraries.Get<SocialConnectLibrary>();
 ```
 
-## The three services
+## The four services
 
-The library surfaces three services. Each property throws `InvalidOperationException` if accessed while its service is disabled or uninitialized, so pair every access with the matching `Has*` guard when the service might be off.
+The library surfaces four services. Each property throws `InvalidOperationException` if accessed while its service is disabled or uninitialized, so pair every access with the matching `Has*` guard when the service might be off.
 
 | Property | Type | Guard | Default state |
 |----------|------|-------|---------------|
 | `Discord` | `DiscordWebhookService` | `HasDiscord` | enabled |
 | `Steam` | `SteamProfileService` | `HasSteam` | **disabled** |
 | `Auth` | `SteamAuthenticationService` | `HasSteamAuth` | **disabled** |
+| `OpenId` | `SteamOpenIdService` | `HasSteamOpenId` | on while Steam is enabled |
 
 ```csharp
 if (social.HasDiscord)
@@ -52,6 +53,8 @@ Discord webhook methods return a plain `Result` (no value — they either delive
 ## Discord webhooks
 
 `DiscordWebhookService` posts to Discord webhook URLs. Every method accepts an optional `webhookUrl`; when omitted it falls back to `Discord.DefaultWebhookUrl` from config. The configured `DefaultUsername` and `DefaultAvatarUrl` are applied automatically unless the message overrides them.
+
+Only Discord webhook URLs are accepted, so a URL that reaches the service from user input cannot point the server at another host (SSRF). `DiscordWebhookService.IsValidWebhookUrl(url)` is the check: `https` on the default port, no user info or fragment, host `discord.com` or `discordapp.com` (or their `ptb.` / `canary.` subdomains), and path `/api/webhooks/{id}/{token}` or `/api/v{n}/webhooks/{id}/{token}`; a query such as `?wait=true` or `?thread_id=…` is allowed. Any other URL fails with `ValidationError` `social.discord.invalid_url` before a request is made, and a `Discord.DefaultWebhookUrl` that fails the check is a configuration error. Redirects are not followed. Logs and events only ever carry the redacted URL (`DiscordWebhookService.RedactWebhookUrl`, e.g. `https://discord.com/api/webhooks/123/***`).
 
 ### Plain text
 
@@ -78,7 +81,7 @@ var embed = new DiscordEmbed
     Color       = 0x2ECC71,   // decimal int colour (green)
 };
 
-Result r = await social.Discord.SendEmbedAsync(new[] { embed });
+Result r = await social.Discord.SendEmbedAsync([embed]);
 ```
 
 ### Full payload
@@ -93,7 +96,7 @@ var message = new DiscordWebhookMessage
     AvatarUrl        = "https://example.com/bot.png",
     Tts              = false,
     AllowedMentions  = DiscordAllowedMentions.None,   // suppress all pings
-    Embeds           = new[] { embed },
+    Embeds           = [embed],
 };
 
 Result r = await social.Discord.SendAsync(message);
@@ -104,67 +107,69 @@ All three methods publish a `WebhookSentEvent` after the request completes.
 ### Discord model reference
 
 ```csharp
-public sealed class DiscordWebhookMessage
+public class DiscordWebhookMessage
 {
     public string? Content { get; set; }
     public string? Username { get; set; }
     public string? AvatarUrl { get; set; }
     public bool Tts { get; set; } = false;
-    public IEnumerable<DiscordEmbed>? Embeds { get; set; }
+    public List<DiscordEmbed>? Embeds { get; set; }
     public DiscordAllowedMentions? AllowedMentions { get; set; }
 }
 
-public sealed class DiscordAllowedMentions
+public class DiscordAllowedMentions
 {
-    public IEnumerable<string>? Parse { get; set; }   // "roles" | "users" | "everyone"
-    public IEnumerable<string>? Roles { get; set; }
-    public IEnumerable<string>? Users { get; set; }
+    public List<string>? Parse { get; set; }   // "roles" | "users" | "everyone"
+    public List<string>? Roles { get; set; }
+    public List<string>? Users { get; set; }
 
     public static DiscordAllowedMentions None { get; }   // ping nobody
     public static DiscordAllowedMentions All  { get; }   // allow all mentions
 }
 
-public sealed class DiscordEmbed
+public class DiscordEmbed
 {
     public string? Title { get; set; }
     public string? Description { get; set; }
     public string? Url { get; set; }
     public int? Color { get; set; }                 // decimal int, e.g. 0xFF0000 (red)
-    public DateTimeOffset? Timestamp { get; set; }
+    public DateTime? Timestamp { get; set; }        // use UTC
     public DiscordEmbedFooter? Footer { get; set; }
     public DiscordEmbedImage? Image { get; set; }
     public DiscordEmbedImage? Thumbnail { get; set; }
     public DiscordEmbedAuthor? Author { get; set; }
-    public IEnumerable<DiscordEmbedField>? Fields { get; set; }
+    public List<DiscordEmbedField>? Fields { get; set; }
 }
 
-public sealed class DiscordEmbedField
+public class DiscordEmbedField
 {
-    public string Name { get; set; }    // required
-    public string Value { get; set; }   // required
+    public required string Name { get; set; }
+    public required string Value { get; set; }
     public bool Inline { get; set; } = false;
 }
 
-public sealed class DiscordEmbedImage
+public class DiscordEmbedImage
 {
-    public string Url { get; set; }     // required
+    public required string Url { get; set; }
     public int? Width { get; set; }
     public int? Height { get; set; }
 }
 
-public sealed class DiscordEmbedAuthor
+public class DiscordEmbedAuthor
 {
-    public string Name { get; set; }    // required
+    public required string Name { get; set; }
     public string? Url { get; set; }
     public string? IconUrl { get; set; }
 }
 
-public sealed class DiscordEmbedFooter
+public class DiscordEmbedFooter
 {
-    public string Text { get; set; }    // required
+    public required string Text { get; set; }
     public string? IconUrl { get; set; }
 }
 ```
+
+`DiscordUser` and `DiscordOAuthToken` are data models only, for applications that run the Discord OAuth2 flow themselves and deserialize the `/oauth2/token` and `/users/@me` responses. The library does not implement Discord OAuth2.
 
 > Embed `Color` is a **decimal integer**, not a CSS hex string. The hex literal `0xFF0000` is the cleanest way to write it in C#.
 
@@ -177,28 +182,30 @@ var embed = new DiscordEmbed
     Description = "Nightly maintenance complete.",
     Url         = "https://status.example.com",
     Color       = 0x5865F2,                       // Discord blurple
-    Timestamp   = DateTimeOffset.UtcNow,
+    Timestamp   = DateTime.UtcNow,
     Author      = new DiscordEmbedAuthor
     {
         Name    = "Ops",
         IconUrl = "https://example.com/ops.png",
     },
     Thumbnail   = new DiscordEmbedImage { Url = "https://example.com/icon.png" },
-    Fields      = new[]
-    {
+    Fields      =
+    [
         new DiscordEmbedField { Name = "Region",  Value = "eu-west", Inline = true },
         new DiscordEmbedField { Name = "Uptime",  Value = "99.98%",  Inline = true },
         new DiscordEmbedField { Name = "Notes",   Value = "No incidents." },
-    },
+    ],
     Footer      = new DiscordEmbedFooter { Text = "Reported automatically" },
 };
 
-await social.Discord.SendEmbedAsync(new[] { embed }, content: "📣 Status update");
+await social.Discord.SendEmbedAsync([embed], content: "📣 Status update");
 ```
 
 ## Steam profiles
 
-`SteamProfileService` reads the Steam Web API. It requires `Steam.Enabled = true` and a valid `Steam.ApiKey`. Results are cached for `CacheTtlSeconds` (see [Caching](#caching)).
+`SteamProfileService` reads the Steam Web API. It requires `Steam.Enabled = true` and a `Steam.ApiKey`; without the key only Steam sign-in is available and `HasSteam` is `false`. Results are cached for `CacheTtlSeconds` (see [Caching](#caching)).
+
+Every method takes a SteamID64 of an individual account (17 digits starting `7656119`, the form Steam sign-in returns; `SteamIds.IsSteamId64` is the check). Anything else fails with `ValidationError` `social.steam.invalid_steamid` before a request is made, and the API key and Steam ID are URL-escaped in the request.
 
 ### Players
 
@@ -243,24 +250,24 @@ Each profile read publishes a `SteamProfileFetchedEvent` carrying a `FromCache` 
 ### Steam model reference
 
 ```csharp
-public sealed class SteamPlayer
+public class SteamPlayer
 {
-    public string SteamId { get; }
-    public int CommunityVisibilityState { get; }   // 3 = public
-    public int ProfileState { get; }
-    public string PersonaName { get; }
-    public string ProfileUrl { get; }
-    public string Avatar { get; }          // 32px
-    public string AvatarMedium { get; }    // 64px
-    public string AvatarFull { get; }      // 184px
-    public int PersonaState { get; }       // 0=Offline, 1=Online … 6=LookingToPlay
-    public string? RealName { get; }
-    public string? PrimaryClanId { get; }
-    public long? TimeCreated { get; }       // unix seconds
-    public string? GameId { get; }
-    public string? GameExtraInfo { get; }
-    public string? LocCountryCode { get; }
-    public string? LocStateCode { get; }
+    public string SteamId { get; set; }
+    public int CommunityVisibilityState { get; set; }   // 3 = public
+    public int ProfileState { get; set; }
+    public string PersonaName { get; set; }
+    public string ProfileUrl { get; set; }
+    public string Avatar { get; set; }          // 32px
+    public string AvatarMedium { get; set; }    // 64px
+    public string AvatarFull { get; set; }      // 184px
+    public int PersonaState { get; set; }       // 0=Offline, 1=Online … 6=LookingToPlay
+    public string? RealName { get; set; }
+    public string? PrimaryClanId { get; set; }
+    public long? TimeCreated { get; set; }       // unix seconds
+    public string? GameId { get; set; }
+    public string? GameExtraInfo { get; set; }
+    public string? LocCountryCode { get; set; }
+    public string? LocStateCode { get; set; }
 
     // Computed
     public bool IsPublic { get; }            // CommunityVisibilityState == 3
@@ -268,28 +275,28 @@ public sealed class SteamPlayer
     public DateTime? AccountCreated { get; } // from TimeCreated
 }
 
-public sealed class SteamPlayerBans
+public class SteamPlayerBans
 {
-    public string SteamId { get; }
-    public bool CommunityBanned { get; }
-    public bool VacBanned { get; }
-    public int NumberOfVacBans { get; }
-    public int DaysSinceLastBan { get; }
-    public int NumberOfGameBans { get; }
-    public string EconomyBan { get; }       // "none" | "probation" | "banned"
+    public string SteamId { get; set; }
+    public bool CommunityBanned { get; set; }
+    public bool VacBanned { get; set; }
+    public int NumberOfVacBans { get; set; }
+    public int DaysSinceLastBan { get; set; }
+    public int NumberOfGameBans { get; set; }
+    public string EconomyBan { get; set; }       // "none" | "probation" | "banned"
 
     // Computed
     public bool HasAnyBan { get; }
 }
 
-public sealed class SteamGame
+public class SteamGame
 {
-    public int AppId { get; }
-    public string? Name { get; }            // requires includeAppInfo
-    public int PlaytimeForever { get; }     // minutes
-    public int? Playtime2Weeks { get; }     // minutes
-    public string? ImgIconUrl { get; }
-    public long? RtimeLastPlayed { get; }   // unix seconds
+    public int AppId { get; set; }
+    public string? Name { get; set; }            // requires includeAppInfo
+    public int PlaytimeForever { get; set; }     // minutes
+    public int? Playtime2Weeks { get; set; }     // minutes
+    public string? ImgIconUrl { get; set; }
+    public long? RtimeLastPlayed { get; set; }   // unix seconds
 
     // Computed
     public TimeSpan TotalPlaytime { get; }       // from PlaytimeForever
@@ -301,7 +308,7 @@ public sealed class SteamGame
 
 ## Steam authentication
 
-`SteamAuthenticationService` validates a Steam session ticket — typically used by a game server to confirm a connecting client's identity. It requires `Steam.AuthEnabled = true` and a configured `Steam.AppId`.
+`SteamAuthenticationService` validates a Steam session ticket — typically used by a game server to confirm a connecting client's identity. It requires `Steam.AuthEnabled = true`, a configured `Steam.AppId` and a `Steam.ApiKey`.
 
 `AuthenticateAsync(ticket, appId?)` validates the hex-encoded ticket; the optional `appId` overrides `Steam.AppId` for that call. It returns `Result<SteamTicketIdentity>`: success always means Steam accepted the ticket.
 
@@ -389,10 +396,10 @@ Each verification publishes a `SteamOpenIdVerifiedEvent`.
 ```csharp
 public sealed class SteamOpenIdResult
 {
-    public string SteamId { get; }    // "76561197960435530"
-    public string ClaimedId { get; }  // "https://steamcommunity.com/openid/id/76561197960435530"
-    public string ResponseNonce { get; }       // "2026-10-31T12:00:00Z…", unique per assertion
-    public DateTime NonceIssuedAtUtc { get; }  // the nonce's timestamp
+    public required string SteamId { get; init; }    // "76561197960435530"
+    public required string ClaimedId { get; init; }  // "https://steamcommunity.com/openid/id/76561197960435530"
+    public required string ResponseNonce { get; init; }       // "2026-10-31T12:00:00Z…", unique per assertion
+    public required DateTime NonceIssuedAtUtc { get; init; }  // the nonce's timestamp
 }
 ```
 
@@ -436,13 +443,13 @@ The library writes `config.socialconnect.json` (section `socialconnect`) with de
 |---------|------|---------|-------------|
 | `Enabled` | `bool` | `true` | Master switch for the whole library. |
 | `Discord.Enabled` | `bool` | `true` | Create the Discord webhook service. |
-| `Discord.DefaultWebhookUrl` | `string` | `""` | Webhook used when a call omits `webhookUrl`. Secret. |
+| `Discord.DefaultWebhookUrl` | `string` | `""` | Webhook used when a call omits `webhookUrl`. Secret. Must be a Discord webhook URL (see above). |
 | `Discord.TimeoutSeconds` | `int` | `10` | HTTP timeout for Discord requests (1–120). |
 | `Discord.DefaultUsername` | `string` | `""` | Default sender name applied to outgoing messages. |
 | `Discord.DefaultAvatarUrl` | `string` | `""` | Default sender avatar applied to outgoing messages. |
-| `Steam.Enabled` | `bool` | `false` | Create the Steam profile service. Requires `ApiKey`. |
+| `Steam.Enabled` | `bool` | `false` | Turn the Steam services on. The profile service needs `ApiKey`; sign-in alone does not. |
 | `Steam.ApiKey` | `string` | `""` | Steam Web API key (secret). Get one at [steamcommunity.com/dev/apikey](https://steamcommunity.com/dev/apikey). |
-| `Steam.AuthEnabled` | `bool` | `false` | Create the Steam auth service. Requires `AppId`. |
+| `Steam.AuthEnabled` | `bool` | `false` | Create the Steam auth service. Requires `AppId` and `ApiKey`. |
 | `Steam.AppId` | `string` | `""` | Your game's Steam App ID (used by ticket auth). |
 | `Steam.OpenIdEnabled` | `bool` | `true` | Create the Steam sign-in (OpenID) service while Steam is enabled. OpenID itself needs no key. |
 | `Steam.OpenIdNonceMaxAgeSeconds` | `int` | `300` | Oldest sign-in assertion accepted, by its `response_nonce` timestamp. `0` = no age limit; negative is a config error. |
@@ -450,7 +457,7 @@ The library writes `config.socialconnect.json` (section `socialconnect`) with de
 | `Steam.TimeoutSeconds` | `int` | `15` | HTTP timeout for Steam requests (1–120). |
 | `Steam.ApiBaseUrl` | `string` | `https://api.steampowered.com` | Steam Web API base URL. |
 
-**Validation** — `Steam.Enabled` requires a non-empty `ApiKey`; `Steam.AuthEnabled` requires a non-empty `AppId`; `CacheTtlSeconds` must be greater than 0. Steam (and Steam auth) are disabled by default.
+**Validation** — `Steam.Enabled` requires a non-empty `ApiKey` unless `OpenIdEnabled` is on (sign-in only: no profile service); `Steam.AuthEnabled` requires a non-empty `AppId` and `ApiKey`; `CacheTtlSeconds` must be greater than 0; a non-empty `Discord.DefaultWebhookUrl` must be a Discord webhook URL. Steam (and Steam auth) are disabled by default.
 
 ### Changing config while running
 
@@ -460,7 +467,7 @@ Config changes apply live: `config.socialconnect.json` applies live when changed
 - **Steam settings**: `social.Steam`, `social.Auth` and `social.OpenId` are replaced; the profile cache starts empty.
 - **Enabled flags**: each service, and the whole library, can be switched on or off.
 
-A replaced service is disposed only after its request timeout, so requests already running on it finish. Read `social.Discord` / `social.Steam` / `social.Auth` / `social.OpenId` when you use them rather than keeping an old instance.
+A replaced service is disposed only after its request timeout, so requests already running on it finish. Read `social.Discord` / `social.Steam` / `social.Auth` / `social.OpenId` when you use them rather than keeping an old instance. A configuration that fails validation is logged and ignored; the services keep running on the last valid one.
 
 ## Events
 
@@ -468,7 +475,7 @@ All events implement `IEvent` and are published to the CodeLogic event bus.
 
 | Event | Published when | Payload |
 |-------|----------------|---------|
-| `WebhookSentEvent` | A Discord webhook request completes. | `WebhookUrl`, `Success`, `SentAt`, `StatusCode?`, `ErrorMessage?` |
+| `WebhookSentEvent` | A Discord webhook request completes. | `WebhookUrl` (token redacted: `…/webhooks/{id}/***`), `WebhookId`, `Success`, `SentAt`, `StatusCode?`, `ErrorMessage?` |
 | `SteamProfileFetchedEvent` | A Steam profile/bans/games read completes. | `SteamId`, `FetchedAt`, `FromCache` (default `false`) |
 | `SteamAuthenticatedEvent` | A ticket authentication completes. | `SteamId`, `Success`, `AuthenticatedAt`, `AppId?`, `ErrorMessage?` |
 | `SteamOpenIdVerifiedEvent` | A Steam sign-in callback is verified or refused. | `SteamId`, `Success`, `VerifiedAt`, `ErrorMessage?` |

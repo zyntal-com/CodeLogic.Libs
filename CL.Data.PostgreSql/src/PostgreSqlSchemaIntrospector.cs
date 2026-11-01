@@ -1,5 +1,6 @@
 using CL.Data.Execution;
 using CL.Data.Schema;
+using CL.Data.Sql;
 using CodeLogic.Core.Results;
 
 namespace CL.Data.PostgreSql;
@@ -23,7 +24,7 @@ public sealed class PostgreSqlSchemaIntrospector : SchemaIntrospector
                 var identity = Text(r, 4) is "a" or "d" || (defaultSql?.StartsWith("nextval(", StringComparison.Ordinal) ?? false);
                 return new ColumnSchema(Text(r, 0)!, db.Provider.NormalizeStoreType(Text(r, 1)!), Number(r, 2) != 0, identity,
                     identity ? null : defaultSql) { Comment = Text(r, 5) };
-            }, ct).ConfigureAwait(false);
+            }, SqlIntent.ReadPrimary, ct).ConfigureAwait(false);
         if (columns.IsFailure) return columns.Error!;
         if (columns.Value!.Count == 0) return (TableSchema?)null;
 
@@ -35,7 +36,7 @@ public sealed class PostgreSqlSchemaIntrospector : SchemaIntrospector
             $"JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum " +
             $"WHERE n.nspname = {ns} AND t.relname = {table} ORDER BY i.relname, k.ord",
             r => (Primary: Number(r, 2) != 0,
-                Row: new IndexColumnRow(Text(r, 0)!, Number(r, 1) != 0, (int)Number(r, 3), Text(r, 4)!, Number(r, 5) != 0, Number(r, 6) != 0)), ct).ConfigureAwait(false);
+                Row: new IndexColumnRow(Text(r, 0)!, Number(r, 1) != 0, (int)Number(r, 3), Text(r, 4)!, Number(r, 5) != 0, Number(r, 6) != 0)), SqlIntent.ReadPrimary, ct).ConfigureAwait(false);
         if (indexes.IsFailure) return indexes.Error!;
 
         var foreignKeys = await db.SqlReadAsync(
@@ -47,12 +48,12 @@ public sealed class PostgreSqlSchemaIntrospector : SchemaIntrospector
             $"JOIN pg_attribute ra ON ra.attrelid = con.confrelid AND ra.attnum = k.refcol " +
             $"WHERE con.contype = 'f' AND n.nspname = {ns} AND t.relname = {table}",
             r => new ForeignKeyColumnRow(Text(r, 0)!, (int)Number(r, 1), Text(r, 2)!, Text(r, 3)!, Text(r, 4), Text(r, 5)!,
-                Action(Text(r, 6)), Action(Text(r, 7))), ct).ConfigureAwait(false);
+                Action(Text(r, 6)), Action(Text(r, 7))), SqlIntent.ReadPrimary, ct).ConfigureAwait(false);
         if (foreignKeys.IsFailure) return foreignKeys.Error!;
 
         var comment = await db.SqlScalarAsync<string>(
             $"SELECT obj_description(c.oid, 'pg_class') FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = {ns} AND c.relname = {table}",
-            ct).ConfigureAwait(false);
+            SqlIntent.ReadPrimary, ct).ConfigureAwait(false);
         if (comment.IsFailure) return comment.Error!;
 
         return new TableSchema(table, ns, columns.Value!,
@@ -68,7 +69,7 @@ public sealed class PostgreSqlSchemaIntrospector : SchemaIntrospector
     public override async ValueTask<Result<IReadOnlyList<string>>> ListTablesAsync(Database db, string? schema = null, CancellationToken ct = default)
     {
         var ns = SchemaOf(db, schema) ?? "public";
-        var tables = await db.SqlQueryAsync<string>($"SELECT tablename::text FROM pg_tables WHERE schemaname = {ns} ORDER BY tablename", ct).ConfigureAwait(false);
+        var tables = await db.SqlQueryAsync<string>($"SELECT tablename::text FROM pg_tables WHERE schemaname = {ns} ORDER BY tablename", SqlIntent.ReadPrimary, ct).ConfigureAwait(false);
         return tables.IsFailure ? tables.Error! : tables.Value!;
     }
 

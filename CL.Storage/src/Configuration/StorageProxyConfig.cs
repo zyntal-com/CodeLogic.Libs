@@ -1,4 +1,5 @@
 using System.Net;
+using CodeLogic.Core.Configuration;
 
 namespace CL.Storage.Configuration;
 
@@ -35,6 +36,7 @@ public sealed class StorageProxyConfig
     public string? Username { get; set; }
 
     /// <summary>Gets or sets the optional proxy password.</summary>
+    [ConfigField(Label = "Proxy password", Secret = true, InputType = ConfigInputType.Password)]
     public string? Password { get; set; }
 
     internal bool Enabled => Type != StorageProxyType.None;

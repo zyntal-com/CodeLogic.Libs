@@ -48,7 +48,10 @@ public enum StorageFeature : ulong
     Checksums = 1UL << 19,
     /// <summary>Large uploads are split into bounded provider multipart requests.</summary>
     MultipartUpload = 1UL << 20,
-    /// <summary>The provider supports resumable or chunked uploads.</summary>
+    /// <summary>
+    /// Reserved for a provider-native resumable upload session. No built-in provider reports it: the library resumes
+    /// staged writes through <see cref="Append"/> (<c>ConflictPolicy.Resume</c>), so check that flag instead.
+    /// </summary>
     ResumableUpload = 1UL << 21,
     /// <summary>Temporary signed read URLs can be generated.</summary>
     SignedReadUrls = 1UL << 22,

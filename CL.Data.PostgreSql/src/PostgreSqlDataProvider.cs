@@ -65,6 +65,9 @@ public sealed class PostgreSqlDataProvider : DataProvider
     public override string? GetColumnCollation(ColumnMap column) => column.Hint<PostgresColumnAttribute>()?.Collation;
 
     /// <inheritdoc />
+    public override IReadOnlyDictionary<string, string> TableOptions(EntityMap map, DataConnectionConfig config) => PostgreSqlTableOptions.For(map);
+
+    /// <inheritdoc />
     public override IErrorClassifier Errors { get; } = new PostgreSqlErrorClassifier();
 
     /// <inheritdoc />

@@ -38,8 +38,8 @@ if (check.IsValid) { /* grant access */ }
 ## Features
 
 - **Secret generation** — cryptographically random Base32 TOTP secrets (`GenerateSecretKey`).
-- **Provisioning** — `GenerateNewKey(issuer, user)` returns a `TwoFactorKey` with a standard `otpauth://` `ProvisioningUri` that carries the configured `period`.
-- **Generate & validate** — `GenerateTotpCode` / `ValidateTotp` with a configurable time step and drift window; validation returns a `TotpValidationResult` with the matched absolute time step (`MatchedWindow`, a `long`, for replay tracking) and the drift in steps (`WindowOffset`).
+- **Provisioning** — `GenerateNewKey(issuer, user)` returns a `TwoFactorKey` with a standard `otpauth://` `ProvisioningUri` that carries the configured `period`; issuer, user and secret are percent-encoded.
+- **Generate & validate** — `GenerateTotpCode` / `ValidateTotp` with a configurable time step and drift window; validation returns a `TotpValidationResult` with the matched absolute time step (`MatchedWindow`, a `long`, for replay tracking) and the drift in steps (`WindowOffset`). Errors are logged; `ErrorMessage` is generic and never exception text.
 - **Lifetime helpers** — `GetSecondsUntilExpiry()` and `GetCurrentTimeWindow()`.
 - **QR rendering** — PNG / BMP bytes, Base64, data URI, and save-to-file, with configurable module size and error-correction level.
 - **Events** — `SecretKeyGeneratedEvent` and `TotpValidatedEvent` on the CodeLogic event bus.

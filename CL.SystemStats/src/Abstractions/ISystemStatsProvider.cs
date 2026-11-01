@@ -39,6 +39,15 @@ public interface ISystemStatsProvider
     /// <summary>Gets a full system snapshot composed from all individual metrics.</summary>
     Task<Result<SystemSnapshot>> GetSystemSnapshotAsync();
 
+    /// <summary>
+    /// Gets the readings of the temperature sensors the platform exposes. The default implementation reports that
+    /// temperatures are unavailable (<see cref="SystemStatsErrorCodes.TemperatureUnavailable"/>); the Linux provider
+    /// reads sysfs.
+    /// </summary>
+    Task<Result<IReadOnlyList<TemperatureReading>>> GetTemperaturesAsync() =>
+        Task.FromResult(Result<IReadOnlyList<TemperatureReading>>.Failure(Error.Unavailable(
+            SystemStatsErrorCodes.TemperatureUnavailable, "Temperature sensors are not available on this platform")));
+
     /// <summary>Initializes the provider (e.g., warm up PerformanceCounters).</summary>
     Task InitializeAsync();
 

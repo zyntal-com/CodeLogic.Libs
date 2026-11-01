@@ -38,7 +38,7 @@ string k64 = Encryption.GenerateKey(length: 64);
 
 ## Security — Hashing
 
-`CL.Common.Security.Hashing` provides digest, password, and HMAC helpers. SHA digests and HMACs return lowercase hex; password hashing returns a self-describing Base64 string with the salt embedded.
+`CL.Common.Security.Hashing` provides digest, password, and HMAC helpers. SHA digests and HMACs return lowercase hex; password hashing returns a self-describing string (`$pbkdf2-sha256$v1${iterations}${salt}${hash}`) that carries its own iteration count.
 
 ```csharp
 using CL.Common.Security;
@@ -52,8 +52,10 @@ string mac = Hashing.HmacSha256("payload", "shared-key");
 string m5  = Hashing.HmacSha512("payload", "shared-key");
 
 // PBKDF2 password hashing — the salt is embedded in the returned string
-string stored = Hashing.HashPassword("hunter2");                 // default 100,000 iterations
-bool   valid  = Hashing.VerifyPassword("hunter2", stored);       // true
+string stored = Hashing.HashPassword("hunter2");                 // "$pbkdf2-sha256$v1$600000$...", 600,000 iterations
+bool   valid  = Hashing.VerifyPassword("hunter2", stored);       // true; iterations read from the hash
+if (valid && Hashing.NeedsRehash(stored))                        // legacy format or fewer iterations
+    stored = Hashing.HashPassword("hunter2");                    // store the upgraded hash
 
 // Standalone salt
 string salt = Hashing.GenerateSalt();   // 16 bytes by default
@@ -64,13 +66,15 @@ string salt = Hashing.GenerateSalt();   // 16 bytes by default
 | `Sha256(input)` | `string` | SHA-256 digest, lowercase hex. |
 | `Sha512(input)` | `string` | SHA-512 digest, lowercase hex. |
 | `Md5(input)` *(obsolete)* | `string` | MD5 digest — kept for legacy interop only; do not use for security. |
-| `HashPassword(password, iterations = 100000)` | `string` | PBKDF2 hash; Base64 salt + hash. |
-| `VerifyPassword(password, hashedPassword, iterations = 100000)` | `bool` | Constant-time verify against a `HashPassword` result. |
+| `HashPassword(password, iterations = 600000)` | `string` | PBKDF2-SHA256 hash in the self-describing `$pbkdf2-sha256$v1$...` format. |
+| `VerifyPassword(password, hashedPassword, iterations = 100000)` | `bool` | Constant-time verify. New-format hashes use their stored count (`iterations` ignored); legacy Base64 salt+hash strings (4.x) use `iterations`. Malformed input returns `false`. |
+| `NeedsRehash(hashedPassword, iterations = 600000)` | `bool` | True for legacy, weaker or unparsable hashes; re-hash after a successful verify. |
+| `DefaultPasswordIterations` / `LegacyPasswordIterations` / `PasswordHashPrefix` | constants | `600000`, `100000`, `"$pbkdf2-sha256$v1$"`. |
 | `GenerateSalt(size = 16)` | `string` | Random salt, Base64. |
 | `HmacSha256(input, key)` | `string` | HMAC-SHA256, lowercase hex. |
 | `HmacSha512(input, key)` | `string` | HMAC-SHA512, lowercase hex. |
 
-> Use `HashPassword`/`VerifyPassword` for credentials, not `Sha256`. PBKDF2 deliberately makes brute-forcing slow. Keep the `iterations` value consistent between hashing and verifying.
+> Use `HashPassword`/`VerifyPassword` for credentials, not `Sha256`. PBKDF2 deliberately makes brute-forcing slow. The iteration count is stored in each hash, so you can raise it later without invalidating existing hashes; use `NeedsRehash` to upgrade them on login.
 
 ## Generators — IdGenerator
 
@@ -238,16 +242,23 @@ Result<byte[]> back = CompressionHelper.DecompressLz4(lz4.Value!);
 // Text → Base64 (GZip) and back
 Result<string> blob = CompressionHelper.CompressString("a lot of repeated text...");
 Result<string> text = CompressionHelper.DecompressString(blob.Value!);
+
+// Decompression is capped (default 100 MiB); pass a tighter limit for untrusted input
+Result<byte[]> small = CompressionHelper.DecompressGzip(untrusted, maxOutputBytes: 1_000_000);
 ```
 
 | Member | Returns | Purpose |
 |--------|---------|---------|
-| `CompressGzip(data)` / `DecompressGzip(data)` | `Result<byte[]>` | GZip codec. |
-| `CompressBrotli(data)` / `DecompressBrotli(data)` | `Result<byte[]>` | Brotli codec. |
-| `CompressZstandard(data)` / `DecompressZstandard(data)` | `Result<byte[]>` | Zstandard codec (built-in `System.IO.Compression.ZstandardStream`, .NET 11). Reads any standard zstd frame. |
-| `CompressLz4(data)` / `DecompressLz4(data)` | `Result<byte[]>` | LZ4 codec (via K4os). |
+| `CompressGzip(data)` / `DecompressGzip(data, maxOutputBytes?)` | `Result<byte[]>` | GZip codec. |
+| `CompressBrotli(data)` / `DecompressBrotli(data, maxOutputBytes?)` | `Result<byte[]>` | Brotli codec. |
+| `CompressZstandard(data)` / `DecompressZstandard(data, maxOutputBytes?)` | `Result<byte[]>` | Zstandard codec (built-in `System.IO.Compression.ZstandardStream`, .NET 11). Reads any standard zstd frame. |
+| `CompressLz4(data)` / `DecompressLz4(data, maxOutputBytes?)` | `Result<byte[]>` | LZ4 codec (via K4os). |
 | `CompressString(text)` | `Result<string>` | GZip + Base64 in one step. |
-| `DecompressString(text)` | `Result<string>` | Reverse of `CompressString`. |
+| `DecompressString(text, maxOutputBytes?)` | `Result<string>` | Reverse of `CompressString`. |
+
+Every `Decompress*` method stops once the output passes `maxOutputBytes` (default `DefaultMaxDecompressedBytes`,
+100 MiB) and fails with `compression.output_limit_exceeded` (`CompressionHelper.OutputLimitExceededCode`), so a
+small "decompression bomb" cannot exhaust memory.
 
 > Pick the codec for the job: Brotli tends to compress smallest, GZip is the safe interop default, Zstandard compresses almost as well as Brotli at much higher speed (a good default for new formats), and LZ4 is the fastest for hot paths where size matters less than throughput.
 

@@ -30,7 +30,7 @@ public readonly struct PostgresFeatures(Database db)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(channel);
         if (db.Provider is not PostgreSqlDataProvider) return Unsupported("NOTIFY");
-        var sent = await db.SqlReadAsync($"SELECT pg_notify({channel}, {payload ?? ""})", static _ => 0, ct).ConfigureAwait(false);
+        var sent = await db.SqlReadAsync($"SELECT pg_notify({channel}, {payload ?? ""})", static _ => 0, SqlIntent.SideEffect, ct).ConfigureAwait(false);
         return sent.IsFailure ? sent.Error! : Result.Success();
     }
 
@@ -66,7 +66,7 @@ public readonly struct PostgresFeatures(Database db)
         if (db.Transaction is not null) return DataErrors.Unsupported("VACUUM cannot run inside a transaction.");
         var table = db.Admin.QuotedTable<T>();
         if (table.IsFailure) return table.Error!;
-        var done = await db.SqlReadAsync(SqlText.Raw($"VACUUM (ANALYZE) {table.Value}"), static _ => 0, ct).ConfigureAwait(false);
+        var done = await db.SqlReadAsync(SqlText.Raw($"VACUUM (ANALYZE) {table.Value}"), static _ => 0, SqlIntent.SideEffect, ct).ConfigureAwait(false);
         return done.IsFailure ? done.Error! : Result.Success();
     }
 

@@ -56,7 +56,10 @@ public static class DateTimeHelper
     /// <summary>Returns true if the date is a Monday–Friday (no public holiday awareness).</summary>
     public static bool IsBusinessDay(DateTime dt) => !IsWeekend(dt);
 
-    /// <summary>Returns the next Monday–Friday after <paramref name="dt"/>. Returns the same day if already a business day.</summary>
+    /// <summary>
+    /// Returns the first Monday–Friday strictly after <paramref name="dt"/> (time of day preserved), so Friday
+    /// gives Monday and Monday gives Tuesday. Use <see cref="IsBusinessDay"/> to test the day itself.
+    /// </summary>
     public static DateTime NextBusinessDay(DateTime dt)
     {
         var next = dt.AddDays(1);

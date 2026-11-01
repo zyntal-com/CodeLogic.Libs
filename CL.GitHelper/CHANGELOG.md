@@ -59,6 +59,62 @@ All notable changes to **CodeLogic.GitHelper** are documented here. Versions fol
   longer than `CacheTimeoutMinutes` had its LibGit2 handle and lock disposed underneath it (the operation's
   lock release then threw `ObjectDisposedException`). Evicted instances are now disposed once their current
   operation finishes, as config changes and disabling the library already did.
+- **Push and pull use the configured credentials.** `PushAsync` passed no credentials provider, and
+  `PullAsync` called `Commands.Pull` without fetch options, so every push, and every pull of a private
+  repository, failed with `git.authentication_failed` even with a PAT configured.
+- **Documented options are honoured.** `PullOptions.Strategy` (merge, rebase or fast-forward only),
+  `PullOptions.RemoteName`, `PushOptions.PushTags`, the `OnProgress` callbacks of clone, fetch and push,
+  `RepositoryConfiguration.TimeoutSeconds` / `GitHelperConfig.DefaultTimeoutSeconds` and
+  `RepositoryConfiguration.AutoFetchIntervalMinutes` were never read. See the pull, push, timeout and
+  auto-fetch notes below.
+- **Cancellation aborts a running transfer.** The token only stopped an operation that had not started
+  yet; libgit2's progress callbacks now return `false` once it is cancelled, so a clone, fetch or push
+  stops mid-transfer with `git.cancelled`.
+- **Bare repositories count as cloned.** `EnsureUpToDateAsync` and every operation looked for a `.git`
+  directory, so a bare repository (or a worktree with a `.git` file) was reported as not cloned and
+  `EnsureUpToDateAsync` tried to clone into it. `EnsureUpToDateAsync` on a bare repository now only
+  fetches, and `RepositoryInfo` for it no longer throws.
+- **The health check reports a disabled library as `Healthy`** ("disabled") instead of `Unhealthy`.
+- **Live config changes are validated.** A change that fails `GitHelperConfig.Validate()` is logged and
+  ignored, keeping the current settings, just as an invalid file stops initialization.
+- A clone that fails or is cancelled removes the directory it created, so the next attempt does not fail
+  with `git.directory_not_empty`.
+
+### Security
+
+- **The PAT is sent only to the configured host.** The credentials callback answered every request,
+  so a submodule, second remote or redirect on another host received the token. It now hands it out only
+  when the request's scheme, host and port match `RepositoryUrl` (no `https` → `http` downgrade); other
+  hosts get empty credentials and fail with `git.authentication_failed`, and a warning is logged.
+- **Credentials are redacted.** URLs with embedded credentials (`https://user:token@host/…`) were logged
+  verbatim ("Cloning …") and could appear in error messages. User info in URLs and the configured token
+  are now replaced by `***` in log lines, `Error.Message` and `RepositoryInfo.RemoteUrl`.
+
+### Added
+
+- Error codes `git.timeout` (`TimeoutError`), `git.merge_conflict` and `git.push_rejected` (`ConflictError`)
+  on `GitErrors`.
+- **Pull strategies.** `Merge` fast-forwards or creates a merge commit; on conflicts it returns
+  `git.merge_conflict` and leaves the conflicted files in place, as `git pull` does. `Rebase` replays
+  local commits on the fetched tip and aborts on conflicts. `FastForwardOnly` returns
+  `git.non_fast_forward` when the branches diverged. The upstream is the branch's tracking branch on
+  `RemoteName`, else the remote branch of the same name (`git.branch_not_found` when neither exists).
+  `PullOptions.RemoteName` selects the remote; when left at `"origin"`, `FetchOptions.RemoteName` is
+  used as before.
+- **Push.** `PushTags` pushes every local tag (tags are never forced). References the remote refuses
+  return `git.push_rejected` with its reason; before, such a push reported success.
+- **Timeouts.** Clone, fetch, the fetch step of pull, and push stop after the repository's
+  `TimeoutSeconds` and return `git.timeout`. `TimeoutSeconds` now accepts `0`, meaning
+  `DefaultTimeoutSeconds`. The timeout is checked at progress callbacks, so it cannot interrupt a
+  connection that hangs before any data arrives.
+- **Background fetch.** `AutoFetchIntervalMinutes > 0` starts a fetch timer per repository when the
+  library starts. Config changes and `RegisterRepository` add, retime or remove timers; a fetch still
+  running at the next tick is skipped; stopping or disabling the library cancels running fetches.
+- `GitHelperConfig.Validate()` also rejects duplicate repository ids (case-insensitive), a negative
+  `AutoFetchIntervalMinutes` and a `TimeoutSeconds` outside 0–3600. A config file with duplicate ids
+  used to load (the first entry won); it now fails validation.
+- Push and pull diagnostics carry `ObjectCount` and `BytesTransferred`; pull adds a `MergeStatus` or
+  `RebaseStatus` metric.
 
 ## 2026-10-24
 

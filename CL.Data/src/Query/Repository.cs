@@ -50,8 +50,11 @@ public sealed class Repository<T>
         var list = entities as IReadOnlyList<T> ?? entities.ToList();
         return await SaveAsync(SaveKind.Insert, list, null, async () =>
         {
-            // Large inserts with nothing to read back (no server-generated identity or row version) take the native bulk path.
-            if (_db.Config.BulkThreshold > 0 && list.Count >= _db.Config.BulkThreshold && WritePlanner.CanBulkInsert(accessor.Value!, list))
+            // Large inserts with nothing to read back (no server-generated identity or row version) take the native bulk path,
+            // but only when no command interceptor or middleware is configured: the bulk copy does not run through the command
+            // pipeline, and an auditing or policy interceptor must see every insert.
+            if (_db.Config.BulkThreshold > 0 && list.Count >= _db.Config.BulkThreshold && _db.Options.Interceptors.Count == 0
+                && _db.Options.Middleware.Count == 0 && WritePlanner.CanBulkInsert(accessor.Value!, list))
             {
                 var receipt = await _db.Bulk<T>().InsertAsync(list, new CL.Data.Bulk.BulkOptions { KeepIdentity = accessor.Value!.Map.Identity is not null }, ct)
                     .ConfigureAwait(false);
@@ -239,6 +242,12 @@ public sealed class Repository<T>
     }
 
     /// <summary>Inserts <paramref name="entity"/> unless a row with the same key exists; says which happened.</summary>
+    /// <remarks>
+    /// On a <c>[TenantKey]</c> entity whose key or conflict index does not include the tenant column, a row of another tenant
+    /// with the same key also reports <see cref="InsertOutcome.Duplicate"/> (a plain insert fails with <c>data.duplicate_key</c>,
+    /// an upsert with <c>data.conflict</c>): the key space is shared, so callers can learn that the key is taken. Put the
+    /// tenant column into the primary key or unique index when keys come from users and must not be probed across tenants.
+    /// </remarks>
     public async ValueTask<Result<InsertOutcome>> InsertIgnoreAsync(T entity, CancellationToken ct = default)
     {
         var inserted = await InsertManyIgnoreAsync([entity], ct).ConfigureAwait(false);

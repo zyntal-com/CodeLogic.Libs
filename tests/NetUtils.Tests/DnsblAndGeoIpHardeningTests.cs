@@ -198,7 +198,7 @@ public sealed class GeoIpDownloadTests : IDisposable
         if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
     }
 
-    private sealed class RecordingHandler(Func<HttpRequestMessage, HttpResponseMessage> respond) : HttpMessageHandler
+    internal sealed class RecordingHandler(Func<HttpRequestMessage, HttpResponseMessage> respond) : HttpMessageHandler
     {
         public List<HttpRequestMessage> Requests { get; } = [];
 
@@ -217,7 +217,7 @@ public sealed class GeoIpDownloadTests : IDisposable
     /// the data-section separator, and the metadata map. <paramref name="tag"/> is the English description, so tests can
     /// tell databases apart.
     /// </summary>
-    private static byte[] FakeMmdb(string tag, string databaseType = "GeoLite2-City")
+    internal static byte[] FakeMmdb(string tag, string databaseType = "GeoLite2-City")
     {
         List<byte> b = [0, 0, 1, 0, 0, 1];                              // node_count 1, record_size 24: both records = "no data"
         b.AddRange(new byte[16]);                                       // data section separator (empty data section)
@@ -253,7 +253,7 @@ public sealed class GeoIpDownloadTests : IDisposable
     /// <summary>A corrupt file that still contains the metadata marker (the re-audit's reproduction).</summary>
     private static byte[] MarkerOnlyCorrupt() => [.."fake-db:v2"u8, ..MmdbMarker, 0xFF];
 
-    private static byte[] TarGz(params (string Name, byte[] Data)[] files)
+    internal static byte[] TarGz(params (string Name, byte[] Data)[] files)
     {
         using var output = new MemoryStream();
         using (var gzip = new GZipStream(output, CompressionLevel.Fastest, leaveOpen: true))

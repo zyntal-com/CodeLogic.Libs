@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Headers;
+using CL.NetUtils.Localization;
 using CL.NetUtils.Models;
 using CodeLogic.Core.Logging;
 using MaxMind.Db;
@@ -21,8 +22,12 @@ public class GeoIpService : IDisposable
     private readonly string _databasePath;
 
     private DatabaseReader? _databaseReader;
+    private GeoIpDatabaseKind _kind;
     private readonly Lock _lock = new();
     private readonly HttpMessageHandler? _httpHandler;
+
+    /// <summary>Supplies the (localized) messages; set by <see cref="NetUtilsLibrary"/>.</summary>
+    internal Func<NetUtilsStrings> Strings { get; set; } = static () => InputText.DefaultStrings;
 
     /// <summary>
     /// Initializes a new <see cref="GeoIpService"/>.
@@ -45,9 +50,31 @@ public class GeoIpService : IDisposable
         _logger = logger;
         _httpHandler = httpHandler;
 
-        _databasePath = !string.IsNullOrWhiteSpace(config.DatabasePath)
-            ? config.DatabasePath
-            : Path.Combine(dataDirectory, "geoip", $"{config.DatabaseType}.mmdb");
+        if (string.IsNullOrWhiteSpace(config.DatabasePath))
+        {
+            // DatabaseType becomes a file name; a value such as "../../x" must not choose where the file goes.
+            if (!GeoIpConfig.IsValidDatabaseType(config.DatabaseType))
+                throw new ArgumentException($"GeoIp.DatabaseType '{InputText.ForLog(config.DatabaseType)}' is not a valid edition id", nameof(config));
+            _databasePath = Path.Combine(dataDirectory, "geoip", $"{config.DatabaseType}.mmdb");
+        }
+        else
+        {
+            _databasePath = config.DatabasePath;
+        }
+    }
+
+    /// <summary>
+    /// The <c>database_type</c> of the open database (e.g. <c>GeoLite2-City</c>, <c>GeoLite2-Country</c>,
+    /// <c>GeoLite2-ASN</c>), or <see langword="null"/> before <see cref="InitializeAsync"/>. It decides which
+    /// <see cref="IpLocationResult"/> fields a lookup fills.
+    /// </summary>
+    public string? LoadedDatabaseType
+    {
+        get
+        {
+            lock (_lock)
+                return _databaseReader?.Metadata.DatabaseType;
+        }
     }
 
     /// <summary>The <c>.mmdb</c> file this service reads (from <see cref="GeoIpConfig.DatabasePath"/> or the library data directory).</summary>
@@ -75,7 +102,7 @@ public class GeoIpService : IDisposable
     {
         if (!File.Exists(_databasePath))
         {
-            _logger?.Info("GeoIP database not found, downloading...");
+            _logger?.Info(Strings().GeoIpDatabaseNotFound);
             await DownloadDatabaseAsync(cancellationToken).ConfigureAwait(false);
         }
         else if (_config.AutoUpdate && CanDownload)
@@ -108,30 +135,48 @@ public class GeoIpService : IDisposable
         await EnsureDatabaseAsync(cancellationToken).ConfigureAwait(false);
 
         var reader = OpenReader(_databasePath);
+        GeoIpDatabaseKind kind;
+        try
+        {
+            kind = GeoIpDatabaseKinds.Detect(reader.Metadata.DatabaseType)
+                ?? throw new InvalidDataException(
+                    $"The GeoIP database type '{reader.Metadata.DatabaseType}' is not supported (City, Country, Enterprise, ASN or ISP editions are)");
+        }
+        catch
+        {
+            reader.Dispose();
+            throw;
+        }
+
         lock (_lock)
         {
             var previous = _databaseReader;
             _databaseReader = reader;
+            _kind = kind;
             previous?.Dispose();
         }
 
-        _logger?.Info($"GeoIP service initialized with database: {_databasePath}");
+        _logger?.Info(InputText.Format(Strings().GeoIpInitialized, _databasePath, reader.Metadata.DatabaseType));
     }
 
     /// <summary>
-    /// Looks up geolocation information for the given IP address.
+    /// Looks up the given IP address in the open database. Which fields are filled depends on the edition
+    /// (<see cref="LoadedDatabaseType"/>): City and Enterprise fill the location fields, Country only the country,
+    /// ASN the autonomous-system fields, ISP the ISP and autonomous-system fields.
     /// </summary>
     /// <param name="ipAddress">IPv4 or IPv6 address string.</param>
     /// <param name="cancellationToken">Optional cancellation token (reserved for future async lookup).</param>
     /// <returns>An <see cref="IpLocationResult"/> with location data or an error description.</returns>
     public Task<IpLocationResult> LookupIpAsync(string ipAddress, CancellationToken cancellationToken = default)
     {
+        var strings = Strings();
+        var shown = InputText.ForLog(ipAddress);
         try
         {
             if (!IPAddress.TryParse(ipAddress, out var ip))
             {
-                _logger?.Warning($"Invalid IP address: {ipAddress}");
-                return Task.FromResult(IpLocationResult.Error(ipAddress, "Invalid IP address format"));
+                _logger?.Warning(InputText.Format(strings.InvalidIpAddress, shown));
+                return Task.FromResult(IpLocationResult.Error(ipAddress, strings.InvalidIpAddressFormat));
             }
 
             IpLocationResult result;
@@ -141,42 +186,107 @@ public class GeoIpService : IDisposable
                 if (_databaseReader is null)
                 {
                     _logger?.Warning("GeoIP database reader not initialized");
-                    return Task.FromResult(IpLocationResult.Error(ipAddress, "GeoIP service not initialized"));
+                    return Task.FromResult(IpLocationResult.Error(ipAddress, strings.GeoIpNotInitialized));
                 }
 
-                var response = _databaseReader.City(ip);
-
-                result = new IpLocationResult
-                {
-                    IpAddress = ipAddress,
-                    CountryName = response?.Country?.Name,
-                    CountryCode = response?.Country?.IsoCode,
-                    CityName = response?.City?.Name,
-                    SubdivisionName = response?.MostSpecificSubdivision?.Name,
-                    PostalCode = response?.Postal?.Code,
-                    Latitude = response?.Location?.Latitude,
-                    Longitude = response?.Location?.Longitude,
-                    TimeZone = response?.Location?.TimeZone,
-                    Isp = response?.Traits?.Isp
-                };
+                result = Lookup(_databaseReader, _kind, ip, ipAddress);
             }
 
             return Task.FromResult(result);
         }
         catch (AddressNotFoundException)
         {
-            _logger?.Debug($"IP address '{ipAddress}' not found in GeoIP database");
-            return Task.FromResult(IpLocationResult.NotFound(ipAddress));
+            _logger?.Debug($"IP address '{shown}' not found in GeoIP database");
+            return Task.FromResult(IpLocationResult.NotFound(ipAddress, strings.LocationNotFound));
         }
         catch (GeoIP2Exception ex)
         {
-            _logger?.Warning($"GeoIP2 error for {ipAddress}: {ex.Message}");
+            _logger?.Warning($"GeoIP2 error for {shown}: {ex.Message}");
             return Task.FromResult(IpLocationResult.Error(ipAddress, ex.Message));
         }
         catch (Exception ex)
         {
-            _logger?.Error($"Error during GeoIP lookup for {ipAddress}", ex);
+            _logger?.Error($"Error during GeoIP lookup for {shown}", ex);
             return Task.FromResult(IpLocationResult.Error(ipAddress, ex.Message));
+        }
+    }
+
+    /// <summary>Runs the lookup that matches the edition and maps the response.</summary>
+    private static IpLocationResult Lookup(DatabaseReader reader, GeoIpDatabaseKind kind, IPAddress ip, string ipAddress)
+    {
+        switch (kind)
+        {
+            case GeoIpDatabaseKind.City:
+            {
+                var r = reader.City(ip);
+                return new IpLocationResult
+                {
+                    IpAddress = ipAddress,
+                    CountryName = r.Country?.Name,
+                    CountryCode = r.Country?.IsoCode,
+                    CityName = r.City?.Name,
+                    SubdivisionName = r.MostSpecificSubdivision?.Name,
+                    PostalCode = r.Postal?.Code,
+                    Latitude = r.Location?.Latitude,
+                    Longitude = r.Location?.Longitude,
+                    TimeZone = r.Location?.TimeZone,
+                    Isp = r.Traits?.Isp,
+                    AutonomousSystemNumber = r.Traits?.AutonomousSystemNumber,
+                    AutonomousSystemOrganization = r.Traits?.AutonomousSystemOrganization
+                };
+            }
+            case GeoIpDatabaseKind.Enterprise:
+            {
+                var r = reader.Enterprise(ip);
+                return new IpLocationResult
+                {
+                    IpAddress = ipAddress,
+                    CountryName = r.Country?.Name,
+                    CountryCode = r.Country?.IsoCode,
+                    CityName = r.City?.Name,
+                    SubdivisionName = r.MostSpecificSubdivision?.Name,
+                    PostalCode = r.Postal?.Code,
+                    Latitude = r.Location?.Latitude,
+                    Longitude = r.Location?.Longitude,
+                    TimeZone = r.Location?.TimeZone,
+                    Isp = r.Traits?.Isp,
+                    AutonomousSystemNumber = r.Traits?.AutonomousSystemNumber,
+                    AutonomousSystemOrganization = r.Traits?.AutonomousSystemOrganization
+                };
+            }
+            case GeoIpDatabaseKind.Country:
+            {
+                var r = reader.Country(ip);
+                return new IpLocationResult
+                {
+                    IpAddress = ipAddress,
+                    CountryName = r.Country?.Name,
+                    CountryCode = r.Country?.IsoCode
+                };
+            }
+            case GeoIpDatabaseKind.Asn:
+            {
+                var r = reader.Asn(ip);
+                return new IpLocationResult
+                {
+                    IpAddress = ipAddress,
+                    AutonomousSystemNumber = r.AutonomousSystemNumber,
+                    AutonomousSystemOrganization = r.AutonomousSystemOrganization
+                };
+            }
+            case GeoIpDatabaseKind.Isp:
+            {
+                var r = reader.Isp(ip);
+                return new IpLocationResult
+                {
+                    IpAddress = ipAddress,
+                    Isp = r.Isp,
+                    AutonomousSystemNumber = r.AutonomousSystemNumber,
+                    AutonomousSystemOrganization = r.AutonomousSystemOrganization
+                };
+            }
+            default:
+                throw new InvalidOperationException($"Unsupported GeoIP database kind {kind}");
         }
     }
 
@@ -251,7 +361,8 @@ public class GeoIpService : IDisposable
             _logger?.Info("GeoIP archive downloaded, extracting...");
 
             var stagedPath = Path.Combine(workDir, "database.mmdb");
-            await Task.Run(() => ExtractDatabase(downloadPath, stagedPath, $"{_config.DatabaseType}.mmdb"), cancellationToken)
+            var expectedKind = GeoIpDatabaseKinds.Detect(_config.DatabaseType);
+            await Task.Run(() => ExtractDatabase(downloadPath, stagedPath, $"{_config.DatabaseType}.mmdb", expectedKind), cancellationToken)
                 .ConfigureAwait(false);
 
             InstallDatabase(stagedPath);
@@ -313,8 +424,11 @@ public class GeoIpService : IDisposable
     private void InstallDatabase(string stagedPath)
     {
         var replacement = OpenReader(stagedPath);
+        GeoIpDatabaseKind kind;
         try
         {
+            kind = GeoIpDatabaseKinds.Detect(replacement.Metadata.DatabaseType)
+                ?? throw new InvalidDataException($"The GeoIP database type '{replacement.Metadata.DatabaseType}' is not supported");
             File.Move(stagedPath, _databasePath, overwrite: true);
         }
         catch
@@ -329,27 +443,31 @@ public class GeoIpService : IDisposable
             previous = _databaseReader;
             // Only an initialized service gets the new reader; otherwise InitializeAsync opens the installed file.
             _databaseReader = previous is null ? null : replacement;
+            if (previous is not null) _kind = kind;
         }
         previous?.Dispose();
         if (previous is null) replacement.Dispose();
     }
 
     /// <summary>
-    /// Proves that <paramref name="path"/> is a usable MaxMind City database before it may replace the working one: the
-    /// metadata must parse, the database type must support City lookups (what <see cref="LookupIpAsync"/> uses), and a
-    /// lookup must walk the search tree. A marker alone is not enough; a corrupt file can contain it.
+    /// Proves that <paramref name="path"/> is a usable MaxMind database before it may replace the working one: the
+    /// metadata must parse, the edition must be one <see cref="LookupIpAsync"/> supports (City, Country, Enterprise, ASN,
+    /// ISP) and, when <paramref name="expectedKind"/> is given (from <see cref="GeoIpConfig.DatabaseType"/>), the same
+    /// kind, and a lookup must walk the search tree. A marker alone is not enough; a corrupt file can contain it.
     /// </summary>
-    /// <exception cref="InvalidDataException">The file is not a usable City database.</exception>
-    internal static void ValidateDatabase(string path)
+    /// <exception cref="InvalidDataException">The file is not a usable database of the expected kind.</exception>
+    internal static void ValidateDatabase(string path, GeoIpDatabaseKind? expectedKind = null)
     {
         try
         {
             using var reader = OpenReader(path);
             var type = reader.Metadata.DatabaseType ?? "";
-            if (!type.Contains("City", StringComparison.OrdinalIgnoreCase))
-                throw new InvalidDataException($"The GeoIP database type '{type}' does not support City lookups");
-            reader.TryCity(IPAddress.Parse("8.8.8.8"), out _);
-            if (reader.Metadata.IPVersion == 6) reader.TryCity(IPAddress.Parse("2001:4860:4860::8888"), out _);
+            var kind = GeoIpDatabaseKinds.Detect(type)
+                ?? throw new InvalidDataException($"The GeoIP database type '{type}' is not supported (City, Country, Enterprise, ASN or ISP editions are)");
+            if (expectedKind is { } expected && kind != expected)
+                throw new InvalidDataException($"The GeoIP database type '{type}' is a {kind} database, but GeoIp.DatabaseType asks for {expected}");
+            foreach (var probe in reader.Metadata.IPVersion == 6 ? new[] { "8.8.8.8", "2001:4860:4860::8888" } : ["8.8.8.8"])
+                Probe(reader, kind, IPAddress.Parse(probe));
         }
         catch (InvalidDataException)
         {
@@ -369,7 +487,7 @@ public class GeoIpService : IDisposable
     /// <exception cref="InvalidDataException">
     /// The archive format is not supported, it holds no <c>.mmdb</c>, or the file is not a MaxMind database.
     /// </exception>
-    internal static void ExtractDatabase(string archivePath, string outputPath, string preferredName)
+    internal static void ExtractDatabase(string archivePath, string outputPath, string preferredName, GeoIpDatabaseKind? expectedKind = null)
     {
         static bool IsMmdb(string name) => name.EndsWith(".mmdb", StringComparison.OrdinalIgnoreCase);
         bool IsPreferred(string name) =>
@@ -427,6 +545,52 @@ public class GeoIpService : IDisposable
         if (!found)
             throw new InvalidDataException("The GeoIP archive contains no .mmdb file");
 
-        ValidateDatabase(outputPath);
+        ValidateDatabase(outputPath, expectedKind);
+    }
+
+    /// <summary>A lookup of the edition's kind; walks the search tree (and throws on a corrupt one).</summary>
+    private static void Probe(DatabaseReader reader, GeoIpDatabaseKind kind, IPAddress ip)
+    {
+        _ = kind switch
+        {
+            GeoIpDatabaseKind.City => reader.TryCity(ip, out _),
+            GeoIpDatabaseKind.Enterprise => reader.TryEnterprise(ip, out _),
+            GeoIpDatabaseKind.Country => reader.TryCountry(ip, out _),
+            GeoIpDatabaseKind.Asn => reader.TryAsn(ip, out _),
+            GeoIpDatabaseKind.Isp => reader.TryIsp(ip, out _),
+            _ => throw new InvalidOperationException($"Unsupported GeoIP database kind {kind}")
+        };
+    }
+}
+
+/// <summary>The MaxMind database editions <see cref="GeoIpService"/> can serve.</summary>
+internal enum GeoIpDatabaseKind
+{
+    City,
+    Country,
+    Enterprise,
+    Asn,
+    Isp
+}
+
+internal static class GeoIpDatabaseKinds
+{
+    /// <summary>
+    /// The kind of a MaxMind <c>database_type</c> or edition id (<c>GeoLite2-City</c>, <c>GeoIP2-Country</c>,
+    /// <c>GeoIP2-Enterprise</c>, <c>GeoLite2-ASN</c>, <c>GeoIP2-ISP</c>, <c>dbip-city-lite</c>, ...), or
+    /// <see langword="null"/> for an edition that has no location data (Anonymous-IP, Connection-Type, Domain) or an
+    /// unknown one.
+    /// </summary>
+    internal static GeoIpDatabaseKind? Detect(string? databaseType)
+    {
+        if (string.IsNullOrWhiteSpace(databaseType)) return null;
+        var tokens = databaseType.Split(['-', '_', ' ', '.'], StringSplitOptions.RemoveEmptyEntries);
+        bool Has(string token) => tokens.Any(t => string.Equals(t, token, StringComparison.OrdinalIgnoreCase));
+        if (Has("Enterprise")) return GeoIpDatabaseKind.Enterprise;
+        if (Has("City")) return GeoIpDatabaseKind.City;
+        if (Has("Country")) return GeoIpDatabaseKind.Country;
+        if (Has("ISP")) return GeoIpDatabaseKind.Isp;
+        if (Has("ASN")) return GeoIpDatabaseKind.Asn;
+        return null;
     }
 }

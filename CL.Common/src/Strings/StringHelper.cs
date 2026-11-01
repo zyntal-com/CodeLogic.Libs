@@ -22,11 +22,16 @@ public static partial class StringHelper
 
     /// <summary>
     /// Truncates a string to <paramref name="maxLength"/> characters,
-    /// appending <paramref name="suffix"/> if truncation occurs.
+    /// appending <paramref name="suffix"/> if truncation occurs. The result never exceeds
+    /// <paramref name="maxLength"/>: when the suffix itself does not fit, the value is clipped without it,
+    /// and a <paramref name="maxLength"/> of zero or less yields an empty string.
     /// </summary>
     public static string Truncate(string value, int maxLength, string suffix = "...")
     {
         if (string.IsNullOrEmpty(value) || value.Length <= maxLength) return value;
+        if (maxLength <= 0) return string.Empty;
+        suffix ??= string.Empty;
+        if (suffix.Length >= maxLength) return value[..maxLength];
         return value[..(maxLength - suffix.Length)] + suffix;
     }
 
