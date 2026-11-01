@@ -2,6 +2,7 @@ using CL.Data.Bulk;
 using CL.Data.Caching;
 using CL.Data.Configuration;
 using CL.Data.Execution;
+using CL.Data.Pipeline;
 using CodeLogic.Core.Results;
 
 namespace Data.Conformance;
@@ -22,7 +23,7 @@ public abstract class BulkConformance(ProviderFixture fixture) : ConformanceSuit
             Status = (ProductStatus)(i % 3),
         });
 
-    private Database Copy(Action<DataConnectionConfig>? configure = null, DataCache? cache = null)
+    private Database Copy(Action<DataConnectionConfig>? configure = null, DataCache? cache = null, IDataInterceptor[]? interceptors = null)
     {
         var config = new DataConnectionConfig
         {
@@ -35,7 +36,7 @@ public abstract class BulkConformance(ProviderFixture fixture) : ConformanceSuit
             Sqlite = Db.Config.Sqlite,
         };
         configure?.Invoke(config);
-        return Database.Create(Db.Name, Fixture.Provider, config, new DatabaseOptions { Cache = cache }).ValueOrThrow();
+        return Database.Create(Db.Name, Fixture.Provider, config, new DatabaseOptions { Cache = cache, Interceptors = interceptors ?? [] }).ValueOrThrow();
     }
 
     [SkippableFact]
@@ -108,6 +109,29 @@ public abstract class BulkConformance(ProviderFixture fixture) : ConformanceSuit
         var explicitIds = Rows(150, "E", i => start + i).ToList();           // ids already known: bulk path
         Assert.Equal(150, (await db.Repository<Product>().InsertManyAsync(explicitIds)).ValueOrThrow());
         Assert.Equal("E-000007", (await db.Repository<Product>().GetByIdAsync(start + 7)).ValueOrThrow()!.Sku);
+    }
+
+    private sealed class InsertCounter : IDataInterceptor
+    {
+        public int Inserts;
+
+        public ValueTask<CodeLogic.Core.Results.Error?> OnExecutingAsync(CommandContext context)
+        {
+            if (context.Operation == "insert") Interlocked.Increment(ref Inserts);
+            return ValueTask.FromResult<CodeLogic.Core.Results.Error?>(null);
+        }
+    }
+
+    [SkippableFact]
+    public async Task InsertMany_stays_in_the_pipeline_when_interceptors_are_configured()
+    {
+        RequireProvider();
+        var counter = new InsertCounter();
+        await using var db = Copy(c => c.BulkThreshold = 100, interceptors: [counter]);
+        var start = (await db.Query<Product>().MaxAsync(p => p.Id)).ValueOrThrow() ?? 0;
+        var rows = Rows(150, "I", i => start + 5000 + i).ToList();          // ids known: would take the bulk path without interceptors
+        Assert.Equal(150, (await db.Repository<Product>().InsertManyAsync(rows)).ValueOrThrow());
+        Assert.True(counter.Inserts > 0, "the interceptor saw no insert");
     }
 
     [SkippableFact]
