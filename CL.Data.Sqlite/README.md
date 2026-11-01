@@ -11,6 +11,6 @@ dotnet add package CodeLogic.Data.Sqlite
 - **With the CodeLogic runtime:** load `SqliteDataLibrary` next to `DataLibrary`, and set `"provider": "sqlite"` on a connection in `config.data.json`.
 - **Without it:** pass `SqliteDataProvider.Instance` to `Database.Create`.
 
-WAL, busy timeout and foreign keys are set on every pooled connection; schema changes SQLite cannot ALTER rebuild the table; bulk copy runs prepared inserts in one transaction; `db.Backup.SnapshotAsync` copies the file with `VACUUM INTO`. No replicas.
+WAL, busy timeout and foreign keys are set on every pooled connection; schema changes SQLite cannot ALTER rebuild the table; bulk copy runs prepared inserts in one transaction; `db.Backup.SnapshotAsync` copies the file with `VACUUM INTO`. No replicas and no advisory locks (`AcquireLockAsync` returns `data.unsupported`; run schema sync and migrations from one process).
 
 Documentation: [Providers](../docs/libs/data/providers.md).

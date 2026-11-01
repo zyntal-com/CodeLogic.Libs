@@ -2,6 +2,7 @@ using System.Data.Common;
 using System.Globalization;
 using CL.Data.Execution;
 using CL.Data.Schema;
+using CL.Data.Sql;
 using CodeLogic.Core.Results;
 
 namespace CL.Data.SqlServer;
@@ -18,7 +19,7 @@ public sealed class SqlServerSchemaIntrospector : SchemaIntrospector
         var columns = await db.SqlReadAsync(
             $"SELECT c.name, t.name, c.max_length, c.precision, c.scale, c.is_nullable, c.is_identity, OBJECT_DEFINITION(c.default_object_id) " +
             $"FROM sys.columns c JOIN sys.types t ON t.user_type_id = c.user_type_id WHERE c.object_id = OBJECT_ID({qualified}, 'U') ORDER BY c.column_id",
-            r => new ColumnSchema(Text(r, 0)!, db.Provider.NormalizeStoreType(TypeOf(r)), Number(r, 5) != 0, Number(r, 6) != 0, Text(r, 7)), ct).ConfigureAwait(false);
+            r => new ColumnSchema(Text(r, 0)!, db.Provider.NormalizeStoreType(TypeOf(r)), Number(r, 5) != 0, Number(r, 6) != 0, Text(r, 7)), SqlIntent.ReadPrimary, ct).ConfigureAwait(false);
         if (columns.IsFailure) return columns.Error!;
         if (columns.Value!.Count == 0) return (TableSchema?)null;
 
@@ -29,7 +30,7 @@ public sealed class SqlServerSchemaIntrospector : SchemaIntrospector
             $"JOIN sys.columns col ON col.object_id = ic.object_id AND col.column_id = ic.column_id " +
             $"WHERE i.object_id = OBJECT_ID({qualified}, 'U') AND i.type > 0 AND i.is_hypothetical = 0",
             r => (Primary: Number(r, 2) != 0,
-                Row: new IndexColumnRow(Text(r, 0)!, Number(r, 1) != 0, (int)Number(r, 3), Text(r, 4)!, Number(r, 5) != 0, Number(r, 6) != 0)), ct).ConfigureAwait(false);
+                Row: new IndexColumnRow(Text(r, 0)!, Number(r, 1) != 0, (int)Number(r, 3), Text(r, 4)!, Number(r, 5) != 0, Number(r, 6) != 0)), SqlIntent.ReadPrimary, ct).ConfigureAwait(false);
         if (indexes.IsFailure) return indexes.Error!;
 
         var foreignKeys = await db.SqlReadAsync(
@@ -41,7 +42,7 @@ public sealed class SqlServerSchemaIntrospector : SchemaIntrospector
             $"JOIN sys.columns rc ON rc.object_id = fkc.referenced_object_id AND rc.column_id = fkc.referenced_column_id " +
             $"WHERE fk.parent_object_id = OBJECT_ID({qualified}, 'U')",
             r => new ForeignKeyColumnRow(Text(r, 0)!, (int)Number(r, 1), Text(r, 2)!, Text(r, 3)!, Text(r, 4), Text(r, 5)!,
-                ParseAction(Text(r, 6)), ParseAction(Text(r, 7))), ct).ConfigureAwait(false);
+                ParseAction(Text(r, 6)), ParseAction(Text(r, 7))), SqlIntent.ReadPrimary, ct).ConfigureAwait(false);
         if (foreignKeys.IsFailure) return foreignKeys.Error!;
 
         return new TableSchema(table, owner, columns.Value!,
@@ -56,7 +57,7 @@ public sealed class SqlServerSchemaIntrospector : SchemaIntrospector
     public override async ValueTask<Result<IReadOnlyList<string>>> ListTablesAsync(Database db, string? schema = null, CancellationToken ct = default)
     {
         var owner = SchemaOf(db, schema) ?? "dbo";
-        var tables = await db.SqlQueryAsync<string>($"SELECT name FROM sys.tables WHERE schema_id = SCHEMA_ID({owner}) ORDER BY name", ct).ConfigureAwait(false);
+        var tables = await db.SqlQueryAsync<string>($"SELECT name FROM sys.tables WHERE schema_id = SCHEMA_ID({owner}) ORDER BY name", SqlIntent.ReadPrimary, ct).ConfigureAwait(false);
         return tables.IsFailure ? tables.Error! : tables.Value!;
     }
 

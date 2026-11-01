@@ -51,7 +51,8 @@ public sealed class CompiledQuery<T, TArgs>
     {
         var variant = Plan(db, CompiledTerminal.List, args, out var spec);
         if (variant.IsFailure) return variant.Error!;
-        return await db.QuerySpecAsync(spec, false, variant.Value!.Accessor, variant.Value.Table, variant.Value.Tags, ct).ConfigureAwait(false);
+        var v = variant.Value!;
+        return await v.On(db).QuerySpecAsync(spec, false, v.Accessor, v.Table, v.Tags, ct, v.Cache).ConfigureAwait(false);
     }
 
     /// <summary>The first matching row, or null.</summary>
@@ -59,7 +60,8 @@ public sealed class CompiledQuery<T, TArgs>
     {
         var variant = Plan(db, CompiledTerminal.First, args, out var spec);
         if (variant.IsFailure) return variant.Error!;
-        var rows = await db.QuerySpecAsync(spec, false, variant.Value!.Accessor, variant.Value.Table, variant.Value.Tags, ct).ConfigureAwait(false);
+        var v = variant.Value!;
+        var rows = await v.On(db).QuerySpecAsync(spec, false, v.Accessor, v.Table, v.Tags, ct, v.Cache).ConfigureAwait(false);
         return rows.IsSuccess ? Result<T?>.Success(rows.Value!.Count > 0 ? rows.Value[0] : default) : rows.Error!;
     }
 
@@ -68,7 +70,8 @@ public sealed class CompiledQuery<T, TArgs>
     {
         var variant = Plan(db, CompiledTerminal.Count, args, out var spec);
         if (variant.IsFailure) return variant.Error!;
-        var count = await db.ScalarSpecAsync<long?>(spec, variant.Value!.Table, variant.Value.Tags, ct).ConfigureAwait(false);
+        var v = variant.Value!;
+        var count = await v.On(db).ScalarSpecAsync<long?>(spec, v.Table, v.Tags, ct, v.Cache).ConfigureAwait(false);
         return count.IsSuccess ? Result<long>.Success(count.Value ?? 0) : count.Error!;
     }
 
@@ -77,14 +80,25 @@ public sealed class CompiledQuery<T, TArgs>
     {
         var variant = Plan(db, CompiledTerminal.Any, args, out var spec);
         if (variant.IsFailure) return variant.Error!;
-        var rows = await db.QuerySpecAsync<long>(spec, false, null, variant.Value!.Table, variant.Value.Tags, ct).ConfigureAwait(false);
+        var v = variant.Value!;
+        var rows = await v.On(db).QuerySpecAsync<long>(spec, false, null, v.Table, v.Tags, ct, v.Cache).ConfigureAwait(false);
         return rows.IsSuccess ? Result<bool>.Success(rows.Value!.Count > 0) : rows.Error!;
     }
 
     // ── Planning ────────────────────────────────────────────────────────────
 
-    /// <summary>One planned shape: rendered SQL and how each of its parameters is computed from the arguments.</summary>
-    private sealed record Variant(CompiledRoots? Roots, string Sql, ParameterSource[] Parameters, IEntityAccessor<T> Accessor, string Table, string[] Tags);
+    /// <summary>
+    /// One planned shape: rendered SQL, how each of its parameters is computed from the arguments, and the chain's
+    /// <c>WithCache</c> policy and <c>ReadFrom</c> preference.
+    /// </summary>
+    private sealed record Variant(CompiledRoots? Roots, string Sql, ParameterSource[] Parameters, IEntityAccessor<T> Accessor, string Table, string[] Tags)
+    {
+        public CL.Data.Caching.CachePolicy? Cache { get; init; }
+        public CL.Data.Routing.ReadPreference? ReadFrom { get; init; }
+
+        /// <summary><paramref name="db"/>, or its view with the chain's read preference.</summary>
+        public Database On(Database db) => ReadFrom is { } preference && db.ReadPreferenceOverride != preference ? db.ReadFrom(preference) : db;
+    }
 
     /// <summary>A rendered parameter: fixed (standing filters, literals) or computed from an argument root.</summary>
     private readonly record struct ParameterSource(SqlParameterValue? Fixed, int Root, Func<object?, SqlParameterValue>? Binder);
@@ -177,7 +191,11 @@ public sealed class CompiledQuery<T, TArgs>
         var sources = rendered.Value!.Parameters
             .Select(p => roots is not null && bySlot.TryGetValue(p, out var slot) ? new ParameterSource(null, slot.Root, slot.Binder) : new ParameterSource(p, -1, null))
             .ToArray();
-        return new Variant(roots, rendered.Value.Text, sources, accessor, table, [DataTags.Table(table)]);
+        return new Variant(roots, rendered.Value.Text, sources, accessor, table, [DataTags.Table(table)])
+        {
+            Cache = builder.CachePolicy,
+            ReadFrom = builder.Database.ReadPreferenceOverride is { } preference && preference != db.ReadPreferenceOverride ? preference : null,
+        };
     }
 
     /// <summary>Replays the query chain on <paramref name="start"/>; lambdas are passed on unevaluated, so they keep reading the arguments.</summary>

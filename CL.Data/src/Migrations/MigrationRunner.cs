@@ -178,7 +178,7 @@ public sealed class MigrationRunner
 
         if (ddl.IntegrityCheckSql is { } check)
         {
-            var violations = await tx.Db.SqlReadAsync(SqlText.Raw(check), static _ => 0, ct).ConfigureAwait(false);
+            var violations = await tx.Db.SqlReadAsync(SqlText.Raw(check), static _ => 0, SqlIntent.ReadPrimary, ct).ConfigureAwait(false);
             if (violations.IsFailure) return DataErrors.MigrationFailed(id, "integrity check failed", violations.Error);
             if (violations.Value!.Count > 0) return DataErrors.MigrationFailed(id, "rows violate a foreign key after the migration; it was rolled back");
         }
@@ -204,7 +204,7 @@ public sealed class MigrationRunner
         if (ensured.IsFailure) return ensured.Error!;
         var rows = await _db.SqlReadAsync(
             $"SELECT {SqlKit.Identifier("id")}, {SqlKit.Identifier("description")}, {SqlKit.Identifier("checksum")}, {SqlKit.Identifier("applied_at")} FROM {History()}",
-            static r => new HistoryRow(r.GetString(0), r.GetString(1), r.GetString(2), ValueReader<DateTimeOffset>.Read(r, 3)), ct).ConfigureAwait(false);
+            static r => new HistoryRow(r.GetString(0), r.GetString(1), r.GetString(2), ValueReader<DateTimeOffset>.Read(r, 3)), SqlIntent.ReadPrimary, ct).ConfigureAwait(false);
         if (rows.IsFailure) return rows.Error!;
         return rows.Value!.ToDictionary(r => r.Id, StringComparer.Ordinal);
     }

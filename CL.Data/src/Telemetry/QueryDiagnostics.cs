@@ -112,7 +112,10 @@ internal sealed class QueryDiagnostics(Database db)
     {
         var spec = context.Spec;
         var elapsed = context.Elapsed;
-        if (!db.Config.CaptureExplainOnSlowQuery || context.IsWrite || db.Provider.Explainer is null || context.InTransaction)
+        // Only a single plain read is explained: an explainer prefixes the text (EXPLAIN ...), so a batch or a statement with
+        // side effects would run again on the background connection.
+        if (!db.Config.CaptureExplainOnSlowQuery || context.IsWrite || db.Provider.Explainer is null || context.InTransaction
+            || !CL.Data.Sql.SqlClassifier.IsPlainRead(spec.Sql))
         {
             db.Publish(new SlowQueryEvent(db.Name, db.Provider.Name, node.Name, db.Options.Time.GetUtcNow(), spec.Sql, elapsed, null));
             return;

@@ -286,7 +286,7 @@ public sealed class SchemaSync
         if (created.Value) return new Dictionary<string, string>(StringComparer.Ordinal);
 
         var rows = await _db.SqlReadAsync($"SELECT {SqlKit.Identifier("table_name")}, {SqlKit.Identifier("fingerprint")} FROM {Table()}",
-            static r => (Table: r.GetString(0), Fingerprint: r.GetString(1)), ct).ConfigureAwait(false);
+            static r => (Table: r.GetString(0), Fingerprint: r.GetString(1)), SqlIntent.ReadPrimary, ct).ConfigureAwait(false);
         if (rows.IsFailure) return rows.Error!;
         return rows.Value!.ToDictionary(r => r.Table, r => r.Fingerprint, StringComparer.Ordinal);
     }

@@ -38,6 +38,20 @@ public abstract class SeedConformance(ProviderFixture fixture) : ConformanceSuit
     private async Task<string[]> NamesAsync() => (await Db.Query<SeedRole>().OrderBy(r => r.Id).ToListAsync()).ValueOrThrow().Select(r => r.Name).ToArray();
 
     [SkippableFact]
+    public async Task Applied_seeds_publish_an_event()
+    {
+        RequireProvider();
+        await ResetAsync();
+        var seen = new System.Collections.Concurrent.ConcurrentQueue<CL.Data.Events.DataEvent>();
+        await using var db = Fixture.CreateDatabase(new DatabaseOptions { Events = seen.Enqueue });
+        var seed = DataSeed.Rows<SeedRole>("roles-event", [new() { Id = 7, Name = "evented" }]);
+        (await db.Seeds([seed]).RunAsync()).ValueOrThrow();
+        (await db.Seeds([seed]).RunAsync()).ValueOrThrow();                 // up to date: no second event
+        var applied = Assert.Single(seen.OfType<CL.Data.Events.SeedAppliedEvent>());
+        Assert.Equal(("roles-event", db.Name), (applied.Seed, applied.ConnectionId));
+    }
+
+    [SkippableFact]
     public async Task Seeds_run_once_and_again_after_a_version_bump()
     {
         RequireProvider();

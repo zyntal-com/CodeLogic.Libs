@@ -24,11 +24,15 @@ Routing is added only when a connection has replicas. Telemetry wraps the whole 
 }
 ```
 
-A replica takes the primary's credentials and port unless it sets its own. On SQL Server, replicas are reached with
+A replica takes the primary's credentials and port unless it sets its own. When the primary is configured with a
+`connectionString`, a replica that sets only a `host` starts from that connection string (database, credentials, TLS and
+driver settings) with its own host, port and credentials on top. On SQL Server, replicas are reached with
 `ApplicationIntent=ReadOnly`, typically through an availability group listener.
 
 **Routing rules:**
 - **Writes, transactions and locking reads** always run on the primary.
+- **CL.Data's own bookkeeping** always reads the primary: schema sync state, migration and seed history, the database cache bus and schema introspection.
+- **Raw SQL** follows its `SqlIntent` (see [Raw SQL](queries.md#raw-sql)): a statement that is not a plain read runs on the primary.
 - **Reads follow a preference:** `Primary`, `PreferReplica` or `ReplicaOnly`. Set it per connection (`readPreference`), per view (`db.ReadFrom(ReadPreference.Primary)`) or per query (`.ReadFrom(...)`).
 - **Reads-your-writes:** for `stickyAfterWriteMs` after a write through a database, its reads stay on the primary.
 - **Choosing a replica:** a replica is picked at random by weight, among those whose circuit isn't open and whose last probed lag is within `maxReplicaLagMs`.

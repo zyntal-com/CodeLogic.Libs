@@ -31,7 +31,7 @@ var cheap = await db.Query<Product>().WithCache().Where(p => p.Price < 20m).Orde
 
 **Features:**
 - **Queries:** typed LINQ (strictly translated, never evaluated on the client), projections, joins over 2–5 tables, grouping with HAVING, cursor paging and streaming, and compiled queries.
-- **Writes:** repositories with upserts, counters and changed-column updates; set-based updates and deletes; transactions, savepoints, row locks, advisory locks and batches.
+- **Writes:** repositories with upserts, counters and changed-column updates; set-based updates and deletes; transactions, savepoints, row locks, advisory locks (not on SQLite) and batches; raw SQL with an explicit or conservatively detected intent (`SqlIntent`).
 - **Schema:** table sync with safe levels and drift detection, migrations, seeding, admin, backup and retention.
 - **Caching:** query and entity caching with exact tag invalidation, warm queries and cross-node invalidation.
 - **Replicas and resilience:** read replicas with lag probes, sticky reads and failover; retries and per-node circuit breakers.

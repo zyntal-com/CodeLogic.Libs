@@ -42,7 +42,7 @@ The 4.x code remains on `support/4.x`, and CodeLogic.MySQL2 4.9 stays on nuget.o
 | Transient retry with backoff | resilience step (retries, a circuit breaker per node) | done: `ResilienceTests` |
 | Query cache (`WithCache`), SmartCache pools, cache coordinator | `DataCache`: `WithCache`, entity cache, warm queries (`Refresh`), invalidation bus | done: `CacheConformance` |
 | Observability: query and slow-query events, EXPLAIN on slow queries, N+1 detector | telemetry (OpenTelemetry spans and metrics, `SlowQueryEvent` with a plan, `NPlusOneDetectedEvent`) | done: `TelemetryTests`, `TelemetryConformance` |
-| Table sync (`SyncTableAsync`, `SyncSchemaAsync`, namespace sync, sync modes, CRC state, schema lock, backup before alter) | `db.Schema.SyncAsync<T>()` / `SyncAsync(maps)`, `SchemaSyncLevel`, `cl_data_schema`, advisory locks ×4 | done: `SchemaConformance`, `SyncConformance` |
+| Table sync (`SyncTableAsync`, `SyncSchemaAsync`, namespace sync, sync modes, CRC state, schema lock, backup before alter) | `db.Schema.SyncAsync<T>()` / `SyncAsync(maps)`, `SchemaSyncLevel`, `cl_data_schema`, advisory locks on MySQL, PostgreSQL and SQL Server (SQLite has none: run sync from one process) | done: `SchemaConformance`, `SyncConformance` |
 | Introspection (`GetDatabaseColumnsAsync`, `SchemaAnalyzer`) | `SchemaIntrospector` ×4 | done: `SchemaConformance` |
 | Migrations (`IMigration`, `RegisterMigrationsFrom`, runner, tracker, `GetPendingMigrationsAsync`, rollback) | `MigrationRunner` (`FromAssembly`, `PendingAsync`, `AppliedAsync`, `MigrateAsync`, `RollbackAsync`) | done: `MigrationConformance` |
 | BackupManager (DDL backup, restore) | `db.Backup` (plus `VACUUM INTO` snapshots on SQLite) | done: `BackupConformance` |
@@ -55,7 +55,7 @@ The 4.x code remains on `support/4.x`, and CodeLogic.MySQL2 4.9 stays on nuget.o
 
 | 4.x feature | CL.Data | Status |
 |---|---|---|
-| **MySQL:** charset, engine and collation per table and column | `[MySqlTable]` / `[MySqlColumn]` hints, used by the DDL | done: `SchemaConformance` |
+| **MySQL:** charset, engine and collation per table and column | `[MySqlTable]` (engine, charset, collation, row format) / `[MySqlColumn]` (collation) hints, used by the DDL | **partial**: a column charset without a collation (`[MySqlColumn(Charset)]`) is not applied; set the collation |
 | **MySQL:** `GET_LOCK` schema lock, `information_schema` introspection | advisory lock, introspector | done |
 | **MySQL:** OPTIMIZE / ANALYZE TABLE | `db.MySql.OptimizeTableAsync` / `AnalyzeTableAsync` | done (new): `MySqlExtensionTests` |
 | **PostgreSQL:** `DefaultSchema` scoping | `PostgreSql.DefaultSchema`; tables are schema-qualified | done |
@@ -65,11 +65,13 @@ The 4.x code remains on `support/4.x`, and CodeLogic.MySQL2 4.9 stays on nuget.o
 | **PostgreSQL:** `pg_advisory_lock`, `pg_catalog` introspection | advisory lock, introspector | done |
 | **PostgreSQL:** LISTEN / NOTIFY | `db.Postgres.ListenAsync` / `NotifyAsync` | done (new): `PostgreSqlExtensionTests` |
 | **PostgreSQL:** runtime options | `PostgreSqlOptions` (auto-prepare, multiplexing) | done |
+| **PostgreSQL:** unlogged tables, fill factor, tablespace | `[PostgresTable]` hints, applied when a table is created | done (new): `DdlGoldenTests` |
 | **SQL Server:** SQL login, integrated and Azure AD authentication | `SqlServer.Authentication` | done (Entra password dropped: deprecated upstream) |
 | **SQL Server:** `TOP` / `OFFSET FETCH`, table-hint locks, `OUTPUT INSERTED`, serializable upsert | dialect | done |
 | **SQL Server:** 2100-parameter chunking | `ParameterLimit` 2098 in batch planning | done |
 | **SQL Server:** JSON as `nvarchar(max)` with an `ISJSON` check, `rowversion`, `xml`, `geography` | type mapping; `CHECK (ISJSON(col) = 1)` in the DDL | done: `SqlServerJsonCheckTests` |
 | **SQL Server:** `sp_getapplock`, `sys.*` introspection | advisory lock, introspector | done |
+| **SQL Server:** file group, data compression, sparse columns | `[SqlServerTable]` hints, applied when a table is created | **partial**: `[SqlServerColumn(Sparse)]` is not applied |
 | **SQL Server:** explicit identity inserts | `IDENTITY_INSERT` handling, reset on failure | done: `RepositoryConformance` |
 | **SQLite:** pool, WAL, foreign keys, busy timeout, PRAGMAs | `SqliteDataSource` (PRAGMAs per connection) | done |
 | **SQLite:** `CacheMode` (shared/private) | shared cache for `:memory:`; otherwise the driver default | **partial**: no setting for file databases (rarely useful with WAL) |

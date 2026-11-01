@@ -254,6 +254,18 @@ public sealed partial class Database : IAsyncDisposable
     private CommandContext Context(SqlText sql, CommandKind kind, CancellationToken ct, bool isWrite = false) =>
         new(this, new CommandSpec(sql.Render(Provider.Dialect), sql.Parameters), kind, ct) { IsWrite = isWrite };
 
+    /// <summary>A context for a raw statement with <paramref name="intent"/>: writes go to the primary, primary reads pin it.</summary>
+    private CommandContext Context(SqlText sql, CommandKind kind, CancellationToken ct, SqlIntent intent)
+    {
+        var text = sql.Render(Provider.Dialect);
+        var isWrite = SqlClassifier.IsWrite(intent, text);
+        return new(this, new CommandSpec(text, sql.Parameters), kind, ct)
+        {
+            IsWrite = isWrite,
+            ReadFrom = intent == SqlIntent.ReadPrimary ? CL.Data.Routing.ReadPreference.Primary : null,
+        };
+    }
+
     /// <summary>Creates a database for <paramref name="config"/>, resolving its provider from <see cref="DataProviderRegistry"/>.</summary>
     public static Result<Database> Create(string name, DataConnectionConfig config, DatabaseOptions? options = null)
     {
@@ -357,16 +369,33 @@ public sealed partial class Database : IAsyncDisposable
 
     /// <summary>
     /// Runs a query and reads every row. <typeparamref name="T"/> is either a scalar (read from the first column)
-    /// or a mapped type (columns matched by name). Interpolated values become parameters.
+    /// or a mapped type (columns matched by name). Interpolated values become parameters. The statement's
+    /// <see cref="SqlIntent"/> is worked out from its text (<see cref="SqlIntent.Auto"/>): anything but a plain read runs as a write.
     /// </summary>
     public ValueTask<Result<List<T>>> SqlQueryAsync<T>(SqlText sql, CancellationToken ct = default) =>
-        QueryCoreAsync<T>(sql, ct);
+        QueryCoreAsync<T>(sql, SqlIntent.Auto, ct);
 
-    /// <summary>Runs a query and builds each row with <paramref name="read"/> (catalog queries, custom readers).</summary>
-    public ValueTask<Result<List<T>>> SqlReadAsync<T>(SqlText sql, Func<DbDataReader, T> read, CancellationToken ct = default)
+    /// <summary>
+    /// Runs a query and reads every row (see <see cref="SqlQueryAsync{T}(SqlText, CancellationToken)"/>), with an explicit
+    /// <paramref name="intent"/>: <see cref="SqlIntent.Write"/> for <c>INSERT ... RETURNING</c> and other statements that
+    /// change data, <see cref="SqlIntent.ReadPrimary"/> for reads that must see the latest data.
+    /// </summary>
+    public ValueTask<Result<List<T>>> SqlQueryAsync<T>(SqlText sql, SqlIntent intent, CancellationToken ct = default) =>
+        QueryCoreAsync<T>(sql, intent, ct);
+
+    /// <summary>
+    /// Runs a query and builds each row with <paramref name="read"/> (catalog queries, custom readers). The statement's
+    /// <see cref="SqlIntent"/> is worked out from its text (<see cref="SqlIntent.Auto"/>).
+    /// </summary>
+    public ValueTask<Result<List<T>>> SqlReadAsync<T>(SqlText sql, Func<DbDataReader, T> read, CancellationToken ct = default) =>
+        SqlReadAsync(sql, read, SqlIntent.Auto, ct);
+
+    /// <summary>Runs a statement and builds each row with <paramref name="read"/>, with an explicit <paramref name="intent"/>.</summary>
+    public async ValueTask<Result<List<T>>> SqlReadAsync<T>(SqlText sql, Func<DbDataReader, T> read, SqlIntent intent, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(read);
-        return RunAsync(Context(sql, CommandKind.Query, ct), read,
+        var context = Context(sql, CommandKind.Query, ct, intent);
+        var result = await RunAsync(context, read,
             static async (cmd, build, token) =>
             {
                 List<T> rows = [];
@@ -374,7 +403,9 @@ public sealed partial class Database : IAsyncDisposable
                 while (await reader.ReadAsync(token).ConfigureAwait(false)) rows.Add(build(reader));
                 return rows;
             },
-            static list => list.Count);
+            static list => list.Count).ConfigureAwait(false);
+        AfterRaw(context, intent);
+        return result;
     }
 
     /// <summary>Runs a statement and returns the number of affected rows. Raw statements are treated as writes.</summary>
@@ -406,16 +437,34 @@ public sealed partial class Database : IAsyncDisposable
         return result;
     }
 
-    /// <summary>Runs a query and returns the first column of the first row (default when there is no row or it is NULL).</summary>
+    /// <summary>
+    /// Runs a query and returns the first column of the first row (default when there is no row or it is NULL). The
+    /// statement's <see cref="SqlIntent"/> is worked out from its text (<see cref="SqlIntent.Auto"/>).
+    /// </summary>
     public ValueTask<Result<T?>> SqlScalarAsync<T>(SqlText sql, CancellationToken ct = default) =>
-        RunAsync(Context(sql, CommandKind.Scalar, ct), 0,
+        SqlScalarAsync<T>(sql, SqlIntent.Auto, ct);
+
+    /// <summary>Runs a statement and returns the first column of the first row, with an explicit <paramref name="intent"/>.</summary>
+    public async ValueTask<Result<T?>> SqlScalarAsync<T>(SqlText sql, SqlIntent intent, CancellationToken ct = default)
+    {
+        var context = Context(sql, CommandKind.Scalar, ct, intent);
+        var result = await RunAsync(context, 0,
             static async (cmd, _, token) =>
             {
                 await using var reader = await cmd.ExecuteReaderAsync(token).ConfigureAwait(false);
                 return await reader.ReadAsync(token).ConfigureAwait(false) && !reader.IsDBNull(0)
                     ? ValueReader<T>.Read(reader, 0)
                     : default;
-            });
+            }).ConfigureAwait(false);
+        AfterRaw(context, intent);
+        return result;
+    }
+
+    /// <summary>Drops the whole connection's cached results after a raw statement that may have changed rows.</summary>
+    private void AfterRaw(CommandContext context, SqlIntent intent)
+    {
+        if (context.IsWrite && SqlClassifier.Invalidates(intent, context.Spec.Sql)) InvalidateCache(["*"]);
+    }
 
     /// <summary>Checks that the primary answers (health checks).</summary>
     public async ValueTask<Result> PingAsync(CancellationToken ct = default) => await PingAsync(Primary, ct).ConfigureAwait(false);
@@ -429,18 +478,21 @@ public sealed partial class Database : IAsyncDisposable
         return result.ToResult();
     }
 
-    private async ValueTask<Result<List<T>>> QueryCoreAsync<T>(SqlText sql, CancellationToken ct)
+    private async ValueTask<Result<List<T>>> QueryCoreAsync<T>(SqlText sql, SqlIntent intent, CancellationToken ct)
     {
         var accessor = RowReader.AccessorFor<T>();
         if (accessor.IsFailure) return accessor.Error!;
 
-        return await RunAsync(Context(sql, CommandKind.Query, ct), (Accessor: accessor.Value, Policy: NamingPolicy),
+        var context = Context(sql, CommandKind.Query, ct, intent);
+        var result = await RunAsync(context, (Accessor: accessor.Value, Policy: NamingPolicy),
             static async (cmd, state, token) =>
             {
                 await using var reader = await cmd.ExecuteReaderAsync(token).ConfigureAwait(false);
                 return await RowReader.ReadAllAsync(reader, state.Accessor, state.Policy, token).ConfigureAwait(false);
             },
             static list => list.Count).ConfigureAwait(false);
+        AfterRaw(context, intent);
+        return result;
     }
 
     private static Result<DataNode> CreateNode(DataProvider provider, DataConnectionConfig config, NodeEndpoint endpoint)
