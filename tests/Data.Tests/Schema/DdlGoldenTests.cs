@@ -113,7 +113,14 @@ public sealed class DdlGoldenTests
         Assert.Equal(["DROP TABLE \"t\"", "ALTER TABLE \"t__cl_rebuild\" RENAME TO \"t\""], rebuild.Skip(2));
 
         var renamed = new RenameColumnChange("t", "dbo", "Old", "New");
-        Assert.Equal(["EXEC sp_rename N'dbo.t.Old', N'New', N'COLUMN'"], SqlServerDataProvider.Instance.Ddl.Generate(renamed));
+        Assert.Equal(["EXEC sp_rename N'[dbo].[t].[Old]', N'New', N'COLUMN'"], SqlServerDataProvider.Instance.Ddl.Generate(renamed));
+        Assert.Equal(["EXEC sp_rename N'[o''x].[t]]].[a.b]', N'it''s', N'COLUMN'"],
+            SqlServerDataProvider.Instance.Ddl.Generate(new RenameColumnChange("t]", "o'x", "a.b", "it's")));
+
+        var dropped = SqlServerDataProvider.Instance.Ddl.Generate(new DropColumnChange("t", "dbo", "Old", new TableSchema("t", "dbo", [], [])));
+        Assert.Contains("OBJECT_ID(N'[dbo].[t]')", dropped[0], StringComparison.Ordinal);
+        Assert.EndsWith("EXEC(N'ALTER TABLE [dbo].[t] DROP CONSTRAINT ' + QUOTENAME(@df))", dropped[0], StringComparison.Ordinal);
+        Assert.Equal("ALTER TABLE [dbo].[t] DROP COLUMN [Old]", dropped[1]);
         Assert.Equal(["ALTER TABLE `t` RENAME COLUMN `Old` TO `New`"], MySqlDataProvider.Instance.Ddl.Generate(renamed with { Schema = null }));
     }
 

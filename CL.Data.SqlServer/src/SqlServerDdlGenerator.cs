@@ -36,7 +36,8 @@ public sealed class SqlServerDdlGenerator(SqlDialect dialect) : DdlGenerator(dia
     /// <inheritdoc />
     protected override string RenameColumn(RenameColumnChange change)
     {
-        var path = (change.Schema is null ? "" : change.Schema + ".") + change.Table + "." + change.From;
+        // The object path is quoted part by part, so names holding dots or brackets resolve to the right column.
+        var path = Table(change.Table, change.Schema) + "." + Q(change.From);
         return $"EXEC sp_rename N'{Escape(path)}', N'{Escape(change.To)}', N'COLUMN'";
     }
 
@@ -44,13 +45,13 @@ public sealed class SqlServerDdlGenerator(SqlDialect dialect) : DdlGenerator(dia
     protected override IReadOnlyList<string> DropColumn(DropColumnChange change)
     {
         // A column with a default constraint cannot be dropped until the constraint is.
+        // The constraint name comes from the catalog and goes through QUOTENAME, so a name holding ] cannot break out.
         var table = Table(change.Table, change.Schema);
-        var objectName = Escape((change.Schema is null ? "" : change.Schema + ".") + change.Table);
         return
         [
             $"DECLARE @df sysname = (SELECT dc.name FROM sys.default_constraints dc JOIN sys.columns c ON c.default_object_id = dc.object_id " +
-            $"WHERE dc.parent_object_id = OBJECT_ID(N'{objectName}') AND c.name = N'{Escape(change.Column)}'); " +
-            $"IF @df IS NOT NULL EXEC(N'ALTER TABLE {Escape(table)} DROP CONSTRAINT [' + @df + N']')",
+            $"WHERE dc.parent_object_id = OBJECT_ID(N'{Escape(table)}') AND c.name = N'{Escape(change.Column)}'); " +
+            $"IF @df IS NOT NULL EXEC(N'ALTER TABLE {Escape(table)} DROP CONSTRAINT ' + QUOTENAME(@df))",
             $"ALTER TABLE {table} DROP COLUMN {Q(change.Column)}",
         ];
     }

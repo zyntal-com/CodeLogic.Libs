@@ -242,6 +242,12 @@ public sealed class Repository<T>
     }
 
     /// <summary>Inserts <paramref name="entity"/> unless a row with the same key exists; says which happened.</summary>
+    /// <remarks>
+    /// On a <c>[TenantKey]</c> entity whose key or conflict index does not include the tenant column, a row of another tenant
+    /// with the same key also reports <see cref="InsertOutcome.Duplicate"/> (a plain insert fails with <c>data.duplicate_key</c>,
+    /// an upsert with <c>data.conflict</c>): the key space is shared, so callers can learn that the key is taken. Put the
+    /// tenant column into the primary key or unique index when keys come from users and must not be probed across tenants.
+    /// </remarks>
     public async ValueTask<Result<InsertOutcome>> InsertIgnoreAsync(T entity, CancellationToken ct = default)
     {
         var inserted = await InsertManyIgnoreAsync([entity], ct).ConfigureAwait(false);
