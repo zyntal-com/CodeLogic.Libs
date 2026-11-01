@@ -17,12 +17,16 @@ public record TwoFactorKey(string SecretKey, string IssuerName, string UserName,
     /// The OTP provisioning URI in the format:
     /// <c>otpauth://totp/{issuer}:{user}?secret={key}&amp;issuer={issuer}&amp;period={seconds}</c>
     /// <para>
+    /// Every component (issuer, user and secret) is percent-encoded with <see cref="Uri.EscapeDataString(string)"/>,
+    /// so a <c>:</c>, <c>&amp;</c>, <c>#</c> or <c>=</c> cannot change the URI's structure.
+    /// </para>
+    /// <para>
     /// This URI is used as the QR code payload for authenticator app scanning.
     /// </para>
     /// </summary>
     public string ProvisioningUri =>
         $"otpauth://totp/{Uri.EscapeDataString(IssuerName)}:{Uri.EscapeDataString(UserName)}" +
-        $"?secret={SecretKey}&issuer={Uri.EscapeDataString(IssuerName)}&period={PeriodSeconds}";
+        $"?secret={Uri.EscapeDataString(SecretKey)}&issuer={Uri.EscapeDataString(IssuerName)}&period={PeriodSeconds}";
 
     /// <summary>
     /// Returns a display-friendly string showing the issuer and user, not the secret key.

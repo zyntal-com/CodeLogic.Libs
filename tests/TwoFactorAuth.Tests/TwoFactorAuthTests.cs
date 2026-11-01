@@ -176,6 +176,40 @@ public class TotpWindowAndProvisioningTests
         var key = new TwoFactorKey(RfcSecret, "My App", "a@b.c", 45);
         Assert.Equal($"otpauth://totp/My%20App:a%40b.c?secret={RfcSecret}&issuer=My%20App&period=45", key.ProvisioningUri);
     }
+
+    [Fact]
+    public void Provisioning_uri_escapes_every_component()
+    {
+        // A secret with padding or a hostile value must not add or override query parameters.
+        var key = new TwoFactorKey("ABC=&issuer=Evil#x", "A&B:C", "u?v#w");
+        var uri = new Uri(key.ProvisioningUri);
+
+        Assert.Equal("otpauth://totp/A%26B%3AC:u%3Fv%23w?secret=ABC%3D%26issuer%3DEvil%23x&issuer=A%26B%3AC&period=30",
+            key.ProvisioningUri);
+        Assert.Equal(string.Empty, uri.Fragment);
+        Assert.Equal(3, uri.Query.TrimStart('?').Split('&').Length);
+    }
+
+    [Fact]
+    public void Validation_error_does_not_leak_exception_text()
+    {
+        var auth = new TwoFactorAuthenticator(new TwoFactorAuthConfig());
+        var result = auth.ValidateTotp("123456", "not-base32!!");
+
+        Assert.False(result.IsValid);
+        Assert.Equal(TotpValidationResult.ValidationErrorMessage, result.ErrorMessage);
+    }
+
+    [Fact]
+    public void Generate_error_does_not_leak_exception_text()
+    {
+        var auth = new TwoFactorAuthenticator(new TwoFactorAuthConfig());
+        var result = auth.GenerateTotpCode("not-base32!!");
+
+        Assert.True(result.IsFailure);
+        Assert.DoesNotContain("Base32", result.Error!.Message);
+        Assert.Null(result.Error.Details);
+    }
 }
 
 public class TwoFactorAuthConfigValidationTests
