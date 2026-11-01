@@ -150,12 +150,29 @@ var names = await db.SqlQueryAsync<string>($"SELECT Name FROM products WHERE Pri
 var total = await db.SqlScalarAsync<decimal>($"SELECT SUM(Price) FROM products");
 await db.ExecuteSqlAsync($"UPDATE products SET Stock = 0 WHERE Sku = {sku}");     // drops the connection's cached results
 var rows = await db.SqlReadAsync($"SELECT Id, Name FROM products", r => (r.GetInt64(0), r.GetString(1)));
+var ids = await db.SqlQueryAsync<long>($"INSERT INTO tags (Name) VALUES ({name}) RETURNING Id", SqlIntent.Write);
 
 // Escape hatch: the raw driver connection (the transaction's, inside a transaction view).
 var version = await db.WithConnectionAsync((connection, transaction, ct) => ValueTask.FromResult(connection.ServerVersion));
 ```
 
 `SqlText.Raw(...)` is for trusted, pre-built text only.
+
+**What a raw statement is** (`SqlIntent`) decides where `SqlQueryAsync`, `SqlReadAsync`, `SqlScalarAsync` and `DataBatch.Sql`
+run it, whether it is retried and what happens to the cache:
+
+| Intent | Runs on | Retried after a transient failure | Cache |
+|---|---|---|---|
+| `Auto` (default) | worked out from the text, see below | | |
+| `Read` | replica or primary, by read preference | yes | kept |
+| `ReadPrimary` | the primary | yes | kept |
+| `Write` | the primary | only when it certainly did not run | the connection's results dropped |
+| `SideEffect` | the primary | only when it certainly did not run | kept |
+
+`Auto` is conservative: only a single plain `SELECT`, `WITH ... SELECT`, `VALUES` or `SHOW` is a read. `INSERT ... RETURNING`,
+data-modifying CTEs, `SELECT ... INTO`, `FOR UPDATE`/`FOR SHARE`, `EXEC`/`CALL` and several statements in one text run as a
+write. A `SELECT` that calls a function with side effects (`nextval`, `pg_notify`, `GET_LOCK`) cannot be recognized; mark it
+`Write` or `SideEffect`. `ExecuteSqlAsync` always runs as a write.
 
 ## Compiled queries
 
@@ -180,7 +197,7 @@ var hits = await Above.ToListAsync(db, 25m);
   - A missing tenant returns `data.tenant_missing`, for reads and for every write: insert, upsert, bulk copy, update, delete and counters. A tenant value set on the entity is not enough; write for a specific tenant through `db.ForTenant(id)`.
   - Keys are shared across tenants unless the tenant column is part of the primary key or unique index. Then a row of another tenant with the same key still makes `InsertIgnoreAsync` report `Duplicate`, a plain insert fail with `data.duplicate_key` and an upsert fail with `data.conflict`: callers can learn that a key is taken. Put the tenant column into the key or unique index when keys come from users.
 - **Global filters:** `DatabaseOptions.Filters` holds standing conditions, for example `DataFilter.For<Product>(p => p.Active)`. Opt out per query with `IgnoreFilters()`. Soft delete is one of these filters.
-- **Interceptors:** `IDataInterceptor` runs around every command (`OnExecutingAsync`, `OnExecutedAsync`) and around every entity save (`OnSavingAsync`, `OnSavedAsync`).
+- **Interceptors:** `IDataInterceptor` runs around every command (`OnExecutingAsync`, `OnExecutedAsync`) and around every entity save (`OnSavingAsync`, `OnSavedAsync`). With interceptors or middleware configured, a large `InsertManyAsync` stays batched through the pipeline instead of switching to the native bulk path; `db.Bulk<T>()` itself never runs the command hooks.
 
 ## Bulk copy
 

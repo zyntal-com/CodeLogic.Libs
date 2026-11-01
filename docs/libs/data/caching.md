@@ -84,7 +84,8 @@ them. `WithCache` also works after `Select` (`q.Select(...).WithCache(policy)`).
 
 - **Automatic tags:** every cached result is tagged with each table it reads, including joined and sub-queried tables.
 - **Entity writes, upserts, set-based updates and deletes, and bulk copy** drop the tags of the tables they touch.
-- **Raw `ExecuteSqlAsync`** drops everything cached for that connection; `ExecuteSqlAsync(sql, tables)` drops only the results reading those tables.
+- **Raw `ExecuteSqlAsync`** drops everything cached for that connection; `ExecuteSqlAsync(sql, tables)` drops only the results reading those tables. So does a raw query that runs as a write (`SqlIntent.Write`, or a statement `Auto` does not see as a plain read).
+- **Keys:** a cached result is keyed by the connection, the SQL and every parameter value; array and list parameters are keyed element by element.
 - **Transactions:** reads inside a transaction never use the cache. Invalidations wait for commit, and a rollback drops nothing.
 - **Races:** a write that happens while a query is loading keeps that (possibly stale) result out of the cache.
 
