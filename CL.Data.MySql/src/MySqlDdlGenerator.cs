@@ -38,9 +38,10 @@ public sealed class MySqlDdlGenerator(SqlDialect dialect) : DdlGenerator(dialect
             : base.ImplicitDefault(column);
 
     /// <summary>
-    /// One ALTER TABLE per table for the column changes (ADD, MODIFY, DROP as clauses of a single statement): MySQL copies
-    /// the table for most column changes, so separate statements would rebuild a large table once per column. NULL
-    /// backfills run first; renames, indexes and foreign keys keep their own statements, in plan order.
+    /// One ALTER TABLE per table for the column and index changes (ADD/MODIFY/DROP COLUMN, DROP/ADD INDEX as clauses of a
+    /// single statement): MySQL copies the table for most column changes, so separate statements would rebuild a large
+    /// table once per column, and an index dropped after the copy would have been rebuilt for nothing. Index-only changes
+    /// become one in-place pass. NULL backfills run first; renames and foreign keys keep their own statements, in plan order.
     /// </summary>
     public override IReadOnlyList<string> GenerateAll(IReadOnlyList<SchemaChange> changes)
     {
@@ -68,6 +69,8 @@ public sealed class MySqlDdlGenerator(SqlDialect dialect) : DdlGenerator(dialect
                 AddColumnChange add => $"{AddColumnKeyword} {ColumnDefinition(ColumnToAdd(add.Column), null)}",
                 AlterColumnChange alter => $"MODIFY COLUMN {ColumnDefinition(alter.To, alter.Desired)}",
                 DropColumnChange drop => $"DROP COLUMN {Q(drop.Column)}",
+                DropIndexChange dropIndex => $"DROP INDEX {Q(dropIndex.Name)}",
+                CreateIndexChange create => $"ADD {(create.Index.Unique ? "UNIQUE " : "")}INDEX {Q(create.Index.Name)} ({IndexKey(create.Index)})",
                 _ => null,
             };
             var target = Table(change.Table, change.Schema);

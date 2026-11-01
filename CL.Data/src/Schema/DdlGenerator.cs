@@ -170,21 +170,23 @@ public class DdlGenerator(SqlDialect dialect)
     /// <summary>CREATE [UNIQUE] INDEX, with covering columns where supported.</summary>
     protected virtual string CreateIndex(string table, string? schema, IndexSchema index)
     {
-        var columns = index.Columns.Select((c, i) => Q(c) + (index.Descending.Count > i && index.Descending[i] ? " DESC" : "")).ToList();
         var sb = new StringBuilder("CREATE ").Append(index.Unique ? "UNIQUE " : "").Append("INDEX ").Append(IfNotExists).Append(Q(index.Name))
-            .Append(" ON ").Append(Table(table, schema)).Append(" (");
-        if (SupportsInclude)
-        {
-            sb.Append(string.Join(", ", columns)).Append(')');
-            if (index.Include.Count > 0) sb.Append(" INCLUDE (").Append(string.Join(", ", index.Include.Select(Q))).Append(')');
-        }
-        else
-        {
-            // No INCLUDE: append the covering columns to the key (still covering, slightly larger).
-            columns.AddRange(index.Include.Where(c => !index.Columns.Contains(c, StringComparer.OrdinalIgnoreCase)).Select(Q));
-            sb.Append(string.Join(", ", columns)).Append(')');
-        }
+            .Append(" ON ").Append(Table(table, schema)).Append(" (").Append(IndexKey(index)).Append(')');
+        if (SupportsInclude && index.Include.Count > 0)
+            sb.Append(" INCLUDE (").Append(string.Join(", ", index.Include.Select(Q))).Append(')');
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// The key column list of an index (with DESC flags). Without INCLUDE support the covering columns are appended to the
+    /// key (still covering, slightly larger).
+    /// </summary>
+    protected string IndexKey(IndexSchema index)
+    {
+        var columns = index.Columns.Select((c, i) => Q(c) + (index.Descending.Count > i && index.Descending[i] ? " DESC" : "")).ToList();
+        if (!SupportsInclude)
+            columns.AddRange(index.Include.Where(c => !index.Columns.Contains(c, StringComparer.OrdinalIgnoreCase)).Select(Q));
+        return string.Join(", ", columns);
     }
 
     /// <summary><c>IF NOT EXISTS </c> where CREATE INDEX supports it and a table rebuild may already have created the index.</summary>

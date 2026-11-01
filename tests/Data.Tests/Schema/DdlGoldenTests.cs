@@ -208,7 +208,23 @@ public sealed class DdlGoldenTests
     }
 
     [Fact]
-    public void MySql_merges_a_tables_column_changes_into_one_alter_after_the_backfills()
+    public void MySql_index_only_changes_become_one_alter_and_keep_unique_and_covering_columns()
+    {
+        SchemaChange[] changes =
+        [
+            new DropIndexChange("t", null, "ix_a"),
+            new DropIndexChange("t", null, "ix_b"),
+            new CreateIndexChange("t", null, new IndexSchema("ix_b", false, ["A", "B"]) { Include = ["C"] }),
+            new CreateIndexChange("t", null, new IndexSchema("ux_d", true, ["D"]) { Descending = [true] }),
+        ];
+        Assert.Equal(
+        [
+            "ALTER TABLE `t` DROP INDEX `ix_a`, DROP INDEX `ix_b`, ADD INDEX `ix_b` (`A`, `B`, `C`), ADD UNIQUE INDEX `ux_d` (`D` DESC)",
+        ], MySqlDataProvider.Instance.Ddl.GenerateAll(changes));
+    }
+
+    [Fact]
+    public void MySql_merges_a_tables_column_and_index_changes_into_one_alter_after_the_backfills()
     {
         var desired = new TableSchema("t", null, [new ColumnSchema("Name", "varchar(80)", false), new ColumnSchema("Body", "longtext", true)], []);
         SchemaChange[] changes =
@@ -222,11 +238,9 @@ public sealed class DdlGoldenTests
         ];
         Assert.Equal(
         [
-            "DROP INDEX `ix_old` ON `t`",
             "UPDATE `t` SET `Name` = '' WHERE `Name` IS NULL",
-            "ALTER TABLE `t` ADD COLUMN `Qty` int NOT NULL DEFAULT 0, MODIFY COLUMN `Name` varchar(80) NOT NULL, " +
-            "MODIFY COLUMN `Body` longtext NULL, DROP COLUMN `Old`",
-            "CREATE INDEX `ix_new` ON `t` (`Name`)",
+            "ALTER TABLE `t` DROP INDEX `ix_old`, ADD COLUMN `Qty` int NOT NULL DEFAULT 0, MODIFY COLUMN `Name` varchar(80) NOT NULL, " +
+            "MODIFY COLUMN `Body` longtext NULL, DROP COLUMN `Old`, ADD INDEX `ix_new` (`Name`)",
         ], MySqlDataProvider.Instance.Ddl.GenerateAll(changes));
 
         // Other providers keep one statement list per change.
