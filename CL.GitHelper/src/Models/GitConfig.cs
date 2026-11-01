@@ -80,7 +80,8 @@ public sealed class RepositoryConfiguration
     public bool AutoFetch { get; set; } = false;
 
     /// <summary>
-    /// How often (in minutes) to auto-fetch in the background. 0 disables the timer.
+    /// How often (in minutes) to fetch in the background while the library runs. 0 disables the
+    /// timer. Independent of <see cref="AutoFetch"/>, which fetches once at start-up.
     /// </summary>
     [ConfigField(Label = "Auto-fetch Interval (min)", Min = 0,
         Description = "Background fetch interval. 0 disables.",
@@ -88,10 +89,14 @@ public sealed class RepositoryConfiguration
     public int AutoFetchIntervalMinutes { get; set; } = 0;
 
     /// <summary>
-    /// Per-repository operation timeout in seconds.
+    /// Timeout in seconds for this repository's network operations (clone, fetch, the fetch step
+    /// of pull, push). 0 uses <see cref="GitHelperConfig.DefaultTimeoutSeconds"/>. A transfer that
+    /// runs longer is aborted at its next progress callback and returns <c>git.timeout</c>.
     /// </summary>
-    [Range(1, 3600)]
-    [ConfigField(Label = "Timeout (s)", Min = 1, Max = 3600, Group = "Sync", Order = 22, Collapsed = true)]
+    [Range(0, 3600)]
+    [ConfigField(Label = "Timeout (s)", Min = 0, Max = 3600,
+        Description = "Network operation timeout. 0 = library default.",
+        Group = "Sync", Order = 22, Collapsed = true)]
     public int TimeoutSeconds { get; set; } = 300;
 
     /// <summary>
@@ -141,7 +146,7 @@ public sealed class GitHelperConfig : ConfigModelBase
     ];
 
     /// <summary>
-    /// Default operation timeout applied when a repository config does not specify one.
+    /// Network operation timeout for repositories whose <see cref="RepositoryConfiguration.TimeoutSeconds"/> is 0.
     /// </summary>
     [Range(1, 3600)]
     [ConfigField(Label = "Default Timeout (s)", Min = 1, Max = 3600, Group = "Defaults", Order = 10)]
@@ -181,6 +186,22 @@ public sealed class GitHelperConfig : ConfigModelBase
 
         if (Repositories == null || Repositories.Count == 0)
             errors.Add("At least one repository must be configured.");
+        else
+        {
+            var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var repository in Repositories)
+            {
+                if (repository is null) { errors.Add("Repository entries must not be null."); continue; }
+                if (string.IsNullOrWhiteSpace(repository.Id))
+                    errors.Add("Every repository needs an Id.");
+                else if (!ids.Add(repository.Id))
+                    errors.Add($"Repository Id '{repository.Id}' is used more than once.");
+                if (repository.TimeoutSeconds is < 0 or > 3600)
+                    errors.Add($"Repository '{repository.Id}': TimeoutSeconds must be between 0 and 3600.");
+                if (repository.AutoFetchIntervalMinutes < 0)
+                    errors.Add($"Repository '{repository.Id}': AutoFetchIntervalMinutes must not be negative.");
+            }
+        }
 
         if (DefaultTimeoutSeconds is < 1 or > 3600)
             errors.Add("DefaultTimeoutSeconds must be between 1 and 3600.");
