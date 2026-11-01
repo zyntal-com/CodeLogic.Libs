@@ -17,7 +17,11 @@ if (connect.IsFailure)
     Console.WriteLine($"IMAP connect failed ({connect.Error!.Code}): {connect.Error.Message}");
 ```
 
-Connections open on demand for the read/search/manipulate operations, so an explicit `ConnectAsync` is optional except when you want to surface connection errors up front or before starting IDLE. `DisconnectAsync()` closes the connection.
+Connections open on demand for the read/search/manipulate operations, so an explicit `ConnectAsync` is optional except when you want to surface connection errors up front or before starting IDLE. Calling `ConnectAsync` again closes and replaces the current connection. `DisconnectAsync()` closes the connection.
+
+The service uses one IMAP connection and serializes calls on it, so it can be shared between threads; calls run one at a time. While IDLE is running, a call ends the IDLE command, runs, and IDLE resumes.
+
+Failures map to the matching kind: `ImapConnectionFailed` (`UnavailableError`) for an unreachable server, dropped connection or TLS failure, `ImapAuthenticationFailed`, `ImapTimeout`, `FolderNotFound` / `MessageNotFound` (`NotFoundError`), `ImapRejected` (`ValidationError`) when the server answers `NO`/`BAD` (for example creating a folder that exists), `Cancelled`, and `ImapError` (`InternalError`) for anything else.
 
 ### Folders
 
@@ -97,7 +101,7 @@ await mail.Imap.SetMessageFlagsAsync("INBOX", uid, MessageFlags.Seen, add: false
 
 ### IDLE push (RFC 2177)
 
-When the server advertises IDLE, `StartIdleAsync` monitors a folder on a background loop and raises `NewMailReceived` when new messages arrive. The connection auto-refreshes every `IdleRefreshMinutes` (RFC 2177 recommends staying under 29). IDLE also stops automatically when the library stops or the service is disposed.
+When the server advertises IDLE, `StartIdleAsync` monitors a folder on a background loop and raises `NewMailReceived` when new messages arrive. The connection auto-refreshes every `IdleRefreshMinutes` (RFC 2177 recommends staying under 29). After a dropped connection the loop reconnects and re-opens the folder on the new connection, and messages that arrived meanwhile are reported. `NewMailReceived` is raised outside the connection lock, so a handler may call the service. IDLE also stops automatically when the library stops or the service is disposed.
 
 ```csharp
 mail.Imap.NewMailReceived += (_, e) =>
@@ -108,7 +112,7 @@ await mail.Imap.StartIdleAsync("INBOX");
 mail.Imap.StopIdle();
 ```
 
-Set `Imap.EnableIdle` to `true` in configuration to allow IDLE; `StartIdleAsync` returns a failed `Result` (`MailErrorCodes.ImapError`) if the server does not advertise the capability.
+Set `Imap.EnableIdle` to `true` in configuration to allow IDLE: while it is `false`, `StartIdleAsync` fails with `MailErrorCodes.ImapConfigInvalid` (`ValidationError`). It returns `MailErrorCodes.ImapError` if the server does not advertise the capability.
 
 ## IMAP models
 
@@ -335,9 +339,9 @@ Add the `Imap` section to `config.mail.json` to enable reading. Omit it entirely
 | `Imap.Port` | `int` | `993` | IMAP server port. |
 | `Imap.Username` | `string` | `""` | IMAP username. |
 | `Imap.Password` | `string` | `""` | IMAP password (use an app password where required). |
-| `Imap.SecurityMode` | `MailSecurityMode` | `SslTls` | `None`, `StartTls`, or `SslTls` (implicit TLS, port 993). |
+| `Imap.SecurityMode` | `MailSecurityMode` | `SslTls` | `None`, `StartTls`, or `SslTls` (implicit TLS, port 993). Any other value is a configuration error. |
 | `Imap.TimeoutSeconds` | `int` | `30` | IMAP connect/operation timeout in seconds. |
-| `Imap.EnableIdle` | `bool` | `false` | Enable RFC 2177 IDLE push monitoring. |
+| `Imap.EnableIdle` | `bool` | `false` | Allow RFC 2177 IDLE push monitoring; `StartIdleAsync` is refused while `false`. |
 | `Imap.IdleRefreshMinutes` | `int` | `25` | IDLE connection refresh interval (1–28; keep under 29). |
 
 ## See also

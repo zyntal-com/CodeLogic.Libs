@@ -22,6 +22,9 @@ public sealed record MailMessage
     /// <summary>Blind carbon-copy recipient addresses.</summary>
     public IReadOnlyList<string> Bcc { get; init; } = [];
 
+    /// <summary>Reply-To addresses. Empty means replies go to <see cref="From"/>.</summary>
+    public IReadOnlyList<string> ReplyTo { get; init; } = [];
+
     /// <summary>Message subject line.</summary>
     public required string Subject { get; init; }
 
@@ -31,13 +34,19 @@ public sealed record MailMessage
     /// <summary>HTML body. At least one of <see cref="TextBody"/> or <see cref="HtmlBody"/> is required.</summary>
     public string? HtmlBody { get; init; }
 
-    /// <summary>Absolute file paths of attachments to include.</summary>
+    /// <summary>
+    /// Fully qualified file paths of attachments to include. A relative path fails with
+    /// <see cref="MailErrorCodes.InvalidAttachment"/>, a missing file with <see cref="MailErrorCodes.AttachmentNotFound"/>,
+    /// and with <see cref="SmtpConfig.AttachmentBaseDirectory"/> set, a file outside it with
+    /// <see cref="MailErrorCodes.InvalidAttachment"/>.
+    /// </summary>
     public IReadOnlyList<string> Attachments { get; init; } = [];
 
     /// <summary>
     /// Custom message headers (e.g., X-Mailer). Names must be printable US-ASCII without spaces or <c>:</c>, values
-    /// cannot contain a line break or NUL, and the headers the service writes itself (From, To, Cc, Bcc, Subject,
-    /// MIME-Version, Importance, Content-*) cannot be supplied; otherwise sending fails with
+    /// cannot contain a line break or NUL, and the headers the service writes itself or that identify the sender
+    /// (From, Sender, Reply-To, To, Cc, Bcc, Subject, Date, Message-Id, MIME-Version, Importance, Content-*, and the
+    /// trace and Resent-* fields) cannot be supplied; otherwise sending fails with
     /// <see cref="MailErrorCodes.InvalidHeader"/>.
     /// </summary>
     public IReadOnlyDictionary<string, string> Headers { get; init; } = new Dictionary<string, string>();

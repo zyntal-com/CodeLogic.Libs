@@ -67,7 +67,11 @@ public class DiscordAllowedMentions
 }
 
 /// <summary>
-/// Represents a Discord OAuth2 token response for bot/application authentication.
+/// Represents a Discord OAuth2 token response (<c>POST /oauth2/token</c>).
+/// <para>
+/// A data model only: CL.SocialConnect does not implement Discord OAuth2. Use it to deserialize the token
+/// response when your application runs the OAuth2 flow itself; see <see cref="DiscordUser"/>.
+/// </para>
 /// </summary>
 public class DiscordOAuthToken
 {

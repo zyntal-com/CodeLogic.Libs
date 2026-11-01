@@ -56,10 +56,10 @@ Accessing a disabled service throws `InvalidOperationException`. Guard with `Has
 
 ## Features
 
-- **Discord webhooks** — `SendMessageAsync` (plain text, max 2000 chars), `SendEmbedAsync` (up to 10 rich embeds), and `SendAsync` (full `DiscordWebhookMessage`); all return `Result`.
+- **Discord webhooks** — `SendMessageAsync` (plain text, max 2000 chars), `SendEmbedAsync` (up to 10 rich embeds), and `SendAsync` (full `DiscordWebhookMessage`); all return `Result`. Only `https://discord.com/api/webhooks/{id}/{token}` URLs (and `discordapp.com`, `ptb.`/`canary.`) are accepted (`IsValidWebhookUrl`); logs and events carry the URL with the token redacted.
 - **Rich embeds** — title, description, colour, fields, author, footer, image, thumbnail, and timestamp via `DiscordEmbed` / `DiscordEmbedField`.
 - **Mention control** — `DiscordAllowedMentions` (with `.None` / `.All`) whitelists which roles/users/`@everyone` may ping; opt-in TTS via `DiscordWebhookMessage.Tts`.
-- **Steam profiles** — `GetPlayerAsync`, `GetPlayerBansAsync`, `GetOwnedGamesAsync` return `Result<T>` with computed helpers (`IsPublic`, `IsInGame`, `HasAnyBan`, `TotalPlaytime`, `LastPlayed`).
+- **Steam profiles** — `GetPlayerAsync`, `GetPlayerBansAsync`, `GetOwnedGamesAsync` return `Result<T>` with computed helpers (`IsPublic`, `IsInGame`, `HasAnyBan`, `TotalPlaytime`, `LastPlayed`). Steam IDs must be SteamID64s (`SteamIds.IsSteamId64`), otherwise `social.steam.invalid_steamid`.
 - **Built-in cache** — Steam reads are cached for `CacheTtlSeconds` (default 300); clear on demand with `Steam.ClearCache()`.
 - **Steam authentication** — `Auth.AuthenticateAsync` validates a session ticket (per-call `appId` override) and returns `Result<SteamTicketIdentity>`; a rejected ticket is an `UnauthorizedError`.
 - **Steam sign-in** — `OpenId.BuildLoginUrl` / `OpenId.VerifyAsync` implement "Sign in through Steam" (OpenID 2.0): local checks of the signed assertion (endpoint, `return_to`, identity, signed fields, `response_nonce` age), then confirmation by Steam (`check_authentication`). Returns the 64-bit Steam ID and the assertion's `ResponseNonce` / `NonceIssuedAtUtc` for replay tracking.
@@ -97,13 +97,13 @@ Auto-generated on first run as `config.socialconnect.json`:
 |---------|---------|-------------|
 | `Enabled` | `true` | Master switch for the whole library. |
 | `Discord.Enabled` | `true` | Enable the Discord webhook service. |
-| `Discord.DefaultWebhookUrl` | `""` | Webhook used when a call omits `webhookUrl` (secret). |
+| `Discord.DefaultWebhookUrl` | `""` | Webhook used when a call omits `webhookUrl` (secret); must be a Discord webhook URL. |
 | `Discord.TimeoutSeconds` | `10` | HTTP timeout for Discord calls (1–120). |
 | `Discord.DefaultUsername` | `""` | Default sender name applied to messages. |
 | `Discord.DefaultAvatarUrl` | `""` | Default sender avatar applied to messages. |
-| `Steam.Enabled` | `false` | Enable the Steam profile service; **requires `ApiKey`**. |
+| `Steam.Enabled` | `false` | Enable the Steam services. The profile service **requires `ApiKey`**; sign-in (OpenID) alone does not. |
 | `Steam.ApiKey` | `""` | Steam Web API key (secret) — get one at [steamcommunity.com/dev/apikey](https://steamcommunity.com/dev/apikey). |
-| `Steam.AuthEnabled` | `false` | Enable ticket authentication; **requires `AppId`**. |
+| `Steam.AuthEnabled` | `false` | Enable ticket authentication; **requires `AppId` and `ApiKey`**. |
 | `Steam.AppId` | `""` | Your game's Steam App ID (used by auth). |
 | `Steam.OpenIdEnabled` | `true` | Enable "Sign in through Steam" (OpenID) while Steam is enabled. OpenID itself needs no key. |
 | `Steam.OpenIdNonceMaxAgeSeconds` | `300` | Oldest sign-in assertion accepted, by its `response_nonce` timestamp (`social.steam.openid_expired`); `0` = no age limit. |
@@ -119,7 +119,7 @@ With CodeLogic 4.9+, `config.socialconnect.json` applies live when changed throu
 - **Steam settings**: `social.Steam`, `social.Auth` and `social.OpenId` are replaced; the profile cache starts empty.
 - **Enabled flags**: each service, and the whole library, can be switched on or off.
 
-A replaced service is disposed only after its request timeout, so requests already running on it finish. Read `social.Discord` / `social.Steam` / `social.Auth` / `social.OpenId` when you use them rather than keeping an old instance.
+A replaced service is disposed only after its request timeout, so requests already running on it finish. Read `social.Discord` / `social.Steam` / `social.Auth` / `social.OpenId` when you use them rather than keeping an old instance. An invalid configuration is logged and ignored; the last valid one stays active.
 
 ## Documentation
 

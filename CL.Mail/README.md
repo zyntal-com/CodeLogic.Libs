@@ -86,13 +86,14 @@ Auto-generated on first run as `config.mail.json`. The `Imap` section is optiona
 | `Enabled` | `true` | Master switch; when `false` the services aren't created and health reports *disabled*. |
 | `Smtp.Host` / `Smtp.Port` | `smtp.example.com` / `587` | SMTP server and port. |
 | `Smtp.Username` / `Smtp.Password` | `""` | SMTP credentials (use an app password where required). |
-| `Smtp.SecurityMode` | `StartTls` | `None`, `StartTls` (STARTTLS, port 587), or `SslTls` (implicit TLS, port 465). |
+| `Smtp.SecurityMode` | `StartTls` | `None`, `StartTls` (STARTTLS, port 587), or `SslTls` (implicit TLS, port 465); any other value is a config error. |
 | `Smtp.TimeoutSeconds` | `30` | SMTP connect/operation timeout. |
+| `Smtp.AttachmentBaseDirectory` | `null` | When set, attachments must be files inside this directory. |
 | `Imap` | `null` | Optional; omit the whole section to disable IMAP. |
 | `Imap.SecurityMode` | `SslTls` | `None`, `StartTls`, or `SslTls` (implicit TLS, port 993). |
-| `Imap.EnableIdle` | `false` | Enable RFC 2177 IDLE push monitoring. |
+| `Imap.EnableIdle` | `false` | Allow RFC 2177 IDLE push monitoring (`StartIdleAsync` is refused while `false`). |
 | `Imap.IdleRefreshMinutes` | `25` | IDLE connection refresh interval (1–28; keep under 29). |
-| `DefaultFromEmail` / `DefaultFromName` | `null` | Fallback sender when a message omits `From`. |
+| `DefaultFromEmail` / `DefaultFromName` | `null` | Fallback sender when a message from `CreateMessage()` / `SendTemplatedAsync` omits `From`. |
 | `TemplateDirectory` | `templates` | Template folder; relative to the library data dir unless absolute. |
 
 ### Changing config while running

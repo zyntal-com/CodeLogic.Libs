@@ -43,6 +43,8 @@ string secret = key.SecretKey;            // Base32
 string uri    = key.ProvisioningUri;      // otpauth://totp/MyApp:user%40example.com?secret=...&issuer=MyApp&period=30
 ```
 
+Issuer, user and secret are all percent-encoded, so a `:`, `&`, `#` or `=` in any of them cannot change the URI's structure.
+
 > **Store the secret encrypted.** Anyone with the Base32 secret can generate valid codes. Treat it like a password.
 
 ### 2. Show a QR code
@@ -170,9 +172,13 @@ public record TotpValidationResult
     public bool IsValid { get; }
     public long? MatchedWindow { get; }   // absolute time step that matched (Unix time / TimeStepSeconds), null if invalid
     public int? WindowOffset { get; }     // drift: matched step minus the current step (0, -1, +1, ...), null if invalid
-    public string? ErrorMessage { get; }
+    public string? ErrorMessage { get; }  // "Invalid code", or ValidationErrorMessage when validation could not run
 }
 ```
+
+`ErrorMessage` never carries exception text. A malformed secret gives the generic
+`TotpValidationResult.ValidationErrorMessage` ("The code could not be validated."); the exception is logged.
+`GenerateTotpCode` likewise returns `2fa.generate_failed` with a generic message.
 
 `TotpValidatedEvent.MatchedWindow` carries the same absolute step (`long?`).
 

@@ -26,7 +26,9 @@ public sealed class MailConfig : ConfigModelBase
     public ImapConfig? Imap { get; set; }
 
     /// <summary>
-    /// Default sender e-mail address used when a message does not specify one explicitly.
+    /// Default sender e-mail address used when a message does not specify one explicitly: the builders returned by
+    /// <c>MailLibrary.CreateMessage()</c> and used by <c>SendTemplatedAsync</c> fall back to it in
+    /// <see cref="Services.MailBuilder.Build"/>.
     /// </summary>
     [ConfigField(Label = "Default From Email", InputType = ConfigInputType.Email,
         Description = "Sender address used when a message doesn't set one explicitly.",
@@ -34,7 +36,8 @@ public sealed class MailConfig : ConfigModelBase
     public string? DefaultFromEmail { get; set; }
 
     /// <summary>
-    /// Default sender display name used when a message does not specify one explicitly.
+    /// Default sender display name, used together with <see cref="DefaultFromEmail"/> when a message does not set a
+    /// sender.
     /// </summary>
     [ConfigField(Label = "Default From Name", Placeholder = "Example Team", Group = "Defaults", Order = 11)]
     public string? DefaultFromName { get; set; }
@@ -59,6 +62,18 @@ public sealed class MailConfig : ConfigModelBase
         if (Smtp.Port is < 1 or > 65535)
             errors.Add("Smtp.Port must be between 1 and 65535.");
 
+        if (!Enum.IsDefined(Smtp.SecurityMode))
+            errors.Add($"Smtp.SecurityMode '{Smtp.SecurityMode}' is not a known security mode.");
+
+        if (!string.IsNullOrWhiteSpace(Smtp.AttachmentBaseDirectory) && !Path.IsPathFullyQualified(Smtp.AttachmentBaseDirectory))
+            errors.Add("Smtp.AttachmentBaseDirectory must be a fully qualified path.");
+
+        if (!string.IsNullOrWhiteSpace(DefaultFromEmail) && !Services.SmtpService.IsValidAddress(DefaultFromEmail))
+            errors.Add("DefaultFromEmail is not a valid e-mail address.");
+
+        if (DefaultFromName is not null && DefaultFromName.AsSpan().IndexOfAny('\r', '\n') >= 0)
+            errors.Add("DefaultFromName cannot contain a line break.");
+
         if (Imap is not null)
         {
             if (string.IsNullOrWhiteSpace(Imap.Host))
@@ -66,6 +81,9 @@ public sealed class MailConfig : ConfigModelBase
 
             if (Imap.Port is < 1 or > 65535)
                 errors.Add("Imap.Port must be between 1 and 65535.");
+
+            if (!Enum.IsDefined(Imap.SecurityMode))
+                errors.Add($"Imap.SecurityMode '{Imap.SecurityMode}' is not a known security mode.");
         }
 
         return errors.Count > 0
@@ -110,6 +128,16 @@ public sealed class SmtpConfig
     [Range(1, 300)]
     [ConfigField(Label = "SMTP Timeout (s)", Min = 1, Max = 300, Group = "SMTP", Order = 25, Collapsed = true)]
     public int TimeoutSeconds { get; set; } = 30;
+
+    /// <summary>
+    /// When set (a fully qualified directory), attachments must be files inside it; a path (or link target) outside
+    /// fails with <see cref="MailErrorCodes.InvalidAttachment"/>. Set it when attachment paths can be influenced by
+    /// users. Default: <c>null</c> (any fully qualified path).
+    /// </summary>
+    [ConfigField(Label = "Attachment Base Directory",
+        Description = "If set, attachments must be files inside this directory.",
+        Group = "SMTP", Order = 26, Collapsed = true)]
+    public string? AttachmentBaseDirectory { get; set; }
 }
 
 /// <summary>
@@ -149,7 +177,8 @@ public sealed class ImapConfig
     public int TimeoutSeconds { get; set; } = 30;
 
     /// <summary>
-    /// Whether to enable RFC 2177 IDLE push notifications.
+    /// Whether RFC 2177 IDLE push notifications are allowed. <c>ImapService.StartIdleAsync</c> fails with
+    /// <see cref="MailErrorCodes.ImapConfigInvalid"/> while this is <c>false</c>.
     /// Requires the IMAP server to advertise the IDLE capability.
     /// </summary>
     [ConfigField(Label = "Enable IDLE", Description = "RFC 2177 push notifications. Requires server IDLE support.",

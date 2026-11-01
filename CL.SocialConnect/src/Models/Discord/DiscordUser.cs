@@ -3,7 +3,12 @@ using System.Text.Json.Serialization;
 namespace CL.SocialConnect.Models.Discord;
 
 /// <summary>
-/// Represents a Discord user object returned by the Discord API.
+/// Represents a Discord user object returned by the Discord API (<c>GET /users/@me</c>).
+/// <para>
+/// A data model only: CL.SocialConnect does not implement Discord OAuth2 or call the user endpoints. Use it to
+/// deserialize the response when your application runs the OAuth2 flow itself (for example with ASP.NET Core's
+/// authentication handlers) and calls <c>https://discord.com/api/users/@me</c> with the token.
+/// </para>
 /// </summary>
 public class DiscordUser
 {
@@ -53,12 +58,13 @@ public class DiscordUser
         if (string.IsNullOrEmpty(Avatar))
         {
             // Default avatar index is discriminator % 5 (or 0 for new usernames)
-            var index = Discriminator == "0" ? 0 : int.Parse(Discriminator) % 5;
+            var index = int.TryParse(Discriminator, System.Globalization.NumberStyles.None,
+                System.Globalization.CultureInfo.InvariantCulture, out var discriminator) ? discriminator % 5 : 0;
             return $"https://cdn.discordapp.com/embed/avatars/{index}.png";
         }
 
-        var extension = Avatar.StartsWith("a_") ? "gif" : "png";
-        return $"https://cdn.discordapp.com/avatars/{Id}/{Avatar}.{extension}?size={size}";
+        var extension = Avatar.StartsWith("a_", StringComparison.Ordinal) ? "gif" : "png";
+        return $"https://cdn.discordapp.com/avatars/{Uri.EscapeDataString(Id)}/{Uri.EscapeDataString(Avatar)}.{extension}?size={size}";
     }
 
     /// <summary>Returns the user's tag in <c>Username#Discriminator</c> format.</summary>

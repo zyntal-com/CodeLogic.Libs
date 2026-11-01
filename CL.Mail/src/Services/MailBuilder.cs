@@ -17,9 +17,12 @@ namespace CL.Mail.Services;
 /// </summary>
 public sealed class MailBuilder
 {
+    private readonly string? _defaultFrom;
+    private readonly string? _defaultFromName;
     private string? _from;
     private string? _fromName;
     private readonly List<string> _to = [];
+    private readonly List<string> _replyTo = [];
     private readonly List<string> _cc = [];
     private readonly List<string> _bcc = [];
     private string? _subject;
@@ -28,6 +31,22 @@ public sealed class MailBuilder
     private readonly List<string> _attachments = [];
     private readonly Dictionary<string, string> _headers = [];
     private MailPriority _priority = MailPriority.Normal;
+
+    /// <summary>Creates a builder without a default sender: <see cref="From(string)"/> is required.</summary>
+    public MailBuilder() { }
+
+    /// <summary>
+    /// Creates a builder that falls back to <paramref name="defaultFromEmail"/> / <paramref name="defaultFromName"/>
+    /// when <see cref="From(string)"/> is not called (<c>MailLibrary.CreateMessage()</c> passes
+    /// <see cref="MailConfig.DefaultFromEmail"/> and <see cref="MailConfig.DefaultFromName"/>).
+    /// </summary>
+    /// <param name="defaultFromEmail">Sender address used when none is set; <c>null</c> for none.</param>
+    /// <param name="defaultFromName">Sender display name used with the default address.</param>
+    public MailBuilder(string? defaultFromEmail, string? defaultFromName = null)
+    {
+        _defaultFrom = string.IsNullOrWhiteSpace(defaultFromEmail) ? null : defaultFromEmail;
+        _defaultFromName = string.IsNullOrWhiteSpace(defaultFromName) ? null : defaultFromName;
+    }
 
     /// <summary>Sets the sender e-mail address.</summary>
     public MailBuilder From(string email) { _from = email; return this; }
@@ -40,6 +59,9 @@ public sealed class MailBuilder
 
     /// <summary>Adds multiple primary recipients.</summary>
     public MailBuilder To(params string[] emails) { foreach (var e in emails.Where(x => !string.IsNullOrWhiteSpace(x))) _to.Add(e); return this; }
+
+    /// <summary>Adds a Reply-To address.</summary>
+    public MailBuilder ReplyTo(string email) { if (!string.IsNullOrWhiteSpace(email)) _replyTo.Add(email); return this; }
 
     /// <summary>Adds a CC recipient.</summary>
     public MailBuilder Cc(string email) { if (!string.IsNullOrWhiteSpace(email)) _cc.Add(email); return this; }
@@ -65,7 +87,7 @@ public sealed class MailBuilder
     /// <summary>Sets both the plain-text and HTML body at once.</summary>
     public MailBuilder Body(string textBody, string htmlBody) { _textBody = textBody; _htmlBody = htmlBody; return this; }
 
-    /// <summary>Adds a file attachment by absolute path.</summary>
+    /// <summary>Adds a file attachment by fully qualified path (checked when the message is sent).</summary>
     public MailBuilder Attach(string filePath) { if (!string.IsNullOrWhiteSpace(filePath)) _attachments.Add(filePath); return this; }
 
     /// <summary>Adds multiple file attachments.</summary>
@@ -80,11 +102,23 @@ public sealed class MailBuilder
     /// <summary>
     /// Builds the immutable <see cref="MailMessage"/>.
     /// </summary>
+    /// <remarks>
+    /// Without <see cref="From(string)"/>, the default sender passed to the constructor is used (address and
+    /// display name).
+    /// </remarks>
     /// <exception cref="InvalidOperationException">Thrown when required fields are missing.</exception>
     public MailMessage Build()
     {
-        if (string.IsNullOrWhiteSpace(_from))
-            throw new InvalidOperationException("Sender e-mail must be specified (call From()).");
+        var from = _from;
+        var fromName = _fromName;
+        if (string.IsNullOrWhiteSpace(from))
+        {
+            from = _defaultFrom;
+            fromName ??= _defaultFromName;
+        }
+
+        if (string.IsNullOrWhiteSpace(from))
+            throw new InvalidOperationException("Sender e-mail must be specified (call From() or set MailConfig.DefaultFromEmail).");
 
         if (_to.Count == 0)
             throw new InvalidOperationException("At least one recipient must be specified (call To()).");
@@ -97,9 +131,10 @@ public sealed class MailBuilder
 
         return new MailMessage
         {
-            From = _from,
-            FromName = _fromName,
+            From = from,
+            FromName = fromName,
             To = _to.AsReadOnly(),
+            ReplyTo = _replyTo.AsReadOnly(),
             Cc = _cc.AsReadOnly(),
             Bcc = _bcc.AsReadOnly(),
             Subject = _subject,
