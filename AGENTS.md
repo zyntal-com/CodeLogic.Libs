@@ -3,9 +3,9 @@
 Independent NuGet libraries built on the [CodeLogic](https://github.com/zyntal-com/CodeLogic) framework,
 published as `CodeLogic.<Name>` (source folders `CL.<Name>/`).
 - **5.x (`main`):** Common, Data (with the providers Data.MySql, Data.PostgreSql, Data.SqlServer and
-  Data.Sqlite), GameNetQuery, GitHelper, Imaging, Mail, NetUtils, SocialConnect, Storage, SystemStats and
-  TwoFactorAuth.
-- **4.x (`support/4.x`):** the same, minus Data and Imaging, plus the database libraries MSSQL, MySQL2,
+  Data.Sqlite), GameNetQuery, GitHelper, Imaging, Mail, Mqtt, NetUtils, SocialConnect, Storage, SystemStats
+  and TwoFactorAuth.
+- **4.x (`support/4.x`):** the same, minus Data, Imaging and Mqtt, plus the database libraries MSSQL, MySQL2,
   PostgreSQL and SQLite. In 5.x, CL.Data replaces those four; CL.Imaging takes over CL.Common's imaging.
 Each library has its own `README.md` and `CHANGELOG.md`; shared build logic is in `Directory.Build.props`
 and `Directory.Build.targets`.
