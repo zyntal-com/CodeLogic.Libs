@@ -161,6 +161,28 @@ public sealed class BrokerClientIntegrationTests
     }
 
     [Fact]
+    public async Task Broker_publishes_reach_subscribers_when_anonymous_access_is_off_and_skip_taps()
+    {
+        // Regression: the broker's own messages went through the authorizer as an anonymous client and were dropped.
+        await using var broker = await TestBroker.StartAsync(c =>
+        {
+            c.AllowAnonymous = false;
+            c.Users = [new() { Username = "device", Password = "p", SubscribeTopics = ["commands/#"] }];
+        });
+        var tapped = new Inbox();
+        using var tap = broker.Broker.Tap("#", tapped.Handle).ValueOrThrow();
+        var device = broker.Client("device", c => { c.Username = "device"; c.Password = "p"; });
+        (await device.ConnectAsync()).ThrowIfFailure();
+        var inbox = new Inbox();
+        (await device.SubscribeAsync("commands/#", inbox.Handle)).ValueOrThrow();
+
+        (await broker.Broker.PublishAsync("commands/lamp", "on")).ThrowIfFailure();
+
+        Assert.Equal("on", (await inbox.WaitForAsync(1))[0].PayloadAsString());
+        await tapped.ExpectNoMoreThanAsync(0);
+    }
+
+    [Fact]
     public async Task Mqtt5_publishers_learn_that_a_publish_was_refused()
     {
         await using var broker = await TestBroker.StartAsync(c =>

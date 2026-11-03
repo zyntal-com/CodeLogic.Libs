@@ -308,6 +308,11 @@ public sealed class MqttBrokerService : IAsyncDisposable
 
     private async Task OnInterceptingPublishAsync(InterceptingPublishEventArgs e)
     {
+        // The broker's own publishes (PublishAsync) pass through here too. They are trusted and are not shown to
+        // taps; without this, a broker that refuses anonymous clients would drop its own messages.
+        if (e.ClientId == BrokerClientId)
+            return;
+
         var topic = e.ApplicationMessage.Topic;
         var username = string.IsNullOrEmpty(e.UserName) ? null : e.UserName;
         if (!Authorizer.CanPublish(username, e.ClientId, topic))
