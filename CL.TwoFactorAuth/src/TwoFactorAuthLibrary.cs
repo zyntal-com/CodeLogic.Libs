@@ -41,6 +41,7 @@ public sealed class TwoFactorAuthLibrary : ILibrary
     private LibraryContext? _context;
     private TwoFactorAuthenticator? _authenticator;
     private QrCodeGenerator? _qrCode;
+    private readonly InMemoryTotpUsedStepStore _usedSteps = new();
 
     // ── Phase 1: Configure ────────────────────────────────────────────────────
 
@@ -79,7 +80,9 @@ public sealed class TwoFactorAuthLibrary : ILibrary
             return Task.CompletedTask;
         }
 
-        _authenticator = new TwoFactorAuthenticator(config, context.Logger, context.Events);
+        // One in-memory replay store for the process. An application on several servers constructs
+        // TwoFactorAuthenticator itself with a shared ITotpUsedStepStore.
+        _authenticator = new TwoFactorAuthenticator(config, context.Logger, context.Events, _usedSteps);
         _qrCode = new QrCodeGenerator(config, context.Logger);
 
         context.Logger.Info($"{Manifest.Name} initialized (timeStep={config.TimeStepSeconds}s, window={config.WindowSize})");
@@ -160,10 +163,14 @@ public sealed class TwoFactorAuthLibrary : ILibrary
     /// <param name="user">The user account name (typically an email address).</param>
     public TwoFactorKey GenerateNewKey(string issuer, string user) => Authenticator.GenerateNewKey(issuer, user);
 
-    /// <summary>Validates a TOTP code against the given secret key.</summary>
-    /// <param name="code">The 6-digit TOTP code to validate.</param>
+    /// <summary>
+    /// Validates a TOTP code against the given secret key. Pass <paramref name="userId"/> to refuse a code that was
+    /// already accepted for that user (replay protection) and to publish a <c>TotpValidatedEvent</c>.
+    /// </summary>
+    /// <param name="code">The 6-digit TOTP code to validate (whitespace is ignored).</param>
     /// <param name="secretKey">The Base32-encoded TOTP secret key.</param>
-    public TotpValidationResult ValidateTotp(string code, string secretKey) => Authenticator.ValidateTotp(code, secretKey);
+    /// <param name="userId">The user the code belongs to; <c>null</c> checks the code only.</param>
+    public TotpValidationResult ValidateTotp(string code, string secretKey, string? userId = null) => Authenticator.ValidateTotp(code, secretKey, userId);
 
     /// <summary>
     /// Generates a QR code data URI for embedding in HTML.
