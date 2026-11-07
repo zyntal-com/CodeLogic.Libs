@@ -1,4 +1,6 @@
+using System.Buffers.Text;
 using System.Globalization;
+using System.Security.Cryptography;
 using System.Text.RegularExpressions;
 using CL.SocialConnect.Events;
 using CL.SocialConnect.Models;
@@ -14,15 +16,21 @@ namespace CL.SocialConnect.Services.Steam;
 /// <para>
 /// <see cref="BuildLoginUrl"/> gives the URL to send the browser to. Steam sends it back to your
 /// <c>return_to</c> URL with a signed assertion, and <see cref="VerifyAsync(IEnumerable{KeyValuePair{string, string}}, string, CancellationToken)"/>
-/// checks it locally and then asks Steam to confirm it (<c>check_authentication</c>). The only thing
-/// Steam returns is the player's 64-bit Steam ID. Use <see cref="SteamProfileService"/> afterwards
-/// for the name and avatar.
+/// checks it locally, refuses a <c>response_nonce</c> it has verified before (<see cref="IOpenIdNonceStore"/>), and
+/// then asks Steam to confirm it (<c>check_authentication</c>). The only thing Steam returns is the player's 64-bit
+/// Steam ID. Use <see cref="SteamProfileService"/> afterwards for the name and avatar.
 /// </para>
 /// <para>
-/// Bind every login attempt to the browser that started it: put a random per-attempt value in
-/// <c>return_to</c> (for example <c>?state=…</c>), keep it in a cookie, and pass the exact
-/// <c>return_to</c> to <c>VerifyAsync</c>. Steam signs <c>return_to</c>, so a callback taken from
-/// someone else's login cannot be replayed into another browser.
+/// Bind every login attempt to the browser that started it: put a random per-attempt value from
+/// <see cref="CreateState"/> in <c>return_to</c> (for example <c>?state=…</c>), keep it in a cookie, and on the
+/// callback rebuild <c>return_to</c> from the cookie and pass it to <c>VerifyAsync</c>. Steam signs <c>return_to</c>,
+/// so a callback taken from someone else's login cannot be replayed into another browser.
+/// </para>
+/// <para>
+/// With <c>SteamConfig.OpenIdRealm</c> set, <c>return_to</c> must lie inside that site; without it (and without a
+/// <c>realm</c> argument) the realm is the scheme and host of <c>return_to</c> itself, which means a <c>return_to</c>
+/// taken from user input can point the browser at any site. Set <c>OpenIdRealm</c> unless <c>return_to</c> is a
+/// constant in your code.
 /// </para>
 /// </summary>
 public sealed partial class SteamOpenIdService : IDisposable
@@ -39,19 +47,25 @@ public sealed partial class SteamOpenIdService : IDisposable
     // An assertion stamped further ahead than this (clock skew between Steam and this host) is refused.
     private static readonly TimeSpan MaxFutureSkew = TimeSpan.FromMinutes(1);
 
+    // How long a verified nonce is remembered when the age check is off (OpenIdNonceMaxAgeSeconds = 0).
+    private static readonly TimeSpan NonceRetentionWithoutAgeCheck = TimeSpan.FromHours(24);
+
     private readonly ILogger? _logger;
     private readonly IEventBus? _events;
     private readonly HttpClient _http;
     private readonly TimeSpan? _maxNonceAge;
+    private readonly Uri? _configuredRealm;
+    private readonly IOpenIdNonceStore _nonces;
 
     /// <summary>
     /// Initializes a new instance of <see cref="SteamOpenIdService"/>.
     /// </summary>
-    /// <param name="config">Steam configuration (<c>TimeoutSeconds</c> and <c>OpenIdNonceMaxAgeSeconds</c>; OpenID needs no API key).</param>
+    /// <param name="config">Steam configuration (<c>TimeoutSeconds</c>, <c>OpenIdNonceMaxAgeSeconds</c>, <c>OpenIdRealm</c>; OpenID needs no API key).</param>
     /// <param name="logger">Optional scoped logger.</param>
     /// <param name="events">Optional event bus for publishing <see cref="SteamOpenIdVerifiedEvent"/>.</param>
-    public SteamOpenIdService(SteamConfig config, ILogger? logger = null, IEventBus? events = null)
-        : this(config, new HttpClientHandler(), logger, events)
+    /// <param name="nonceStore">Where verified nonces are remembered; <c>null</c> for a new <see cref="InMemoryOpenIdNonceStore"/>.</param>
+    public SteamOpenIdService(SteamConfig config, ILogger? logger = null, IEventBus? events = null, IOpenIdNonceStore? nonceStore = null)
+        : this(config, new HttpClientHandler(), logger, events, nonceStore)
     {
     }
 
@@ -59,16 +73,22 @@ public sealed partial class SteamOpenIdService : IDisposable
     /// Initializes a new instance of <see cref="SteamOpenIdService"/> that sends verification
     /// requests through <paramref name="handler"/> (tests, outbound proxies).
     /// </summary>
-    /// <param name="config">Steam configuration (<c>TimeoutSeconds</c> and <c>OpenIdNonceMaxAgeSeconds</c>).</param>
+    /// <param name="config">Steam configuration (<c>TimeoutSeconds</c>, <c>OpenIdNonceMaxAgeSeconds</c>, <c>OpenIdRealm</c>).</param>
     /// <param name="handler">HTTP handler for the <c>check_authentication</c> request; disposed with the service.</param>
     /// <param name="logger">Optional scoped logger.</param>
     /// <param name="events">Optional event bus for publishing <see cref="SteamOpenIdVerifiedEvent"/>.</param>
-    public SteamOpenIdService(SteamConfig config, HttpMessageHandler handler, ILogger? logger = null, IEventBus? events = null)
+    /// <param name="nonceStore">Where verified nonces are remembered; <c>null</c> for a new <see cref="InMemoryOpenIdNonceStore"/>.</param>
+    /// <exception cref="ArgumentException"><c>config.OpenIdRealm</c> is set but not an absolute http(s) URL.</exception>
+    public SteamOpenIdService(SteamConfig config, HttpMessageHandler handler, ILogger? logger = null, IEventBus? events = null, IOpenIdNonceStore? nonceStore = null)
     {
         ArgumentNullException.ThrowIfNull(config);
         ArgumentNullException.ThrowIfNull(handler);
+        if (!config.TryGetOpenIdRealm(out _configuredRealm, out var realmError))
+            throw new ArgumentException(realmError, nameof(config));
+
         _logger = logger;
         _events = events;
+        _nonces = nonceStore ?? new InMemoryOpenIdNonceStore();
         _maxNonceAge = config.OpenIdNonceMaxAgeSeconds > 0 ? TimeSpan.FromSeconds(config.OpenIdNonceMaxAgeSeconds) : null;
         _http = new HttpClient(handler, disposeHandler: true)
         {
@@ -79,28 +99,38 @@ public sealed partial class SteamOpenIdService : IDisposable
     // ── Public API ────────────────────────────────────────────────────────────
 
     /// <summary>
+    /// A random per-attempt value to put in <c>return_to</c> (for example <c>?state=…</c>) and in a cookie: 32 bytes
+    /// (256 bits) from <see cref="RandomNumberGenerator"/>, encoded URL-safe (base64url, 43 characters, no padding).
+    /// </summary>
+    public static string CreateState() => Base64Url.EncodeToString(RandomNumberGenerator.GetBytes(32));
+
+    /// <summary>
     /// Builds the Steam sign-in URL to redirect the browser to.
     /// </summary>
     /// <param name="returnTo">
     /// Absolute <c>http</c>/<c>https</c> URL Steam sends the browser back to, including your
-    /// per-attempt state. Pass the same value to <c>VerifyAsync</c>.
+    /// per-attempt state. Pass the same value to <c>VerifyAsync</c>. With <c>SteamConfig.OpenIdRealm</c> set it
+    /// must lie inside that site.
     /// </param>
     /// <param name="realm">
-    /// The site Steam shows the user ("Sign in to …"). Defaults to the scheme and host of
-    /// <paramref name="returnTo"/>; when given, <paramref name="returnTo"/> must start with it.
+    /// The site Steam shows the user ("Sign in to …"); <paramref name="returnTo"/> must lie inside it. Defaults to
+    /// <c>SteamConfig.OpenIdRealm</c>, and without that to the scheme and host of <paramref name="returnTo"/>.
     /// </param>
     /// <returns>The <c>https://steamcommunity.com/openid/login?…</c> URL.</returns>
-    /// <exception cref="ArgumentException">The URLs are not absolute http(s) URLs, or <paramref name="returnTo"/> is outside <paramref name="realm"/>.</exception>
+    /// <exception cref="ArgumentException">The URLs are not absolute http(s) URLs, or <paramref name="returnTo"/> is outside <paramref name="realm"/> or the configured realm.</exception>
     public string BuildLoginUrl(string returnTo, string? realm = null)
     {
         var target = AbsoluteHttpUrl(returnTo, nameof(returnTo));
         if (!string.IsNullOrEmpty(target.Fragment))
             throw new ArgumentException("The return URL must not contain a fragment.", nameof(returnTo));
 
-        var resolvedRealm = realm is null
-            ? target.GetLeftPart(UriPartial.Authority) + "/"
-            : AbsoluteHttpUrl(realm, nameof(realm)).AbsoluteUri;
-        if (!target.AbsoluteUri.StartsWith(resolvedRealm, StringComparison.OrdinalIgnoreCase))
+        if (_configuredRealm is not null && !IsInside(target, _configuredRealm))
+            throw new ArgumentException("The return URL must be inside the configured Steam.OpenIdRealm.", nameof(returnTo));
+
+        var resolvedRealm = realm is not null
+            ? AbsoluteHttpUrl(realm, nameof(realm))
+            : _configuredRealm ?? new Uri(target.GetLeftPart(UriPartial.Authority) + "/");
+        if (!IsInside(target, resolvedRealm))
             throw new ArgumentException("The return URL must be inside the realm.", nameof(returnTo));
 
         var query = string.Join('&', new[]
@@ -108,7 +138,7 @@ public sealed partial class SteamOpenIdService : IDisposable
             ("openid.ns", OpenIdNs),
             ("openid.mode", "checkid_setup"),
             ("openid.return_to", returnTo),
-            ("openid.realm", resolvedRealm),
+            ("openid.realm", resolvedRealm.AbsoluteUri),
             ("openid.identity", IdentifierSelect),
             ("openid.claimed_id", IdentifierSelect)
         }.Select(p => p.Item1 + "=" + Uri.EscapeDataString(p.Item2)));
@@ -121,7 +151,7 @@ public sealed partial class SteamOpenIdService : IDisposable
     /// </summary>
     /// <param name="queryString">The raw query string of the callback request (with or without the leading <c>?</c>).</param>
     /// <param name="expectedReturnTo">The exact <c>return_to</c> this browser was sent to Steam with.</param>
-    /// <param name="cancellationToken">Cancels the verification request.</param>
+    /// <param name="cancellationToken">Cancels the verification request (<c>social.steam.cancelled</c>).</param>
     /// <returns>A <see cref="Result{T}"/> with the verified <see cref="SteamOpenIdResult"/>, or why it was refused.</returns>
     public Task<Result<SteamOpenIdResult>> VerifyAsync(string queryString, string expectedReturnTo, CancellationToken cancellationToken = default) =>
         VerifyAsync(ParseQuery(queryString ?? string.Empty), expectedReturnTo, cancellationToken);
@@ -132,13 +162,15 @@ public sealed partial class SteamOpenIdService : IDisposable
     /// Local checks first (mode, namespace, provider endpoint, <c>return_to</c>, claimed id = identity,
     /// a well-formed SteamID64, the required fields signed, no repeated <c>openid.*</c> parameters, a well-formed
     /// <c>response_nonce</c> no older than <c>OpenIdNonceMaxAgeSeconds</c> (<c>social.steam.openid_expired</c>)
-    /// and not dated more than a minute ahead),
-    /// then Steam must answer <c>is_valid:true</c> to <c>check_authentication</c>.
+    /// and not dated more than a minute ahead), then the nonce is recorded in the <see cref="IOpenIdNonceStore"/>
+    /// (a nonce seen before is <c>social.steam.openid_replayed</c>), and finally Steam must answer
+    /// <c>is_valid:true</c> to <c>check_authentication</c>. The nonce is recorded before Steam is asked, so an
+    /// assertion whose confirmation failed (Steam unreachable, timed out) cannot be presented again: the user signs in again.
     /// </para>
     /// </summary>
     /// <param name="parameters">The callback's query parameters (decoded). Non-<c>openid.*</c> parameters are ignored.</param>
     /// <param name="expectedReturnTo">The exact <c>return_to</c> this browser was sent to Steam with.</param>
-    /// <param name="cancellationToken">Cancels the verification request.</param>
+    /// <param name="cancellationToken">Cancels the verification request (<c>social.steam.cancelled</c>).</param>
     /// <returns>A <see cref="Result{T}"/> with the verified <see cref="SteamOpenIdResult"/>, or why it was refused.</returns>
     public async Task<Result<SteamOpenIdResult>> VerifyAsync(IEnumerable<KeyValuePair<string, string>> parameters, string expectedReturnTo, CancellationToken cancellationToken = default)
     {
@@ -148,10 +180,11 @@ public sealed partial class SteamOpenIdService : IDisposable
         var fields = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var (key, value) in parameters)
         {
-            if (!key.StartsWith("openid.", StringComparison.Ordinal))
+            if (key is null || !key.StartsWith("openid.", StringComparison.Ordinal))
                 continue;
+            // The parameter name is caller input: sanitised and truncated before it reaches a log line or an event.
             if (!fields.TryAdd(key, value ?? string.Empty))
-                return Refuse("social.steam.openid_invalid", $"Parameter '{key}' appears more than once", verifiedAt);
+                return Refuse("social.steam.openid_invalid", $"Parameter '{InputText.ForLog(key)}' appears more than once", verifiedAt);
         }
 
         string Get(string name) => fields.TryGetValue("openid." + name, out var v) ? v : string.Empty;
@@ -186,6 +219,18 @@ public sealed partial class SteamOpenIdService : IDisposable
 
         var steamId = match.Groups[1].Value;
 
+        // Record the nonce before asking Steam, so two concurrent verifications of one assertion cannot both pass.
+        var forgetAt = _maxNonceAge is { } retain ? issuedAt + retain + MaxFutureSkew : verifiedAt + NonceRetentionWithoutAgeCheck;
+        try
+        {
+            if (!await _nonces.TryUseAsync(nonce, forgetAt, cancellationToken).ConfigureAwait(false))
+                return Refuse("social.steam.openid_replayed", "The assertion has already been used", verifiedAt, steamId);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return Cancelled(verifiedAt);
+        }
+
         // Ask Steam whether it really issued this assertion.
         var verify = fields.Select(f => new KeyValuePair<string, string>(f.Key, f.Key == "openid.mode" ? "check_authentication" : f.Value)).ToList();
         try
@@ -201,7 +246,11 @@ public sealed partial class SteamOpenIdService : IDisposable
             if (!valid)
                 return Refuse("social.steam.openid_rejected", "Steam did not confirm the sign-in", verifiedAt, steamId);
         }
-        catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return Cancelled(verifiedAt);
+        }
+        catch (OperationCanceledException ex)
         {
             var errMsg = $"[{SocialError.Timeout}] Steam OpenID verification timed out: {ex.Message}";
             _logger?.Warning(errMsg);
@@ -248,6 +297,14 @@ public sealed partial class SteamOpenIdService : IDisposable
         return Result<SteamOpenIdResult>.Failure(Error.Unauthorized(code, errMsg));
     }
 
+    private Result<SteamOpenIdResult> Cancelled(DateTime verifiedAt)
+    {
+        const string errMsg = "Steam OpenID verification was cancelled";
+        _logger?.Warning(errMsg);
+        _events?.Publish(new SteamOpenIdVerifiedEvent(string.Empty, false, verifiedAt, errMsg));
+        return Result<SteamOpenIdResult>.Failure(Error.Unavailable("social.steam.cancelled", errMsg));
+    }
+
     private static Uri AbsoluteHttpUrl(string value, string paramName)
     {
         if (string.IsNullOrWhiteSpace(value)
@@ -255,6 +312,24 @@ public sealed partial class SteamOpenIdService : IDisposable
             || uri.Scheme is not ("http" or "https"))
             throw new ArgumentException("An absolute http or https URL is required.", paramName);
         return uri;
+    }
+
+    /// <summary>
+    /// Whether <paramref name="target"/> lies inside <paramref name="realm"/>: same scheme, host and port, and the
+    /// realm's path is a directory prefix of the target's path (<c>https://a.example/app</c> contains
+    /// <c>/app</c> and <c>/app/cb</c>, not <c>/apple</c>).
+    /// </summary>
+    private static bool IsInside(Uri target, Uri realm)
+    {
+        if (!string.Equals(target.Scheme, realm.Scheme, StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(target.Host, realm.Host, StringComparison.OrdinalIgnoreCase)
+            || target.Port != realm.Port)
+            return false;
+
+        var prefix = realm.AbsolutePath.TrimEnd('/');
+        var path = target.AbsolutePath;
+        return prefix.Length == 0
+            || (path.StartsWith(prefix, StringComparison.Ordinal) && (path.Length == prefix.Length || path[prefix.Length] == '/'));
     }
 
     private static List<KeyValuePair<string, string>> ParseQuery(string query)

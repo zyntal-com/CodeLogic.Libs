@@ -33,13 +33,34 @@ public sealed class DiscordWebhookService : IDisposable
     /// <param name="logger">Optional scoped logger.</param>
     /// <param name="events">Optional event bus for publishing <see cref="WebhookSentEvent"/>.</param>
     public DiscordWebhookService(Models.DiscordConfig config, ILogger? logger = null, IEventBus? events = null)
+        : this(config, new SocketsHttpHandler(), logger, events)
     {
+    }
+
+    /// <summary>
+    /// Initializes a new instance of <see cref="DiscordWebhookService"/> that sends requests through
+    /// <paramref name="handler"/> (tests, outbound proxies). A <see cref="SocketsHttpHandler"/> or
+    /// <see cref="HttpClientHandler"/> has its automatic redirects switched off.
+    /// </summary>
+    /// <param name="config">Discord configuration (webhook URL, timeout, defaults).</param>
+    /// <param name="handler">HTTP handler for the webhook requests; disposed with the service.</param>
+    /// <param name="logger">Optional scoped logger.</param>
+    /// <param name="events">Optional event bus for publishing <see cref="WebhookSentEvent"/>.</param>
+    public DiscordWebhookService(Models.DiscordConfig config, HttpMessageHandler handler, ILogger? logger = null, IEventBus? events = null)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+        ArgumentNullException.ThrowIfNull(handler);
         _config = config;
         _logger = logger;
         _events = events;
         // No redirects: a webhook URL is validated before the request, and a redirect would take the
-        // request (and its payload) somewhere that was never checked.
-        _http = new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false }, disposeHandler: true)
+        // request (and its payload) somewhere that was never checked. A 3xx answer is a failed delivery.
+        switch (handler)
+        {
+            case SocketsHttpHandler sockets: sockets.AllowAutoRedirect = false; break;
+            case HttpClientHandler client: client.AllowAutoRedirect = false; break;
+        }
+        _http = new HttpClient(handler, disposeHandler: true)
         {
             Timeout = TimeSpan.FromSeconds(config.TimeoutSeconds > 0 ? config.TimeoutSeconds : 10)
         };
@@ -115,8 +136,9 @@ public sealed class DiscordWebhookService : IDisposable
     /// <param name="webhookUrl">
     /// Webhook URL to post to. Falls back to <c>config.DefaultWebhookUrl</c> when not specified.
     /// </param>
+    /// <param name="cancellationToken">Cancels the request (<c>social.discord.cancelled</c>).</param>
     /// <returns>A <see cref="Result"/> indicating whether the message was delivered successfully.</returns>
-    public Task<Result> SendMessageAsync(string content, string? webhookUrl = null)
+    public Task<Result> SendMessageAsync(string content, string? webhookUrl = null, CancellationToken cancellationToken = default)
     {
         var message = new DiscordWebhookMessage
         {
@@ -124,7 +146,7 @@ public sealed class DiscordWebhookService : IDisposable
             Username = string.IsNullOrWhiteSpace(_config.DefaultUsername) ? null : _config.DefaultUsername,
             AvatarUrl = string.IsNullOrWhiteSpace(_config.DefaultAvatarUrl) ? null : _config.DefaultAvatarUrl
         };
-        return SendAsync(message, webhookUrl);
+        return SendAsync(message, webhookUrl, cancellationToken);
     }
 
     /// <summary>
@@ -135,8 +157,9 @@ public sealed class DiscordWebhookService : IDisposable
     /// <param name="webhookUrl">
     /// Webhook URL to post to. Falls back to <c>config.DefaultWebhookUrl</c> when not specified.
     /// </param>
+    /// <param name="cancellationToken">Cancels the request (<c>social.discord.cancelled</c>).</param>
     /// <returns>A <see cref="Result"/> indicating whether the message was delivered successfully.</returns>
-    public Task<Result> SendEmbedAsync(IEnumerable<DiscordEmbed> embeds, string? content = null, string? webhookUrl = null)
+    public Task<Result> SendEmbedAsync(IEnumerable<DiscordEmbed> embeds, string? content = null, string? webhookUrl = null, CancellationToken cancellationToken = default)
     {
         var message = new DiscordWebhookMessage
         {
@@ -145,7 +168,7 @@ public sealed class DiscordWebhookService : IDisposable
             Username = string.IsNullOrWhiteSpace(_config.DefaultUsername) ? null : _config.DefaultUsername,
             AvatarUrl = string.IsNullOrWhiteSpace(_config.DefaultAvatarUrl) ? null : _config.DefaultAvatarUrl
         };
-        return SendAsync(message, webhookUrl);
+        return SendAsync(message, webhookUrl, cancellationToken);
     }
 
     /// <summary>
@@ -155,9 +178,11 @@ public sealed class DiscordWebhookService : IDisposable
     /// <param name="webhookUrl">
     /// Webhook URL to post to. Falls back to <c>config.DefaultWebhookUrl</c> when not specified.
     /// </param>
+    /// <param name="cancellationToken">Cancels the request (<c>social.discord.cancelled</c>).</param>
     /// <returns>A <see cref="Result"/> indicating whether the message was delivered successfully.</returns>
-    public async Task<Result> SendAsync(DiscordWebhookMessage message, string? webhookUrl = null)
+    public async Task<Result> SendAsync(DiscordWebhookMessage message, string? webhookUrl = null, CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(message);
         var url = ResolveUrl(webhookUrl);
         if (string.IsNullOrWhiteSpace(url))
         {
@@ -193,7 +218,7 @@ public sealed class DiscordWebhookService : IDisposable
 
             _logger?.Debug($"Sending webhook to {RedactWebhookUrl(url)}");
 
-            var response = await _http.PostAsync(webhookUri, content).ConfigureAwait(false);
+            using var response = await _http.PostAsync(webhookUri, content, cancellationToken).ConfigureAwait(false);
 
             if (response.IsSuccessStatusCode)
             {
@@ -202,7 +227,7 @@ public sealed class DiscordWebhookService : IDisposable
                 return Result.Success();
             }
 
-            var body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+            var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
             var errMsg = $"Webhook delivery failed: HTTP {(int)response.StatusCode}. Body: {body}";
             _logger?.Warning(errMsg);
             PublishWebhookEvent(url, webhookId, false, sentAt, (int)response.StatusCode, errMsg);
@@ -215,7 +240,14 @@ public sealed class DiscordWebhookService : IDisposable
                 )
             );
         }
-        catch (TaskCanceledException ex)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            const string errMsg = "Webhook request was cancelled";
+            _logger?.Warning(errMsg);
+            PublishWebhookEvent(url, webhookId, false, sentAt, null, errMsg);
+            return Result.Failure(Error.Unavailable("social.discord.cancelled", errMsg));
+        }
+        catch (OperationCanceledException ex)
         {
             var errMsg = $"[{SocialError.Timeout}] Webhook request timed out: {ex.Message}";
             _logger?.Error(errMsg, ex);

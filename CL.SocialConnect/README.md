@@ -40,17 +40,24 @@ if (social.HasSteam)
 // Steam — "Sign in through Steam" on a website (OpenID 2.0; returns the Steam ID)
 if (social.HasSteamOpenId)
 {
-    // 1. Redirect the browser. Keep the per-attempt state in a cookie.
-    var returnTo = $"https://example.com/auth/steam/callback?state={state}";
-    string loginUrl = social.OpenId.BuildLoginUrl(returnTo);
+    // 1. Start: a random per-attempt state goes into return_to AND into an HttpOnly cookie, then redirect.
+    var state = SteamOpenIdService.CreateState();
+    response.Cookies.Append("steam_state", state, new CookieOptions { HttpOnly = true, Secure = true, SameSite = SameSiteMode.Lax });
+    string loginUrl = social.OpenId.BuildLoginUrl($"https://example.com/auth/steam/callback?state={state}");
 
-    // 2. On the callback, verify against the exact return_to you sent.
-    Result<SteamOpenIdResult> signIn = await social.OpenId.VerifyAsync(callbackQueryString, returnTo);
-    // 3. Refuse a nonce you have already accepted (replay); keep each one for OpenIdNonceMaxAgeSeconds.
-    if (signIn.IsSuccess && seenNonces.TryAdd(signIn.Value.ResponseNonce, signIn.Value.NonceIssuedAtUtc))
-        Console.WriteLine($"Signed in as {signIn.Value.SteamId}");
+    // 2. Callback: read the state back from the cookie, rebuild the exact return_to, verify.
+    //    A missing cookie, or one that differs from the ?state= Steam echoes, means this browser never started the login.
+    var expectedState = request.Cookies["steam_state"];
+    if (expectedState is null || expectedState != request.Query["state"]) return Unauthorized();
+    var returnTo = $"https://example.com/auth/steam/callback?state={expectedState}";
+    Result<SteamOpenIdResult> signIn = await social.OpenId.VerifyAsync(request.QueryString.Value, returnTo);
+    response.Cookies.Delete("steam_state");
+    if (signIn.IsSuccess)
+        Console.WriteLine($"Signed in as {signIn.Value.SteamId}");   // a replayed assertion fails with social.steam.openid_replayed
 }
 ```
+
+Set `Steam.OpenIdRealm` (for example `https://example.com/`) so a `return_to` built from user input cannot send the browser elsewhere.
 
 Accessing a disabled service throws `InvalidOperationException`. Guard with `HasDiscord` / `HasSteam` / `HasSteamAuth` / `HasSteamOpenId` when a service may be turned off — Steam is disabled by default.
 
@@ -60,9 +67,11 @@ Accessing a disabled service throws `InvalidOperationException`. Guard with `Has
 - **Rich embeds** — title, description, colour, fields, author, footer, image, thumbnail, and timestamp via `DiscordEmbed` / `DiscordEmbedField`.
 - **Mention control** — `DiscordAllowedMentions` (with `.None` / `.All`) whitelists which roles/users/`@everyone` may ping; opt-in TTS via `DiscordWebhookMessage.Tts`.
 - **Steam profiles** — `GetPlayerAsync`, `GetPlayerBansAsync`, `GetOwnedGamesAsync` return `Result<T>` with computed helpers (`IsPublic`, `IsInGame`, `HasAnyBan`, `TotalPlaytime`, `LastPlayed`). Steam IDs must be SteamID64s (`SteamIds.IsSteamId64`), otherwise `social.steam.invalid_steamid`.
-- **Built-in cache** — Steam reads are cached for `CacheTtlSeconds` (default 300); clear on demand with `Steam.ClearCache()`.
+- **Built-in cache** — Steam reads are cached for `CacheTtlSeconds` (default 300), at most `MaxCacheEntries` (default 10 000) per cache with the oldest evicted when full; clear on demand with `Steam.ClearCache()`.
 - **Steam authentication** — `Auth.AuthenticateAsync` validates a session ticket (per-call `appId` override) and returns `Result<SteamTicketIdentity>`; a rejected ticket is an `UnauthorizedError`.
-- **Steam sign-in** — `OpenId.BuildLoginUrl` / `OpenId.VerifyAsync` implement "Sign in through Steam" (OpenID 2.0): local checks of the signed assertion (endpoint, `return_to`, identity, signed fields, `response_nonce` age), then confirmation by Steam (`check_authentication`). Returns the 64-bit Steam ID and the assertion's `ResponseNonce` / `NonceIssuedAtUtc` for replay tracking.
+- **Steam sign-in** — `OpenId.BuildLoginUrl` / `OpenId.VerifyAsync` implement "Sign in through Steam" (OpenID 2.0): local checks of the signed assertion (endpoint, `return_to`, identity, signed fields, `response_nonce` age), a replay check against an `IOpenIdNonceStore` (`social.steam.openid_replayed`), then confirmation by Steam (`check_authentication`). `OpenIdRealm` pins `return_to` to your site; `CreateState()` gives the per-attempt state.
+- **Cancellation** — every network call takes a `CancellationToken` (last parameter); a cancelled call is an `UnavailableError` (`social.steam.cancelled` / `social.discord.cancelled`), never an exception.
+- **Testable** — every service has a constructor taking an `HttpMessageHandler` (fakes, outbound proxies).
 - **Events** — `WebhookSentEvent`, `SteamProfileFetchedEvent`, `SteamAuthenticatedEvent`, and `SteamOpenIdVerifiedEvent` on the CodeLogic event bus.
 
 ## Configuration
@@ -86,7 +95,9 @@ Auto-generated on first run as `config.socialconnect.json`:
     "appId": "",
     "openIdEnabled": true,
     "openIdNonceMaxAgeSeconds": 300,
+    "openIdRealm": "https://example.com/",
     "cacheTtlSeconds": 300,
+    "maxCacheEntries": 10000,
     "timeoutSeconds": 15,
     "apiBaseUrl": "https://api.steampowered.com"
   }
@@ -107,9 +118,11 @@ Auto-generated on first run as `config.socialconnect.json`:
 | `Steam.AppId` | `""` | Your game's Steam App ID (used by auth). |
 | `Steam.OpenIdEnabled` | `true` | Enable "Sign in through Steam" (OpenID) while Steam is enabled. OpenID itself needs no key. |
 | `Steam.OpenIdNonceMaxAgeSeconds` | `300` | Oldest sign-in assertion accepted, by its `response_nonce` timestamp (`social.steam.openid_expired`); `0` = no age limit. |
+| `Steam.OpenIdRealm` | `""` | Site every sign-in `return_to` must lie inside (absolute http(s) URL). Empty = derived from the return URL; set it unless `return_to` is a constant. |
 | `Steam.CacheTtlSeconds` | `300` | Profile cache lifetime in seconds (must be > 0). |
+| `Steam.MaxCacheEntries` | `10000` | Upper bound per profile cache (players, bans, games); the oldest entries are evicted when full. |
 | `Steam.TimeoutSeconds` | `15` | HTTP timeout for Steam calls (1–120). |
-| `Steam.ApiBaseUrl` | `https://api.steampowered.com` | Steam Web API base URL. |
+| `Steam.ApiBaseUrl` | `https://api.steampowered.com` | Steam Web API base URL; must be `https` without user info (the API key is sent to it). |
 
 ### Changing config while running
 

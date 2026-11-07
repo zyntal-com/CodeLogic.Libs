@@ -49,6 +49,8 @@ public sealed class SocialConnectLibrary : ILibrary, IConfigReloadable
     private SteamAuthenticationService? _auth;
     private SteamOpenIdService? _openId;
     private SocialConnectConfig? _applied;
+    // Shared by every SteamOpenIdService this library creates, so a config change does not forget verified nonces.
+    private readonly InMemoryOpenIdNonceStore _nonces = new();
 
     // ── Phase 1: Configure ────────────────────────────────────────────────────
 
@@ -104,37 +106,51 @@ public sealed class SocialConnectLibrary : ILibrary, IConfigReloadable
         context.Logger.Info("Discord webhook service initialized");
     }
 
+    /// <summary>
+    /// Builds the Steam services for <paramref name="config"/> and only then swaps them in: a constructor that
+    /// throws leaves the running services untouched.
+    /// </summary>
     private void BuildSteam(LibraryContext context, SocialConnectConfig config)
     {
-        _steam = null;
-        _auth = null;
-        _openId = null;
+        SteamProfileService? steam = null;
+        SteamAuthenticationService? auth = null;
+        SteamOpenIdService? openId = null;
+
+        if (config.Enabled && config.Steam.Enabled)
+        {
+            try
+            {
+                // Steam profile service (needs the Web API key; Steam sign-in does not)
+                if (!string.IsNullOrWhiteSpace(config.Steam.ApiKey))
+                    steam = new SteamProfileService(config.Steam, context.Logger, context.Events);
+
+                // Steam authentication service (optional, requires AppId and the API key)
+                if (config.Steam.AuthEnabled && !string.IsNullOrWhiteSpace(config.Steam.ApiKey))
+                    auth = new SteamAuthenticationService(config.Steam, context.Logger, context.Events);
+
+                // Steam OpenID sign-in for websites (optional, on by default)
+                if (config.Steam.OpenIdEnabled)
+                    openId = new SteamOpenIdService(config.Steam, context.Logger, context.Events, _nonces);
+            }
+            catch
+            {
+                steam?.Dispose();
+                auth?.Dispose();
+                openId?.Dispose();
+                throw;
+            }
+        }
+
+        _steam = steam;
+        _auth = auth;
+        _openId = openId;
+
         if (!config.Enabled || !config.Steam.Enabled) return;
-
-        // Steam profile service (needs the Web API key; Steam sign-in does not)
-        if (!string.IsNullOrWhiteSpace(config.Steam.ApiKey))
-        {
-            _steam = new SteamProfileService(config.Steam, context.Logger, context.Events);
-            context.Logger.Info("Steam profile service initialized");
-        }
-        else
-        {
-            context.Logger.Info("Steam profile service not created: no Steam API key (Steam sign-in only)");
-        }
-
-        // Steam authentication service (optional, requires AppId and the API key)
-        if (config.Steam.AuthEnabled && !string.IsNullOrWhiteSpace(config.Steam.ApiKey))
-        {
-            _auth = new SteamAuthenticationService(config.Steam, context.Logger, context.Events);
-            context.Logger.Info("Steam authentication service initialized");
-        }
-
-        // Steam OpenID sign-in for websites (optional, on by default)
-        if (config.Steam.OpenIdEnabled)
-        {
-            _openId = new SteamOpenIdService(config.Steam, context.Logger, context.Events);
-            context.Logger.Info("Steam OpenID sign-in service initialized");
-        }
+        context.Logger.Info(steam is not null
+            ? "Steam profile service initialized"
+            : "Steam profile service not created: no Steam API key (Steam sign-in only)");
+        if (auth is not null) context.Logger.Info("Steam authentication service initialized");
+        if (openId is not null) context.Logger.Info("Steam OpenID sign-in service initialized");
     }
 
     // ── Live config changes ──────────────────────────────────────────────────
@@ -160,28 +176,37 @@ public sealed class SocialConnectLibrary : ILibrary, IConfigReloadable
 
         // Compare with what is actually running, not with the previous (possibly ignored) value.
         var previous = _applied ?? change.GetOld<SocialConnectConfig>();
+
+        try
+        {
+            if (!ConfigDiff.ValueEquals(ActiveDiscord(previous), ActiveDiscord(current)))
+            {
+                var old = _discord;
+                BuildDiscord(context, current);
+                RetireLater(old, previous?.Discord.TimeoutSeconds ?? 0);
+                if (_discord is null) context.Logger.Info("Discord webhook service turned off");
+            }
+
+            if (!ConfigDiff.ValueEquals(ActiveSteam(previous), ActiveSteam(current)))
+            {
+                var oldSteam = _steam;
+                var oldAuth = _auth;
+                var oldOpenId = _openId;
+                BuildSteam(context, current);   // builds first, swaps after: a failure leaves the old services running
+                RetireLater(oldSteam, previous?.Steam.TimeoutSeconds ?? 0);
+                RetireLater(oldAuth, previous?.Steam.TimeoutSeconds ?? 0);
+                RetireLater(oldOpenId, previous?.Steam.TimeoutSeconds ?? 0);
+                if (_steam is null && _auth is null && _openId is null) context.Logger.Info("Steam services turned off");
+            }
+        }
+        catch (ArgumentException ex)
+        {
+            // Validate() covers every constructor argument; this is a last line of defence, not an expected path.
+            context.Logger.Error($"{Manifest.Name}: ignored configuration the services refused, keeping the current one: {ex.Message}", ex);
+            return Task.CompletedTask;
+        }
+
         _applied = current;
-
-        if (!ConfigDiff.ValueEquals(ActiveDiscord(previous), ActiveDiscord(current)))
-        {
-            var old = _discord;
-            BuildDiscord(context, current);
-            RetireLater(old, previous?.Discord.TimeoutSeconds ?? 0);
-            if (_discord is null) context.Logger.Info("Discord webhook service turned off");
-        }
-
-        if (!ConfigDiff.ValueEquals(ActiveSteam(previous), ActiveSteam(current)))
-        {
-            var oldSteam = _steam;
-            var oldAuth = _auth;
-            var oldOpenId = _openId;
-            BuildSteam(context, current);
-            RetireLater(oldSteam, previous?.Steam.TimeoutSeconds ?? 0);
-            RetireLater(oldAuth, previous?.Steam.TimeoutSeconds ?? 0);
-            RetireLater(oldOpenId, previous?.Steam.TimeoutSeconds ?? 0);
-            if (_steam is null && _auth is null && _openId is null) context.Logger.Info("Steam services turned off");
-        }
-
         return Task.CompletedTask;
     }
 

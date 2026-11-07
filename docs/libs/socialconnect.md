@@ -102,7 +102,7 @@ var message = new DiscordWebhookMessage
 Result r = await social.Discord.SendAsync(message);
 ```
 
-All three methods publish a `WebhookSentEvent` after the request completes.
+All three methods take a `CancellationToken` as their last parameter; a cancelled send fails with `UnavailableError` `social.discord.cancelled`. They publish a `WebhookSentEvent` after the request completes. For tests and outbound proxies, `new DiscordWebhookService(config, httpMessageHandler, logger, events)` routes requests through your handler (automatic redirects are switched off on a `SocketsHttpHandler` / `HttpClientHandler`); a 3xx answer counts as a failed delivery.
 
 ### Discord model reference
 
@@ -245,7 +245,7 @@ if (r.IsSuccess)
 }
 ```
 
-Each profile read publishes a `SteamProfileFetchedEvent` carrying a `FromCache` flag.
+Each method takes a `CancellationToken` as its last parameter (a cancelled read is `UnavailableError` `social.steam.cancelled`), and each profile read publishes a `SteamProfileFetchedEvent` carrying a `FromCache` flag. `new SteamProfileService(config, httpMessageHandler, logger, events)` routes requests through your own handler. The service refuses a `Steam.ApiBaseUrl` that is not an absolute `https` URL without user info (`ArgumentException`), because the API key is in every request's query string; the key never appears in logs or events.
 
 ### Steam model reference
 
@@ -310,7 +310,7 @@ public class SteamGame
 
 `SteamAuthenticationService` validates a Steam session ticket — typically used by a game server to confirm a connecting client's identity. It requires `Steam.AuthEnabled = true`, a configured `Steam.AppId` and a `Steam.ApiKey`.
 
-`AuthenticateAsync(ticket, appId?)` validates the hex-encoded ticket; the optional `appId` overrides `Steam.AppId` for that call. It returns `Result<SteamTicketIdentity>`: success always means Steam accepted the ticket.
+`AuthenticateAsync(ticket, appId?, cancellationToken)` validates the hex-encoded ticket; the optional `appId` overrides `Steam.AppId` for that call. It returns `Result<SteamTicketIdentity>`: success always means Steam accepted the ticket and answered with SteamID64s (an answer whose `steamid` / `ownersteamid` is anything else is `social.steam.parse_error`, and no identity is published).
 
 ```csharp
 if (social.HasSteamAuth)
@@ -330,8 +330,9 @@ if (social.HasSteamAuth)
 | Steam rejected the ticket (invalid, expired, forged, other app) | `UnauthorizedError` | `social.steam.auth_failed` (`Details` = Steam error code when given) |
 | No answer within `TimeoutSeconds` | `TimeoutError` | `social.steam.timeout` |
 | Steam unreachable or answered 5xx | `UnavailableError` | `social.steam.network_error` |
+| The `cancellationToken` was cancelled | `UnavailableError` | `social.steam.cancelled` |
 | Steam answered 4xx (e.g. bad API key) | `InternalError` | `social.steam.request_rejected` (`Details` = HTTP status) |
-| Unreadable answer / anything else | `InternalError` | `social.steam.parse_error` / `social.steam.error` |
+| Unreadable answer (or Steam IDs that are not SteamID64s) / anything else | `InternalError` | `social.steam.parse_error` / `social.steam.error` |
 
 Each call publishes a `SteamAuthenticatedEvent`.
 
@@ -353,23 +354,31 @@ public sealed record SteamTicketIdentity(
 
 The flow has two steps:
 
-1. **Redirect.** `BuildLoginUrl(returnTo, realm?)` returns the `https://steamcommunity.com/openid/login?…` URL. `returnTo` must be an absolute http(s) URL without a fragment. `realm` (what Steam shows the user) defaults to the scheme and host of `returnTo`, and `returnTo` must start with it.
-2. **Callback.** Steam sends the browser back to `returnTo` with a signed assertion. `VerifyAsync(query, expectedReturnTo)` takes the raw query string or the decoded parameters, and returns `Result<SteamOpenIdResult>`.
+1. **Redirect.** `BuildLoginUrl(returnTo, realm?)` returns the `https://steamcommunity.com/openid/login?…` URL. `returnTo` must be an absolute http(s) URL without a fragment. The realm (what Steam shows the user, and what `returnTo` must lie inside: same scheme, host and port, path under the realm's path) is the `realm` argument, else `Steam.OpenIdRealm`, else the scheme and host of `returnTo`. With `Steam.OpenIdRealm` set, `returnTo` must lie inside it whatever the argument says.
+2. **Callback.** Steam sends the browser back to `returnTo` with a signed assertion. `VerifyAsync(query, expectedReturnTo, cancellationToken)` takes the raw query string or the decoded parameters, and returns `Result<SteamOpenIdResult>`.
+
+> **Set `Steam.OpenIdRealm`** (for example `https://example.com/`) unless `returnTo` is a constant in your code. Without it, and without a `realm` argument, the realm is derived from `returnTo` itself, so a return URL built from user input (`?redirect=…`) could send the browser, and the signed assertion, to any site.
 
 ```csharp
-// Start: bind the attempt to this browser with a random state kept in a cookie.
-var state = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
-var returnTo = $"https://example.com/auth/steam/callback?state={state}";
-// …store state in an HttpOnly cookie, then redirect:
-string loginUrl = social.OpenId.BuildLoginUrl(returnTo);
+// Start: bind the attempt to this browser with a random state in return_to AND in an HttpOnly cookie.
+var state = SteamOpenIdService.CreateState();            // 256 random bits, URL-safe
+Response.Cookies.Append("steam_state", state, new CookieOptions { HttpOnly = true, Secure = true, SameSite = SameSiteMode.Lax });
+string loginUrl = social.OpenId.BuildLoginUrl($"https://example.com/auth/steam/callback?state={state}");
+return Redirect(loginUrl);
 
-// Callback: rebuild the exact return_to from the cookie's state, then verify.
-Result<SteamOpenIdResult> result = await social.OpenId.VerifyAsync(request.QueryString, returnTo);
+// Callback: read the state back from the cookie, compare it with the one Steam echoes, rebuild the exact
+// return_to, then verify. A missing or different cookie means this browser never started the login.
+var expectedState = Request.Cookies["steam_state"];
+if (expectedState is null || expectedState != Request.Query["state"])
+    return Unauthorized();
+var returnTo = $"https://example.com/auth/steam/callback?state={expectedState}";
+Result<SteamOpenIdResult> result = await social.OpenId.VerifyAsync(Request.QueryString.Value, returnTo);
+Response.Cookies.Delete("steam_state");
 if (result.IsSuccess)
     SignIn(result.Value.SteamId);
 ```
 
-`VerifyAsync` checks the assertion locally first, then asks Steam to confirm it (`check_authentication`, only an exact `is_valid:true` line counts). The local checks are:
+`VerifyAsync` checks the assertion locally first, records its nonce, then asks Steam to confirm it (`check_authentication`, only an exact `is_valid:true` line counts). The local checks are:
 
 - `openid.mode` is `id_res` (`cancel` gives `social.steam.openid_cancelled`).
 - The namespace and `op_endpoint` are Steam's.
@@ -379,7 +388,9 @@ if (result.IsSuccess)
 - No `openid.*` parameter appears twice.
 - `response_nonce` starts with a `yyyy-MM-ddTHH:mm:ssZ` timestamp that is no more than a minute ahead and no older than `Steam.OpenIdNonceMaxAgeSeconds` (default 300; `0` turns the age check off).
 
-Because Steam signs `return_to`, putting a per-attempt state in it and checking it against a cookie stops a callback taken from someone else's login from being replayed into another browser. To stop the same callback being replayed into the same browser within the age window, record each accepted `ResponseNonce` until `NonceIssuedAtUtc + OpenIdNonceMaxAgeSeconds` and refuse a repeat.
+Because Steam signs `return_to`, putting a per-attempt state in it and checking it against a cookie stops a callback taken from someone else's login from being replayed into another browser.
+
+**Replay.** The same callback cannot be verified twice: `VerifyAsync` records each assertion's `response_nonce` in an `IOpenIdNonceStore` before asking Steam, and a nonce it has seen is refused with `social.steam.openid_replayed`. Because the nonce is recorded first, an assertion whose confirmation failed (Steam unreachable, timed out, `is_valid:false`) cannot be presented again either: the user starts a new sign-in. The default `InMemoryOpenIdNonceStore` keeps nonces in one process until `NonceIssuedAtUtc + OpenIdNonceMaxAgeSeconds` (24 hours when the age check is off); the library shares one store across live config changes. An application on several servers passes a shared implementation to `new SteamOpenIdService(config, logger, events, nonceStore)`.
 
 | Error code | Meaning |
 |------------|---------|
@@ -388,10 +399,12 @@ Because Steam signs `return_to`, putting a per-attempt state in it and checking 
 | `social.steam.openid_identity` | Missing or malformed Steam identity. |
 | `social.steam.openid_invalid` | Not a valid Steam assertion (mode, endpoint, signed fields, repeated parameters, malformed or future nonce). |
 | `social.steam.openid_expired` | The assertion is older than `Steam.OpenIdNonceMaxAgeSeconds`. |
+| `social.steam.openid_replayed` | The assertion's nonce was verified before. |
 | `social.steam.openid_rejected` | Steam did not confirm the assertion. |
 | `social.steam.openid_unavailable` / `social.steam.openid_timeout` | Steam could not be reached. |
+| `social.steam.cancelled` | The `cancellationToken` was cancelled (`UnavailableError`). |
 
-Each verification publishes a `SteamOpenIdVerifiedEvent`.
+Each verification publishes a `SteamOpenIdVerifiedEvent`. Caller-supplied parameter names that reach a log line, an event or an error message (the name of a repeated `openid.*` parameter) have control characters replaced and are cut to 64 characters.
 
 ```csharp
 public sealed class SteamOpenIdResult
@@ -405,7 +418,7 @@ public sealed class SteamOpenIdResult
 
 ## Caching
 
-`SteamProfileService` caches the results of `GetPlayerAsync`, `GetPlayerBansAsync`, and `GetOwnedGamesAsync` for `CacheTtlSeconds` (default 300). Cached reads publish `SteamProfileFetchedEvent` with `FromCache = true`. Call `Steam.ClearCache()` to drop all cached entries — useful after you know a profile has changed, or in tests.
+`SteamProfileService` caches the results of `GetPlayerAsync`, `GetPlayerBansAsync`, and `GetOwnedGamesAsync` for `CacheTtlSeconds` (default 300). Each of the three caches holds at most `MaxCacheEntries` (default 10 000): an expired entry is dropped when read, and when a cache is full the oldest entries are evicted to make room, so memory stays bounded whatever the number of distinct Steam IDs. Cached reads publish `SteamProfileFetchedEvent` with `FromCache = true`. Call `Steam.ClearCache()` to drop all cached entries — useful after you know a profile has changed, or in tests.
 
 ```csharp
 social.Steam.ClearCache();
@@ -432,7 +445,9 @@ The library writes `config.socialconnect.json` (section `socialconnect`) with de
     "appId": "",
     "openIdEnabled": true,
     "openIdNonceMaxAgeSeconds": 300,
+    "openIdRealm": "https://example.com/",
     "cacheTtlSeconds": 300,
+    "maxCacheEntries": 10000,
     "timeoutSeconds": 15,
     "apiBaseUrl": "https://api.steampowered.com"
   }
@@ -453,11 +468,13 @@ The library writes `config.socialconnect.json` (section `socialconnect`) with de
 | `Steam.AppId` | `string` | `""` | Your game's Steam App ID (used by ticket auth). |
 | `Steam.OpenIdEnabled` | `bool` | `true` | Create the Steam sign-in (OpenID) service while Steam is enabled. OpenID itself needs no key. |
 | `Steam.OpenIdNonceMaxAgeSeconds` | `int` | `300` | Oldest sign-in assertion accepted, by its `response_nonce` timestamp. `0` = no age limit; negative is a config error. |
+| `Steam.OpenIdRealm` | `string` | `""` | Site every sign-in `return_to` must lie inside, as an absolute http(s) URL without user info, query or fragment. Empty = derived from the return URL (set it unless `return_to` is a constant). |
 | `Steam.CacheTtlSeconds` | `int` | `300` | Profile cache lifetime in seconds. Must be > 0. |
+| `Steam.MaxCacheEntries` | `int` | `10000` | Upper bound per profile cache (players, bans, games); the oldest entries are evicted when full. Must be > 0. |
 | `Steam.TimeoutSeconds` | `int` | `15` | HTTP timeout for Steam requests (1–120). |
-| `Steam.ApiBaseUrl` | `string` | `https://api.steampowered.com` | Steam Web API base URL. |
+| `Steam.ApiBaseUrl` | `string` | `https://api.steampowered.com` | Steam Web API base URL. Must be an absolute `https` URL without user info, query or fragment: the API key is sent to it. |
 
-**Validation** — `Steam.Enabled` requires a non-empty `ApiKey` unless `OpenIdEnabled` is on (sign-in only: no profile service); `Steam.AuthEnabled` requires a non-empty `AppId` and `ApiKey`; `CacheTtlSeconds` must be greater than 0; a non-empty `Discord.DefaultWebhookUrl` must be a Discord webhook URL. Steam (and Steam auth) are disabled by default.
+**Validation** — `Steam.Enabled` requires a non-empty `ApiKey` unless `OpenIdEnabled` is on (sign-in only: no profile service); `Steam.AuthEnabled` requires a non-empty `AppId` and `ApiKey`; `CacheTtlSeconds` and `MaxCacheEntries` must be greater than 0; `ApiBaseUrl` must be `https` (`SteamConfig.TryGetApiBaseUri`); a non-empty `OpenIdRealm` must be an absolute http(s) URL (`SteamConfig.TryGetOpenIdRealm`); a non-empty `Discord.DefaultWebhookUrl` must be a Discord webhook URL. Steam (and Steam auth) are disabled by default.
 
 ### Changing config while running
 
@@ -467,7 +484,7 @@ Config changes apply live: `config.socialconnect.json` applies live when changed
 - **Steam settings**: `social.Steam`, `social.Auth` and `social.OpenId` are replaced; the profile cache starts empty.
 - **Enabled flags**: each service, and the whole library, can be switched on or off.
 
-A replaced service is disposed only after its request timeout, so requests already running on it finish. Read `social.Discord` / `social.Steam` / `social.Auth` / `social.OpenId` when you use them rather than keeping an old instance. A configuration that fails validation is logged and ignored; the services keep running on the last valid one.
+A replaced service is disposed only after its request timeout, so requests already running on it finish. Read `social.Discord` / `social.Steam` / `social.Auth` / `social.OpenId` when you use them rather than keeping an old instance. A configuration that fails validation is logged and ignored; the services keep running on the last valid one. Replacement services are built before the running ones are swapped out, so a change can never leave the library without its Steam services, and the Steam sign-in nonce store survives the swap.
 
 ## Events
 

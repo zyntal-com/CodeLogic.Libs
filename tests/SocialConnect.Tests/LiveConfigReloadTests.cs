@@ -113,6 +113,66 @@ public sealed class LiveConfigReloadTests : IAsyncLifetime
         Assert.True(_social.HasSteam);
     }
 
+    [Theory]
+    [InlineData("")]
+    [InlineData("not a url")]
+    [InlineData("http://api.steampowered.com")]
+    [InlineData("https://user:pw@api.steampowered.com")]
+    public async Task Bad_steam_api_base_url_is_refused_and_the_services_stay(string url)
+    {
+        var steam = _social.Steam;
+        var openId = _social.OpenId;
+        var config = Config();
+        config["steam"]!["apiBaseUrl"] = url;
+        var result = await UpdateAsync(config);
+
+        Assert.False(result.Applied, result.ToString());
+        Assert.True(_social.HasSteam);
+        Assert.Same(steam, _social.Steam);
+        Assert.Same(openId, _social.OpenId);
+
+        // Still usable afterwards: a valid change is applied on top of the configuration that is running.
+        config["steam"]!["apiBaseUrl"] = "https://api.steampowered.com";
+        config["steam"]!["timeoutSeconds"] = 20;
+        Assert.True((await UpdateAsync(config)).Applied);
+        Assert.NotSame(steam, _social.Steam);
+    }
+
+    [Fact]
+    public async Task Bad_steam_api_base_url_reaching_the_library_is_logged_and_ignored()
+    {
+        // Bypass the framework's validation: the library must still not throw nor lose its services.
+        var context = _manager.GetLoadedLibraries().Single(l => l.Instance is SocialConnectLibrary).Context!;
+        var steam = _social.Steam;
+        var invalid = new CL.SocialConnect.Models.SocialConnectConfig();
+        invalid.Steam.Enabled = true;
+        invalid.Steam.ApiKey = "key-one";
+        invalid.Steam.ApiBaseUrl = "http://api.steampowered.com";
+
+        await _social.OnConfigChangedAsync(context, new CodeLogic.Core.Configuration.ConfigChangedEventArgs
+        {
+            SectionName = "socialconnect",
+            Kind = CodeLogic.Core.Configuration.ConfigChangeKind.Updated,
+            NewValue = invalid
+        }, CancellationToken.None);
+
+        Assert.True(_social.HasSteam);
+        Assert.Same(steam, _social.Steam);
+    }
+
+    [Fact]
+    public async Task Invalid_openid_realm_is_refused()
+    {
+        var config = Config();
+        config["steam"]!["openIdRealm"] = "example.com";
+        Assert.False((await UpdateAsync(config)).Applied);
+
+        config["steam"]!["openIdRealm"] = "https://example.com/";
+        Assert.True((await UpdateAsync(config)).Applied);
+        Assert.Throws<ArgumentException>(() => _social.OpenId.BuildLoginUrl("https://evil.example/cb"));
+        Assert.Contains("openid.realm=https%3A%2F%2Fexample.com%2F", _social.OpenId.BuildLoginUrl("https://example.com/cb"));
+    }
+
     [Fact]
     public async Task Non_discord_default_webhook_url_is_refused()
     {

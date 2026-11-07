@@ -39,6 +39,23 @@ All notable changes to **CodeLogic.SocialConnect** are documented here. Versions
   spliced `steamId` and the API key unescaped into the query string, so `"7656…&key=…"` could add or override
   parameters. A Steam ID that is not a SteamID64 (17 digits, `7656119…`) now fails with `ValidationError`
   `social.steam.invalid_steamid` before a request, and both values are URL-escaped.
+- **`Steam.ApiBaseUrl` must be an absolute `https` URL without user info, query or fragment** (the API key travels
+  in every request's query string, so `http` would send it in clear). `SocialConnectConfig.Validate` refuses
+  anything else, and `SteamProfileService` / `SteamAuthenticationService` throw `ArgumentException` for such a
+  config instead of building a client for it. `SteamConfig.TryGetApiBaseUri` is the check.
+- **Steam sign-in refuses a replayed assertion.** `SteamOpenIdService.VerifyAsync` records each verified
+  `openid.response_nonce` in an `IOpenIdNonceStore` (default: in memory, per process) and refuses one it has seen
+  with `UnauthorizedError` `social.steam.openid_replayed`. The nonce is recorded before Steam is asked, so an
+  assertion whose confirmation failed cannot be presented again either. Applications no longer need their own
+  nonce tracking, unless they run several servers without a shared store.
+- **Cancellation is an error, not an exception.** `SteamOpenIdService.VerifyAsync` rethrew the caller's
+  `OperationCanceledException`; it now returns `UnavailableError` `social.steam.cancelled`. The new
+  `CancellationToken` parameters on the other services map the same way (`social.steam.cancelled`,
+  `social.discord.cancelled`), following the CL.Storage convention.
+- **`Auth.AuthenticateAsync` checks Steam's answer.** A `steamid` or `ownersteamid` that is not a SteamID64 fails
+  with `InternalError` `social.steam.parse_error`; no identity is published or returned.
+- `SteamProfileService` throws `ArgumentNullException` for a `null` config (it used to throw a
+  `NullReferenceException` later).
 
 ### Added
 
@@ -48,8 +65,34 @@ All notable changes to **CodeLogic.SocialConnect** are documented here. Versions
 
 - `SteamAuthenticationService(SteamConfig, HttpMessageHandler, ILogger?, IEventBus?)` constructor for
   tests and outbound proxies, matching `SteamOpenIdService`.
+- `DiscordWebhookService(DiscordConfig, HttpMessageHandler, …)` and `SteamProfileService(SteamConfig, HttpMessageHandler, …)`
+  constructors, so every service can be tested or routed through a proxy. A `SocketsHttpHandler` or
+  `HttpClientHandler` given to the Discord service has automatic redirects switched off.
+- **`Steam.OpenIdRealm`** (default empty): the site Steam sign-in belongs to. When set, every `return_to` passed to
+  `BuildLoginUrl` must lie inside it (same scheme, host and port, path under the realm's path) or the call throws
+  `ArgumentException`, and it is the realm Steam shows unless the call gives one. Without it, and without a
+  `realm` argument, the realm is still derived from `return_to` itself, which accepts any absolute URL: set
+  `OpenIdRealm` whenever `return_to` is not a constant in your code.
+- `SteamOpenIdService.CreateState()`: 256 random bits as a URL-safe base64url string, for the per-attempt state in
+  `return_to` and the cookie.
+- `IOpenIdNonceStore` / `InMemoryOpenIdNonceStore`, and a `nonceStore` parameter on both `SteamOpenIdService`
+  constructors. The library shares one in-memory store across live config changes.
+- **`Steam.MaxCacheEntries`** (default 10 000): each profile cache (players, bans, games) is bounded; expired entries
+  are dropped when read and the oldest entries are evicted when a cache is full. They grew without limit before.
+- `CancellationToken` (last parameter, default `default`) on `SteamProfileService.GetPlayerAsync` /
+  `GetPlayerBansAsync` / `GetOwnedGamesAsync`, `SteamAuthenticationService.AuthenticateAsync` and
+  `DiscordWebhookService.SendMessageAsync` / `SendEmbedAsync` / `SendAsync`.
 
 ### Fixed
+
+- **A live config change cannot wipe the Steam services.** `OnConfigChangedAsync` cleared `Steam`, `Auth` and
+  `OpenId` before constructing their replacements, so a constructor failure left all three gone. The new services
+  are built first and swapped in afterwards, and a configuration the services refuse is logged and ignored.
+- **A hostile OpenID parameter name no longer reaches logs and events verbatim.** The name of a repeated
+  `openid.*` parameter was echoed into the log line, the `SteamOpenIdVerifiedEvent` and the error message after
+  URL-decoding, so `%0D%0A` could forge log lines. Control characters are now replaced and the name is cut to 64
+  characters.
+- `DiscordWebhookService.SendAsync` disposes the `HttpResponseMessage`.
 
 - **Steam sign-in works without a Steam Web API key**, as documented. Validation demanded `ApiKey` whenever
   Steam was enabled, so OpenID could not be used on its own. With `Steam.Enabled` and `OpenIdEnabled` on and no
