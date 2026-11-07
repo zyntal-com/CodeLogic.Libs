@@ -80,7 +80,7 @@ var dataUri = ImageTools.ToDataUri(doc, ImageFormat.Png).Value!;
 |---|---|
 | `Format`, `Width`, `Height`, `Length`, `MimeType` | Describe the output. |
 | `Span`, `Memory` | The bytes (valid until disposed). |
-| `ToArray()`, `AsStream()`, `ToBase64()`, `ToDataUri()` | Get the bytes out. |
+| `ToArray()`, `AsStream()`, `ToBase64()`, `ToDataUri()` | Get the bytes out. A stream from `AsStream()` holds its own reference to the buffer: dispose it when done, and it stays valid even after the image is disposed. |
 | `WriteToAsync(stream, ct)`, `SaveAsync(path, ct)` | Write them. |
 
 ## Configuration

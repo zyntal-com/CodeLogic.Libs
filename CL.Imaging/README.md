@@ -68,7 +68,8 @@ string dataUri = ImageTools.ToDataUri(doc, ImageFormat.Png).Value!;
   JPEG, PNG and WebP (lossy, or lossless with `ImageEncodeOptions.Lossless`). JPEG output flattens transparency onto
   `ImageEncodeOptions.Background` (white).
 - **Probe without decoding.** `ImageInfo.Probe(stream)` reads format, size, orientation, alpha and frame count from
-  the header; `ImageFormatExtensions.Detect` sniffs the signature.
+  the header (a header claiming a side over 32 767 pixels is `imaging.too_large`, without allocating);
+  `ImageFormatExtensions.Detect` sniffs the signature.
 - **Editing pipeline.** `doc.Edit()` records steps; `Apply()` returns a new `ImageDocument`, `Encode(...)` returns an
   `EncodedImage`. Steps:
   - Geometry: `AutoOrient`, `Resize` (`Fit`, `Fill` (cover, with anchor), `Stretch`, `Pad`, `Max`), `Crop`,

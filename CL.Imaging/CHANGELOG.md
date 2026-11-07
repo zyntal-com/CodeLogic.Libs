@@ -42,6 +42,15 @@
 
 ### Changed
 
+- **`EncodedImage.AsStream()` owns its bytes** (audit round 5). The stream shared the pooled array, so one kept past
+  the image's `using` block (handed to a response, a background writer) read whatever the pool had since given that
+  array to, possibly another request's image. The pooled buffer is now reference-counted: each stream holds a
+  reference, the array goes back to the pool when the image and every stream are disposed, and a stream stays valid
+  after the image is disposed. `Span`, `Memory`, `ToArray`, `ToBase64` and `AsStream` throw `ObjectDisposedException`
+  after `Dispose` as before; `Dispose` is idempotent.
+- **`ImageInfo.Probe` refuses a header that claims a side over 32 767 pixels** with `imaging.too_large`, decided from
+  the header alone (nothing is allocated for pixels, also on a non-seekable stream). The decoder refused such images
+  already; `Probe` now says so up front instead of reporting a size that cannot be loaded.
 - Package versions are pinned (SkiaSharp and SkiaSharp.NativeAssets.Linux.NoDependencies 4.154.0) instead of floating (`4.*`).
 - **Kept EXIF no longer carries the source thumbnail or MakerNote.** `KeepMetadata = true` zeroes the IFD1 thumbnail
   (and unlinks IFD1) and the MakerNote before writing the EXIF back. Both describe the source pixels (MakerNotes can
