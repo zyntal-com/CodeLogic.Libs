@@ -219,7 +219,12 @@ internal sealed class SftpJumpTunnel : IDisposable
         try
         {
             jump.Connect();
-            // Port 0 lets the OS pick a free loopback port; only this process can reach it.
+            // Port 0 lets the OS pick a free loopback port. The listener is bound to 127.0.0.1, so it is not reachable
+            // from the network, but any local process may connect to it while the tunnel is open: SSH.NET keeps
+            // accepting on a started ForwardedPortLocal, and stopping it closes the channels already running through it
+            // (ChannelDirectTcpip handles the port's Closing event by shutting its socket), which would drop the SFTP
+            // session. So the forward lives as long as the session. What a local client reaches is the target's SSH
+            // port, which still authenticates it; see docs/libs/storage/connections.md.
             var forward = new ForwardedPortLocal("127.0.0.1", 0, target.Host, (uint)target.Port);
             jump.AddForwardedPort(forward);
             forward.Start();

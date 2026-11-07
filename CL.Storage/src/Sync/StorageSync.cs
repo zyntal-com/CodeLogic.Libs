@@ -240,6 +240,7 @@ public static class StorageSync
     private sealed class ApplyGate : IDisposable
     {
         private static readonly Dictionary<string, ApplyGate> Gates = [with(StringComparer.Ordinal)];
+        private static readonly Lock GatesLock = new();
         private readonly SemaphoreSlim _semaphore = new(1, 1);
         private readonly string _syncId;
         private int _users;
@@ -249,7 +250,7 @@ public static class StorageSync
         public static async Task<ApplyGate> EnterAsync(string syncId, CancellationToken cancellationToken)
         {
             ApplyGate gate;
-            lock (Gates)
+            lock (GatesLock)
             {
                 if (!Gates.TryGetValue(syncId, out gate!)) Gates[syncId] = gate = new ApplyGate(syncId);
                 gate._users++;
@@ -274,7 +275,7 @@ public static class StorageSync
 
         private void Leave()
         {
-            lock (Gates)
+            lock (GatesLock)
             {
                 if (--_users == 0) Gates.Remove(_syncId);
             }
@@ -282,7 +283,7 @@ public static class StorageSync
 
         internal static bool IsHeld(string syncId)
         {
-            lock (Gates) return Gates.ContainsKey(syncId);
+            lock (GatesLock) return Gates.ContainsKey(syncId);
         }
     }
 

@@ -229,13 +229,14 @@ public sealed class S3StorageBackend :
             var items = new List<StorageItem>();
             foreach (var prefix in response.CommonPrefixes ?? [])
             {
-                var relative = FromKey(prefix).TrimEnd('/');
+                // An unaddressable key ("a/../b", "a//b") is skipped: the library could never name it back.
+                if (FromKey(prefix) is not { } folder) continue;
+                var relative = folder.TrimEnd('/');
                 if (relative.Length > 0) items.Add(DirectoryItem(relative));
             }
             foreach (var item in response.S3Objects ?? [])
             {
-                var relative = FromKey(item.Key);
-                if (relative.Length == 0) continue;
+                if (FromKey(item.Key) is not { Length: > 0 } relative) continue;
                 if (options.Recursive)
                 {
                     ImplicitDirectories.AddParents(items, relative, normalized.Value!, previous, DirectoryItem);
@@ -919,7 +920,7 @@ public sealed class S3StorageBackend :
                 BucketName = _bucket,
                 Key = key
             }, cancellationToken).ConfigureAwait(false);
-            var item = FromMetadata(FromKey(key), current);
+            var item = FromMetadata(FromKey(key) ?? string.Empty, current);
             var validation = ValidateCurrentCondition(item, condition, "S3 object");
             return validation.IsFailure
                 ? Result<string?>.Failure(validation.Error!)
@@ -952,7 +953,7 @@ public sealed class S3StorageBackend :
                 return current is null ? Result.Success() : Result.Failure(StorageErrors.Conflict("The S3 destination already exists."));
             if (current is null)
                 return Result.Failure(StorageErrors.Conflict("The S3 object no longer exists for the requested upload condition."));
-            return ValidateCurrentCondition(FromMetadata(FromKey(key), current), condition, "S3 object");
+            return ValidateCurrentCondition(FromMetadata(FromKey(key) ?? string.Empty, current), condition, "S3 object");
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch (Exception error) { return Result.Failure(Map(error, "Check S3 write condition")); }
@@ -1676,7 +1677,8 @@ public sealed class S3StorageBackend :
 
     private string ToKey(string path) => _keyPrefix + path;
     private string ToDirectoryPrefix(string path) => path.Length == 0 ? _keyPrefix : ToKey(path).TrimEnd('/') + "/";
-    private string FromKey(string key) => _keyPrefix.Length == 0 ? key : key.StartsWith(_keyPrefix, StringComparison.Ordinal) ? key[_keyPrefix.Length..] : string.Empty;
+    /// <summary>The storage path of a key under the mounted prefix, or null for a key the library cannot address (see <see cref="ObjectKeyPaths"/>).</summary>
+    private string? FromKey(string key) => ObjectKeyPaths.FromKey(_keyPrefix, key);
     private static string NameOf(string path) => path.Split('/')[^1];
     /// <summary>
     /// User metadata under the names it was written with: the SDK reports keys with the <c>x-amz-meta-</c>

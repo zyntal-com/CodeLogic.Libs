@@ -182,8 +182,10 @@ public sealed class SwiftStorageBackend : IStorageBackend, IStorageMetadataServi
             var items = page.Value!.Items.Select(item =>
             {
                 var providerPath = item.Subdirectory ?? item.Name!;
-                keys[FromKey(providerPath).TrimEnd('/')] = FromKey(providerPath);
-                var relative = FromKey(providerPath).TrimEnd('/');
+                // An unaddressable name ("a/../b", "a//b") is skipped: the library could never name it back.
+                if (FromKey(providerPath) is not { } key) return null;
+                var relative = key.TrimEnd('/');
+                keys[relative] = key;
                 return relative.Length == 0
                     ? null
                     : item.Subdirectory is not null || providerPath.EndsWith('/')
@@ -728,7 +730,7 @@ public sealed class SwiftStorageBackend : IStorageBackend, IStorageMetadataServi
             throw new InvalidOperationException("TempAuth did not return X-Auth-Token.");
         var storageUrl = _configuration.StorageUrl;
         if (string.IsNullOrWhiteSpace(storageUrl) && response.Headers.TryGetValues("X-Storage-Url", out var urls))
-            storageUrl = urls.First();
+            storageUrl = CheckedStorageUrl(urls.First(), "TempAuth");
         var expires = response.Headers.TryGetValues("X-Auth-Token-Expires", out var lifetimes) &&
             long.TryParse(lifetimes.First(), NumberStyles.None, CultureInfo.InvariantCulture, out var seconds)
                 ? DateTimeOffset.UtcNow.AddSeconds(seconds)
@@ -786,13 +788,24 @@ public sealed class SwiftStorageBackend : IStorageBackend, IStorageMetadataServi
                 ? parsed
                 : DateTimeOffset.UtcNow.AddHours(1);
         var storageUrl = _configuration.StorageUrl;
-        if (string.IsNullOrWhiteSpace(storageUrl))
-            storageUrl = FindObjectStoreEndpoint(tokenNode);
+        if (string.IsNullOrWhiteSpace(storageUrl) && FindObjectStoreEndpoint(tokenNode) is { } catalogUrl)
+            storageUrl = CheckedStorageUrl(catalogUrl, "Keystone");
         _token = tokens.First();
         _storageUrl = storageUrl?.TrimEnd('/') ??
             throw new InvalidOperationException("Keystone catalog did not contain a matching object-store endpoint.");
         _tokenExpiresAt = expires;
     }
+
+    /// <summary>
+    /// The storage URL an authentication reply returned, after the same scheme check the configured URLs get:
+    /// the token is sent to every request on it, so an <c>http://</c> endpoint from the server is refused unless
+    /// <see cref="SwiftConnectionConfig.AllowInsecureHttp"/> is on (the failure maps to <c>storage.provider_error</c>).
+    /// </summary>
+    private string CheckedStorageUrl(string url, string source) =>
+        _configuration.IsAllowedUrl(url)
+            ? url
+            : throw new InvalidOperationException(
+                $"{source} returned a storage URL whose scheme is not allowed for this connection (set AllowInsecureHttp to accept http).");
 
     private string? FindObjectStoreEndpoint(JsonElement tokenNode)
     {
@@ -921,7 +934,8 @@ public sealed class SwiftStorageBackend : IStorageBackend, IStorageMetadataServi
 
     private string ToKey(string path) => _prefix + path;
     private string DirectoryPrefix(string path) => path.Length == 0 ? _prefix : ToKey(path).TrimEnd('/') + "/";
-    private string FromKey(string key) => _prefix.Length == 0 ? key : key.StartsWith(_prefix, StringComparison.Ordinal) ? key[_prefix.Length..] : string.Empty;
+    /// <summary>The storage path of an object name under the mounted prefix, or null for a name the library cannot address (see <see cref="ObjectKeyPaths"/>).</summary>
+    private string? FromKey(string key) => ObjectKeyPaths.FromKey(_prefix, key);
     private Result<string> Normalize(string path) => StoragePath.Normalize(path);
     private Result<string> NormalizeRequired(string path)
     {

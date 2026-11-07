@@ -7,19 +7,43 @@ namespace CL.Storage.Providers.Local;
 internal sealed class LocalPathResolver
 {
     private readonly bool _followLinks;
-    private readonly StringComparison _comparison = OperatingSystem.IsWindows()
-        ? StringComparison.OrdinalIgnoreCase
-        : StringComparison.Ordinal;
 
-    public LocalPathResolver(string rootPath, bool followLinks)
+    /// <param name="rootPath">The root; made absolute and trimmed of its trailing separator (see <see cref="NormalizeRoot"/>).</param>
+    /// <param name="followLinks">Whether links under the root may be traversed and reported.</param>
+    /// <param name="caseInsensitive">
+    /// Whether names under the root compare without regard to case. The backend probes the volume
+    /// (<see cref="LocalStorageBackend.DetectCaseInsensitive"/>); null falls back to the operating system's default.
+    /// </param>
+    public LocalPathResolver(string rootPath, bool followLinks, bool? caseInsensitive = null)
     {
-        if (string.IsNullOrWhiteSpace(rootPath))
-            throw new ArgumentException("A local root path is required.", nameof(rootPath));
-        Root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(rootPath));
+        Root = NormalizeRoot(rootPath);
         _followLinks = followLinks;
+        CaseInsensitive = caseInsensitive ?? (OperatingSystem.IsWindows() || OperatingSystem.IsMacOS());
+        Comparison = CaseInsensitive ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        Comparer = StringComparer.FromComparison(Comparison);
     }
 
     public string Root { get; }
+
+    /// <summary>Whether this connection reports and traverses links (<see cref="Configuration.LocalConnectionConfig.FollowLinks"/>).</summary>
+    public bool FollowLinks => _followLinks;
+
+    /// <summary>Whether paths under the root compare case-insensitively (probed on the volume, not assumed from the OS).</summary>
+    public bool CaseInsensitive { get; }
+
+    /// <summary>The comparison every path check under this root uses.</summary>
+    public StringComparison Comparison { get; }
+
+    /// <summary>The comparer matching <see cref="Comparison"/>, for sets and dictionaries of paths.</summary>
+    public StringComparer Comparer { get; }
+
+    /// <summary>The absolute root without a trailing separator; the form every containment check compares against.</summary>
+    public static string NormalizeRoot(string rootPath)
+    {
+        if (string.IsNullOrWhiteSpace(rootPath))
+            throw new ArgumentException("A local root path is required.", nameof(rootPath));
+        return Path.TrimEndingDirectorySeparator(Path.GetFullPath(rootPath));
+    }
 
     /// <summary>
     /// Whether a path is a link: a symbolic link or a junction (a reparse point with a link target). Other reparse
@@ -126,12 +150,35 @@ internal sealed class LocalPathResolver
         return relative == "." ? string.Empty : relative;
     }
 
+    /// <summary>
+    /// The link target a caller may see: the raw on-disk target and its storage path, but only when the target
+    /// (resolved against the link's directory) lies inside the root. A link that leads out gets null: it must not
+    /// disclose where on the machine it points. Whether the connection follows links does not matter here: an
+    /// in-root target names nothing beyond the mount, and sync and transfers read it to map a link to its target
+    /// even on a connection that refuses to traverse links in paths.
+    /// </summary>
+    /// <param name="linkFullPath">The link itself.</param>
+    /// <param name="rawTarget">Its target as stored (<see cref="FileSystemInfo.LinkTarget"/>), relative or absolute.</param>
+    public (string RawTarget, string StoragePath)? VisibleLinkTarget(string linkFullPath, string? rawTarget)
+    {
+        if (rawTarget is null) return null;
+        try
+        {
+            var absolute = Path.IsPathRooted(rawTarget) ? rawTarget : Path.Combine(Path.GetDirectoryName(linkFullPath)!, rawTarget);
+            return ToStoragePath(absolute) is { } storagePath ? (rawTarget, storagePath) : null;
+        }
+        catch (Exception error) when (error is ArgumentException or IOException or NotSupportedException)
+        {
+            return null;
+        }
+    }
+
     public bool IsContained(string fullPath)
     {
-        if (string.Equals(fullPath, Root, _comparison))
+        if (string.Equals(fullPath, Root, Comparison))
             return true;
         var prefix = Root.EndsWith(Path.DirectorySeparatorChar) ? Root : Root + Path.DirectorySeparatorChar;
-        return fullPath.StartsWith(prefix, _comparison);
+        return fullPath.StartsWith(prefix, Comparison);
     }
 }
 

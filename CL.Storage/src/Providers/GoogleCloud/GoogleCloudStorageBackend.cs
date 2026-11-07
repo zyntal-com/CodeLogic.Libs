@@ -201,7 +201,9 @@ public sealed class GoogleCloudStorageBackend :
                 providerNextPageToken = response?.NextPageToken;
                 foreach (var prefix in response?.Prefixes ?? [])
                 {
-                    var directory = FromKey(prefix).TrimEnd('/');
+                    // An unaddressable name ("a/../b", "a//b") is skipped: the library could never name it back.
+                    if (FromKey(prefix) is not { } folder) continue;
+                    var directory = folder.TrimEnd('/');
                     if (directory.Length > 0 && !string.Equals(directory, listingPath, StringComparison.Ordinal))
                         items[directory] = DirectoryItem(directory);
                 }
@@ -210,8 +212,7 @@ public sealed class GoogleCloudStorageBackend :
             var previous = continuation.Value.Previous;
             foreach (var item in providerItems)
             {
-                var pathValue = FromKey(item.Name);
-                if (pathValue.Length == 0) continue;
+                if (FromKey(item.Name) is not { Length: > 0 } pathValue) continue;
                 if (string.Equals(pathValue.TrimEnd('/'), listingPath, StringComparison.Ordinal)) continue;
                 if (options.Recursive)
                 {
@@ -959,7 +960,8 @@ public sealed class GoogleCloudStorageBackend :
 
     private string ToKey(string path) => _prefix + path;
     private string DirectoryPrefix(string path) => path.Length == 0 ? _prefix : ToKey(path).TrimEnd('/') + "/";
-    private string FromKey(string key) => _prefix.Length == 0 ? key : key.StartsWith(_prefix, StringComparison.Ordinal) ? key[_prefix.Length..] : string.Empty;
+    /// <summary>The storage path of an object name under the mounted prefix, or null for a name the library cannot address (see <see cref="ObjectKeyPaths"/>).</summary>
+    private string? FromKey(string key) => ObjectKeyPaths.FromKey(_prefix, key);
     private Result<string> Normalize(string path) => StoragePath.Normalize(path);
     private Result<string> NormalizeRequired(string path)
     {

@@ -169,7 +169,7 @@ public sealed class AzureBlobStorageBackend :
                         if (ToItem(blob) is not { } item) continue;
                         ImplicitDirectories.AddParents(items, item.Path, normalized.Value!, previous, DirectoryItem);
                         // The key itself, so a folder marker ("a/b/") that ends a page still covers "a/b" on the next.
-                        previous = FromKey(blob.Name);
+                        previous = FromKey(blob.Name) ?? item.Path;
                         items.Add(item);
                     }
                     var unique = items.GroupBy(item => item.Path, StringComparer.Ordinal).Select(group => group.First())
@@ -837,7 +837,8 @@ public sealed class AzureBlobStorageBackend :
     private BlobClient Blob(string path) => _container.GetBlobClient(ToKey(path));
     private string ToKey(string path) => _prefix + path;
     private string DirectoryPrefix(string path) => path.Length == 0 ? _prefix : ToKey(path).TrimEnd('/') + "/";
-    private string FromKey(string key) => _prefix.Length == 0 ? key : key.StartsWith(_prefix, StringComparison.Ordinal) ? key[_prefix.Length..] : string.Empty;
+    /// <summary>The storage path of a blob name under the mounted prefix, or null for a name the library cannot address (see <see cref="ObjectKeyPaths"/>).</summary>
+    private string? FromKey(string key) => ObjectKeyPaths.FromKey(_prefix, key);
     private Result<string> Normalize(string path) => StoragePath.Normalize(path);
     private Result<string> NormalizeRequired(string path)
     {
@@ -851,16 +852,16 @@ public sealed class AzureBlobStorageBackend :
     {
         if (hierarchy.IsPrefix)
         {
-            var path = FromKey(hierarchy.Prefix).TrimEnd('/');
-            return path.Length == 0 ? null : DirectoryItem(path);
+            // An unaddressable name ("a/../b", "a//b") is skipped: the library could never name it back.
+            var path = FromKey(hierarchy.Prefix)?.TrimEnd('/');
+            return string.IsNullOrEmpty(path) ? null : DirectoryItem(path);
         }
         return hierarchy.Blob is null ? null : ToItem(hierarchy.Blob);
     }
 
     private StorageItem? ToItem(BlobItem blob)
     {
-        var path = FromKey(blob.Name);
-        if (path.Length == 0) return null;
+        if (FromKey(blob.Name) is not { Length: > 0 } path) return null;
         if (path.EndsWith('/')) return DirectoryItem(path.TrimEnd('/'));
         return new StorageItem
         {

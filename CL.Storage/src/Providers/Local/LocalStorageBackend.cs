@@ -59,9 +59,12 @@ public sealed class LocalStorageBackend : IStorageBackend, IStorageAttributeServ
             throw new ArgumentOutOfRangeException(nameof(maxBufferedDownloadBytes));
 
         ConnectionId = connectionId;
-        _paths = new LocalPathResolver(configuration.RootPath, configuration.FollowLinks);
+        // The probed answer drives both the advertised capability and every path comparison the resolver makes.
+        var root = LocalPathResolver.NormalizeRoot(configuration.RootPath);
+        var caseInsensitive = DetectCaseInsensitive(root);
+        _paths = new LocalPathResolver(root, configuration.FollowLinks, caseInsensitive);
         _maxBufferedDownloadBytes = maxBufferedDownloadBytes;
-        _capabilities = DetectCaseInsensitive(_paths.Root)
+        _capabilities = caseInsensitive
             ? new StorageCapabilities(LocalCapabilities.Features | StorageFeature.CaseInsensitivePaths, LocalCapabilities.Limits)
             : LocalCapabilities;
     }
@@ -473,7 +476,7 @@ public sealed class LocalStorageBackend : IStorageBackend, IStorageAttributeServ
                 var relationship = StorageTransferPath.ValidateDirectoryDestination(
                     endpoints.Value.Source.StoragePath,
                     endpoints.Value.Destination.StoragePath,
-                    OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+                    _paths.Comparison);
                 if (relationship.IsFailure)
                     return Task.FromResult(Result.Failure(relationship.Error!));
                 return Task.FromResult(Result.Failure(StorageErrors.Unsupported("Native local directory copy is not supported.")));
@@ -527,7 +530,7 @@ public sealed class LocalStorageBackend : IStorageBackend, IStorageAttributeServ
                 var relationship = StorageTransferPath.ValidateDirectoryDestination(
                     endpoints.Value.Source.StoragePath,
                     endpoints.Value.Destination.StoragePath,
-                    OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+                    _paths.Comparison);
                 if (relationship.IsFailure)
                     return Task.FromResult(Result.Failure(relationship.Error!));
             }
@@ -597,7 +600,7 @@ public sealed class LocalStorageBackend : IStorageBackend, IStorageAttributeServ
     private IEnumerable<StorageItem> EnumerateItems(ResolvedLocalPath root, bool recursive, CancellationToken cancellationToken)
     {
         var pending = new Stack<ResolvedLocalPath>();
-        var visited = new HashSet<string>(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal)
+        var visited = new HashSet<string>(_paths.Comparer)
         {
             GetDirectoryIdentity(root.FullPath)
         };
@@ -638,7 +641,7 @@ public sealed class LocalStorageBackend : IStorageBackend, IStorageAttributeServ
         return Path.TrimEndingDirectorySeparator(Path.GetFullPath(target?.FullName ?? fullPath));
     }
 
-    private static StorageItem? CreateItem(string storagePath, string fullPath, FileAttributes? knownAttributes = null)
+    private StorageItem? CreateItem(string storagePath, string fullPath, FileAttributes? knownAttributes = null)
     {
         FileAttributes attributes;
         try { attributes = knownAttributes ?? File.GetAttributes(fullPath); }
@@ -666,7 +669,8 @@ public sealed class LocalStorageBackend : IStorageBackend, IStorageAttributeServ
             ContentType = type == StorageItemType.File ? GetContentType(info.Extension) : null,
             ETag = type == StorageItemType.File ? SyntheticETag((FileInfo)info) : null,
             UnixMode = OperatingSystem.IsWindows() ? null : (int)info.UnixFileMode,
-            LinkTarget = type == StorageItemType.Link ? info.LinkTarget : null,
+            // Only a target inside the root is reported; a link that leads out shows no target.
+            LinkTarget = type == StorageItemType.Link ? _paths.VisibleLinkTarget(fullPath, info.LinkTarget)?.RawTarget : null,
             IsHidden = (attributes & FileAttributes.Hidden) != 0 || name.StartsWith('.')
         };
     }
@@ -746,6 +750,12 @@ public sealed class LocalStorageBackend : IStorageBackend, IStorageAttributeServ
     }
 
     /// <inheritdoc />
+    /// <remarks>
+    /// The target is reported only when it lies inside the root; otherwise the item is still confirmed to be a link,
+    /// but <see cref="StorageLinkInfo.RawTarget"/> is empty and <see cref="StorageLinkInfo.StoragePath"/> null, so a
+    /// link cannot disclose paths outside the root. Reading a link does not follow it, so this works with
+    /// <see cref="LocalConnectionConfig.FollowLinks"/> off as well.
+    /// </remarks>
     public Task<Result<StorageLinkInfo>> ReadLinkAsync(string path, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -758,8 +768,10 @@ public sealed class LocalStorageBackend : IStorageBackend, IStorageAttributeServ
                 return Task.FromResult(Result<StorageLinkInfo>.Failure(StorageErrors.NotFound($"Item '{link.Value.StoragePath}' was not found.")));
             if (info.LinkTarget is not { } raw)
                 return Task.FromResult(Result<StorageLinkInfo>.Failure(StorageErrors.Conflict($"Item '{link.Value.StoragePath}' is not a link.")));
-            var absolute = Path.IsPathRooted(raw) ? raw : Path.Combine(Path.GetDirectoryName(info.FullName)!, raw);
-            return Task.FromResult(Result<StorageLinkInfo>.Success(new StorageLinkInfo(raw, _paths.ToStoragePath(absolute))));
+            var visible = _paths.VisibleLinkTarget(info.FullName, raw);
+            return Task.FromResult(Result<StorageLinkInfo>.Success(visible is { } target
+                ? new StorageLinkInfo(target.RawTarget, target.StoragePath)
+                : new StorageLinkInfo(string.Empty, null)));
         }
         catch (Exception error) when (error is not OperationCanceledException)
         {
@@ -768,6 +780,10 @@ public sealed class LocalStorageBackend : IStorageBackend, IStorageAttributeServ
     }
 
     /// <inheritdoc />
+    /// <remarks>
+    /// Like an upload with its default options: a missing parent directory is created, a directory at the path is
+    /// a conflict.
+    /// </remarks>
     public async Task<Result<StorageItem>> AppendAsync(string path, Stream source, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(source);
@@ -777,7 +793,9 @@ public sealed class LocalStorageBackend : IStorageBackend, IStorageAttributeServ
             return Result<StorageItem>.Failure(StorageErrors.InvalidPath("A file path is required."));
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(resolved.Value.FullPath)!);
+            if (Directory.Exists(resolved.Value.FullPath))
+                return Result<StorageItem>.Failure(StorageErrors.Conflict("The append destination is a directory."));
+            EnsureTransferParent(resolved.Value.FullPath, createParents: true); // the upload default (StorageUploadOptions.CreateParents)
             await using (var target = new FileStream(resolved.Value.FullPath, FileMode.Append, FileAccess.Write, FileShare.None, 65_536, FileOptions.Asynchronous))
                 await source.CopyToAsync(target, 65_536, cancellationToken).ConfigureAwait(false);
             return CreateItem(resolved.Value.StoragePath, resolved.Value.FullPath) is { } item
@@ -867,7 +885,7 @@ public sealed class LocalStorageBackend : IStorageBackend, IStorageAttributeServ
         var relationship = StorageTransferPath.ValidateDistinct(
             source.Value.StoragePath,
             destination.Value.StoragePath,
-            OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+            _paths.Comparison);
         if (relationship.IsFailure)
             return Result<TransferEndpoints>.Failure(relationship.Error!);
         if (options.ExpectedSourceETag is { } expected)

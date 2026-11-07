@@ -27,8 +27,8 @@ namespace CL.Storage;
 /// <summary>Provider-neutral storage library for CodeLogic applications.</summary>
 public sealed partial class StorageLibrary : ILibrary, IAsyncDisposable
 {
-    private readonly object _stateGate = new();
-    private readonly object _registryGate = new();
+    private readonly Lock _stateGate = new();
+    private readonly Lock _registryGate = new();
     // Transfer queues opened from this library; stopping the library stops them first (B43).
     private readonly List<Queue.StorageTransferQueue> _queues = [];
     private readonly SemaphoreSlim _mutationGate = new(1, 1);

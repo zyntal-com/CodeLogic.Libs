@@ -115,7 +115,12 @@ public sealed class SwiftConnectionConfig : StorageConnectionConfigBase
 
     private string Scheme => AllowInsecureHttp ? "HTTP(S)" : "HTTPS";
 
-    private bool IsAllowedUrl(string? value) =>
+    /// <summary>
+    /// Whether a URL may carry this connection's token: absolute, <c>https</c>, or <c>http</c> only with
+    /// <see cref="AllowInsecureHttp"/>. Applied to the configured URLs and to the storage URL an authentication
+    /// reply returns (<c>X-Storage-Url</c>, the Keystone catalog).
+    /// </summary>
+    internal bool IsAllowedUrl(string? value) =>
         Uri.TryCreate(value, UriKind.Absolute, out var uri) &&
         (uri.Scheme == Uri.UriSchemeHttps || (AllowInsecureHttp && uri.Scheme == Uri.UriSchemeHttp));
 }

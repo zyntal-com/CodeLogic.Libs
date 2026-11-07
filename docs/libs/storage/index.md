@@ -82,6 +82,11 @@ default) can reach outside it.
 > to contain a hostile local actor: give the application its own directory that nobody else can write to,
 > or isolate it at the OS level (a dedicated account, container, or mount).
 
+Object-store listings (S3, Azure Blob, Google Cloud Storage, Swift) report only keys the library can name back: a key
+whose part under the mounted prefix `StoragePath.Normalize` would rewrite or reject (`a/../b`, `a//b`, `./a`, a
+control character) is left out of listings, since the normalised path would address a different key. Such objects
+stay on the server; manage them with the provider's own tools.
+
 ## Configuration
 
 The main `storage` section contains the master enable switch, default connection ID, bounded byte
