@@ -45,7 +45,7 @@ Local and private addresses (loopback, RFC 1918, link-local, CGNAT, documentatio
 ## Features
 
 - **DNSBL checking** — query multiple blacklist zones per address family, concurrently or one at a time (`ParallelQueries`), with primary/fallback providers. A check where zones could not be queried is `Indeterminate`, never reported as clean.
-- **Per-call overrides** — `CheckIpAsync(ip, DnsblCheckRequest)` supplies your own zones, timeout, and an async allowlist predicate.
+- **Per-call overrides** — `CheckIpAsync(ip, DnsblCheckRequest)` supplies your own zones, timeout, and an async allowlist predicate (called with the canonical address, so `::ffff:1.2.3.4` and `1.2.3.4` compare equal). A check cancelled by its token reports `Status = Cancelled`.
 - **Disabled is not an exception** — with `dnsbl.enabled` (or `enabled`) off, `net.Dnsbl` is still there: `IsEnabled` is `false` and every check returns `Status = Error` with "DNSBL checking is disabled". `HasDnsbl` tells you up front.
 - **Zone validation** — only well-formed DNS names are queried; a blank line, IP literal or other malformed zone is never sent to the resolver and is reported in `FailedServices`.
 - **Private-address short-circuit** — loopback and RFC 1918 / IPv6 local ranges skip DNS and return not blacklisted.
@@ -80,10 +80,16 @@ Auto-generated on first run as `config.netutils.json` (section `netutils`). Keys
     "downloadUrl": "https://download.maxmind.com/geoip/databases/{DatabaseType}/download?suffix=tar.gz",
     "trustedDownloadHosts": ["download.maxmind.com"],
     "databaseType": "GeoLite2-City",
-    "timeoutSeconds": 30
+    "timeoutSeconds": 120,
+    "maxDownloadBytes": 536870912,
+    "verifyChecksum": true
   }
 }
 ```
+
+Changes to this file are applied while the library runs (`IConfigReloadable`): DNSBL settings take effect at once,
+GeoIP settings rebuild the service (downloading a database when needed) and swap it in. Read `net.Dnsbl` and
+`net.GeoIp` per use rather than caching them.
 
 | Setting | Default | Description |
 |---------|---------|-------------|
@@ -104,7 +110,9 @@ Auto-generated on first run as `config.netutils.json` (section `netutils`). Keys
 | `GeoIp.DownloadUrl` | MaxMind, `{DatabaseType}` edition | Download endpoint (`tar.gz` or `zip`); `{DatabaseType}` is replaced with `DatabaseType`. Must be `https` on a host in `TrustedDownloadHosts`, because the credentials are sent to it. |
 | `GeoIp.TrustedDownloadHosts` | `["download.maxmind.com"]` | Hosts `DownloadUrl` may use (exact match). |
 | `GeoIp.DatabaseType` | `GeoLite2-City` | MaxMind edition id: a City, Country, Enterprise, ASN or ISP edition (`GeoLite2-Country`, `GeoLite2-ASN`, `GeoIP2-ISP`, ...). Names the default file and fills `{DatabaseType}` in `DownloadUrl`; a download must be of the same kind. Letters, digits, `-`, `_`, `.` only. |
-| `GeoIp.TimeoutSeconds` | `30` | Download timeout. |
+| `GeoIp.TimeoutSeconds` | `120` | Time allowed for a whole download: checksum, request and the entire body (GeoLite2-City is about 70 MB). Over it, `netutils.download_timeout`; the existing database stays in use. |
+| `GeoIp.MaxDownloadBytes` | `536870912` (512 MB) | Limit for the archive body and again for the unpacked database (`netutils.download_too_large`). |
+| `GeoIp.VerifyChecksum` | `true` | Fetch the published `.sha256` (`…download?suffix=tar.gz.sha256` on MaxMind) and refuse a download that does not match (`netutils.checksum_mismatch`). Turn off only for a mirror that publishes none. |
 
 ## Documentation
 

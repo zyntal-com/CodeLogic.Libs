@@ -1,8 +1,10 @@
 using System.Net;
 using System.Net.Http.Headers;
+using System.Security.Cryptography;
 using CL.NetUtils.Localization;
 using CL.NetUtils.Models;
 using CodeLogic.Core.Logging;
+using CodeLogic.Core.Results;
 using MaxMind.Db;
 using MaxMind.GeoIP2;
 using MaxMind.GeoIP2.Exceptions;
@@ -28,6 +30,12 @@ public class GeoIpService : IDisposable
 
     /// <summary>Supplies the (localized) messages; set by <see cref="NetUtilsLibrary"/>.</summary>
     internal Func<NetUtilsStrings> Strings { get; set; } = static () => InputText.DefaultStrings;
+
+    /// <summary>
+    /// How long a reader replaced by a newer database stays open after the swap. Lookups take a snapshot of the
+    /// reader outside the lock, so one that started just before a swap still finishes on the old reader.
+    /// </summary>
+    internal TimeSpan RetireGracePeriod { get; set; } = TimeSpan.FromSeconds(10);
 
     /// <summary>
     /// Initializes a new <see cref="GeoIpService"/>.
@@ -103,18 +111,21 @@ public class GeoIpService : IDisposable
         if (!File.Exists(_databasePath))
         {
             _logger?.Info(Strings().GeoIpDatabaseNotFound);
-            await DownloadDatabaseAsync(cancellationToken).ConfigureAwait(false);
+            var download = await DownloadDatabaseAsync(cancellationToken).ConfigureAwait(false);
+            if (download.IsFailure)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                throw new InvalidOperationException($"Failed to obtain GeoIP database at {_databasePath}: {download.Error!.Message}");
+            }
         }
         else if (_config.AutoUpdate && CanDownload)
         {
             _logger?.Info("GeoIP auto-update: refreshing the database...");
-            try
+            var refresh = await DownloadDatabaseAsync(cancellationToken).ConfigureAwait(false);
+            if (refresh.IsFailure)
             {
-                await DownloadDatabaseAsync(cancellationToken).ConfigureAwait(false);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                _logger?.Warning($"GeoIP auto-update failed; keeping the existing database: {ex.Message}");
+                cancellationToken.ThrowIfCancellationRequested();
+                _logger?.Warning($"GeoIP auto-update failed; keeping the existing database: {refresh.Error!.Message}");
             }
         }
 
@@ -148,13 +159,14 @@ public class GeoIpService : IDisposable
             throw;
         }
 
+        DatabaseReader? previous;
         lock (_lock)
         {
-            var previous = _databaseReader;
+            previous = _databaseReader;
             _databaseReader = reader;
             _kind = kind;
-            previous?.Dispose();
         }
+        RetireLater(previous);
 
         _logger?.Info(InputText.Format(Strings().GeoIpInitialized, _databasePath, reader.Metadata.DatabaseType));
     }
@@ -179,20 +191,23 @@ public class GeoIpService : IDisposable
                 return Task.FromResult(IpLocationResult.Error(ipAddress, strings.InvalidIpAddressFormat));
             }
 
-            IpLocationResult result;
-
+            // Snapshot under the lock, look up outside it: lookups run concurrently and a swap never waits for them.
+            // A reader replaced meanwhile stays open for RetireGracePeriod, so this lookup finishes on it.
+            DatabaseReader? reader;
+            GeoIpDatabaseKind kind;
             lock (_lock)
             {
-                if (_databaseReader is null)
-                {
-                    _logger?.Warning("GeoIP database reader not initialized");
-                    return Task.FromResult(IpLocationResult.Error(ipAddress, strings.GeoIpNotInitialized));
-                }
-
-                result = Lookup(_databaseReader, _kind, ip, ipAddress);
+                reader = _databaseReader;
+                kind = _kind;
             }
 
-            return Task.FromResult(result);
+            if (reader is null)
+            {
+                _logger?.Warning("GeoIP database reader not initialized");
+                return Task.FromResult(IpLocationResult.Error(ipAddress, strings.GeoIpNotInitialized));
+            }
+
+            return Task.FromResult(Lookup(reader, kind, ip, ipAddress));
         }
         catch (AddressNotFoundException)
         {
@@ -292,19 +307,24 @@ public class GeoIpService : IDisposable
 
     /// <summary>
     /// Downloads the MaxMind database archive using the configured credentials and installs its <c>.mmdb</c>.
-    /// Does nothing (logs a warning) when account credentials are absent, and refuses (logs an error, sends
-    /// nothing) when <see cref="GeoIpConfig.DownloadUrl"/> is not <c>https</c> on a host in
-    /// <see cref="GeoIpConfig.TrustedDownloadHosts"/>.
+    /// Refused without a request (<c>netutils.download_refused</c>) when account credentials are absent or
+    /// <see cref="GeoIpConfig.DownloadUrl"/> is not <c>https</c> on a host in <see cref="GeoIpConfig.TrustedDownloadHosts"/>.
     /// </summary>
     /// <remarks>
-    /// The archive is downloaded and unpacked in a private temporary directory next to the database. Only the
-    /// <c>.mmdb</c> entry is extracted (licence and readme files are ignored, and entry paths are never used as
-    /// output paths); it is checked for the MaxMind metadata marker and then moved over
-    /// <see cref="DatabasePath"/> in one rename, so readers never see a partial file. When the service is
-    /// already initialized, the open reader is switched to the new file.
+    /// The whole download runs under <see cref="GeoIpConfig.TimeoutSeconds"/> (<c>netutils.download_timeout</c>). The
+    /// archive body may not exceed <see cref="GeoIpConfig.MaxDownloadBytes"/>, and neither may the database unpacked
+    /// from it (<c>netutils.download_too_large</c>). With <see cref="GeoIpConfig.VerifyChecksum"/> the server's
+    /// published SHA-256 (the download URL with <c>.sha256</c> appended to its <c>suffix</c>) is fetched first and the
+    /// body must match it (<c>netutils.checksum_mismatch</c>, <c>netutils.checksum_unavailable</c>). The archive is
+    /// downloaded and unpacked in a private temporary directory next to the database. Only the <c>.mmdb</c> entry is
+    /// extracted (licence and readme files are ignored, and entry paths are never used as output paths); it must be a
+    /// usable database of the configured kind (<c>netutils.invalid_database</c>) and is then moved over
+    /// <see cref="DatabasePath"/> in one rename, so readers never see a partial file. When the service is already
+    /// initialized, the open reader is switched to the new file. On any failure the existing database stays as it is.
     /// </remarks>
-    /// <param name="cancellationToken">Optional cancellation token.</param>
-    public async Task DownloadDatabaseAsync(CancellationToken cancellationToken = default)
+    /// <param name="cancellationToken">Cancels the download (<c>netutils.cancelled</c>).</param>
+    /// <returns>Success once the database is installed, or a <c>netutils.*</c> error.</returns>
+    public async Task<Result> DownloadDatabaseAsync(CancellationToken cancellationToken = default)
     {
         string? workDir = null;
         try
@@ -312,14 +332,18 @@ public class GeoIpService : IDisposable
             if (!CanDownload)
             {
                 _logger?.Warning("MaxMind credentials not configured — skipping database download.");
-                return;
+                return Result.Failure(NetUtilsErrors.DownloadRefused("MaxMind credentials (GeoIp.AccountId and GeoIp.LicenseKey) are not configured."));
             }
 
             if (!_config.TryGetTrustedDownloadUri(out var downloadUri, out var urlError))
             {
                 _logger?.Error($"GeoIP download refused: {urlError}");
-                return;
+                return Result.Failure(NetUtilsErrors.DownloadRefused(urlError));
             }
+
+            var maxBytes = _config.MaxDownloadBytes;
+            if (maxBytes <= 0)
+                return Result.Failure(NetUtilsErrors.DownloadRefused("GeoIp.MaxDownloadBytes must be greater than zero."));
 
             var dbDir = Path.GetDirectoryName(Path.GetFullPath(_databasePath)) ?? string.Empty;
             Directory.CreateDirectory(dbDir);
@@ -330,56 +354,120 @@ public class GeoIpService : IDisposable
 
             _logger?.Info($"Downloading GeoIP database from {downloadUri!.GetLeftPart(UriPartial.Path)}...");
 
+            // One clock for the whole download: HttpClient.Timeout would stop at the response headers, and the body
+            // (tens of megabytes) is what takes the time.
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(_config.TimeoutSeconds));
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
+            var ct = linked.Token;
+
             using var httpClient = _httpHandler is null
                 ? new HttpClient()
                 : new HttpClient(_httpHandler, disposeHandler: false);
-            httpClient.Timeout = TimeSpan.FromSeconds(_config.TimeoutSeconds);
+            httpClient.Timeout = Timeout.InfiniteTimeSpan;
 
             var credentials = Convert.ToBase64String(
                 System.Text.Encoding.ASCII.GetBytes($"{_config.AccountId}:{_config.LicenseKey}"));
+
+            byte[]? expectedHash = null;
+            if (_config.VerifyChecksum)
+            {
+                var checksum = await FetchChecksumAsync(httpClient, credentials, ChecksumUri(downloadUri!), ct).ConfigureAwait(false);
+                if (checksum.IsFailure)
+                {
+                    _logger?.Error($"GeoIP download refused: {checksum.Error!.Message}");
+                    return Result.Failure(checksum.Error!);
+                }
+                expectedHash = checksum.Value!;
+            }
 
             using var request = new HttpRequestMessage(HttpMethod.Get, downloadUri);
             request.Headers.Authorization = new AuthenticationHeaderValue("Basic", credentials);
 
             using var response = await httpClient
-                .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
+                .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct)
                 .ConfigureAwait(false);
 
             if (response.StatusCode == HttpStatusCode.NotFound)
             {
                 _logger?.Error("GeoIP download returned 404 — verify credentials and URL.");
-                return;
+                return Result.Failure(NetUtilsErrors.DownloadFailed("The GeoIP download returned HTTP 404; verify the credentials and the URL."));
             }
 
-            response.EnsureSuccessStatusCode();
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger?.Error($"GeoIP download returned HTTP {(int)response.StatusCode}.");
+                return Result.Failure(NetUtilsErrors.DownloadFailed($"The GeoIP download returned HTTP {(int)response.StatusCode}."));
+            }
 
+            if (response.Content.Headers.ContentLength is { } declared && declared > maxBytes)
+            {
+                _logger?.Error($"GeoIP download refused: the server announces {declared:N0} bytes, over the {maxBytes:N0} byte limit.");
+                return Result.Failure(NetUtilsErrors.DownloadTooLarge(
+                    $"The GeoIP download is {declared:N0} bytes, over the limit of {maxBytes:N0} bytes (GeoIp.MaxDownloadBytes)."));
+            }
+
+            await using (var body = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false))
+            await using (var bounded = new BoundedReadStream(body, maxBytes, "GeoIP download"))
             await using (var fileStream = File.Create(downloadPath))
             {
-                await response.Content.CopyToAsync(fileStream, cancellationToken).ConfigureAwait(false);
+                await bounded.CopyToAsync(fileStream, ct).ConfigureAwait(false);
+            }
+
+            if (expectedHash is not null)
+            {
+                byte[] actualHash;
+                await using (var downloaded = File.OpenRead(downloadPath))
+                    actualHash = await SHA256.HashDataAsync(downloaded, ct).ConfigureAwait(false);
+                if (!CryptographicOperations.FixedTimeEquals(actualHash, expectedHash))
+                {
+                    _logger?.Error("GeoIP download refused: its SHA-256 does not match the published checksum.");
+                    return Result.Failure(NetUtilsErrors.ChecksumMismatch(
+                        "The GeoIP download's SHA-256 does not match the checksum the server published; nothing was installed."));
+                }
             }
 
             _logger?.Info("GeoIP archive downloaded, extracting...");
 
             var stagedPath = Path.Combine(workDir, "database.mmdb");
             var expectedKind = GeoIpDatabaseKinds.Detect(_config.DatabaseType);
-            await Task.Run(() => ExtractDatabase(downloadPath, stagedPath, $"{_config.DatabaseType}.mmdb", expectedKind), cancellationToken)
+            await Task.Run(() => ExtractDatabase(downloadPath, stagedPath, $"{_config.DatabaseType}.mmdb", expectedKind, maxBytes), ct)
                 .ConfigureAwait(false);
 
             InstallDatabase(stagedPath);
 
             _logger?.Info("GeoIP database downloaded and installed successfully");
+            return Result.Success();
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            _logger?.Warning("GeoIP database download was cancelled");
+            return Result.Failure(NetUtilsErrors.Cancelled("The GeoIP database download was cancelled."));
         }
         catch (OperationCanceledException)
         {
-            _logger?.Warning("GeoIP database download was cancelled");
+            _logger?.Error($"GeoIP database download did not finish within {_config.TimeoutSeconds} s (GeoIp.TimeoutSeconds).");
+            return Result.Failure(NetUtilsErrors.DownloadTimeout(
+                $"The GeoIP download did not finish within {_config.TimeoutSeconds} seconds (GeoIp.TimeoutSeconds)."));
+        }
+        catch (DownloadTooLargeException ex)
+        {
+            _logger?.Error($"GeoIP download refused: {ex.Message}");
+            return Result.Failure(NetUtilsErrors.DownloadTooLarge(ex.Message));
+        }
+        catch (InvalidDataException ex)
+        {
+            _logger?.Error("Failed to install the GeoIP database", ex);
+            return Result.Failure(NetUtilsErrors.InvalidDatabase(ex.Message));
         }
         catch (HttpRequestException ex)
         {
             _logger?.Error("Failed to download GeoIP database: network error", ex);
+            return Result.Failure(NetUtilsErrors.DownloadFailed("The GeoIP download failed with a network error.", ex.Message));
         }
         catch (Exception ex)
         {
             _logger?.Error("Failed to download GeoIP database", ex);
+            return Result.Failure(NetUtilsErrors.DownloadFailed("The GeoIP download failed.", ex.Message));
         }
         finally
         {
@@ -398,14 +486,82 @@ public class GeoIpService : IDisposable
         }
     }
 
+    /// <summary>
+    /// Where the server publishes the SHA-256 of <paramref name="downloadUri"/>: MaxMind serves it under the same path
+    /// with <c>.sha256</c> appended to the <c>suffix</c> query value (<c>…?suffix=tar.gz.sha256</c>); a URL without a
+    /// <c>suffix</c> gets <c>.sha256</c> appended to its path.
+    /// </summary>
+    internal static Uri ChecksumUri(Uri downloadUri)
+    {
+        var builder = new UriBuilder(downloadUri);
+        var query = builder.Query.TrimStart('?');
+        var parameters = query.Length == 0 ? [] : query.Split('&');
+        var replaced = false;
+        for (var i = 0; i < parameters.Length; i++)
+        {
+            if (!parameters[i].StartsWith("suffix=", StringComparison.OrdinalIgnoreCase)) continue;
+            parameters[i] += ".sha256";
+            replaced = true;
+        }
+        if (replaced) builder.Query = string.Join('&', parameters);
+        else builder.Path += ".sha256";
+        return builder.Uri;
+    }
+
+    /// <summary>
+    /// Fetches the published checksum file (<c>&lt;hex sha256&gt;  &lt;file name&gt;</c>, as <c>sha256sum</c> writes it)
+    /// and returns the 32 hash bytes. At most 4 KB of it is read.
+    /// </summary>
+    private async Task<Result<byte[]>> FetchChecksumAsync(HttpClient httpClient, string credentials, Uri checksumUri, CancellationToken ct)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, checksumUri);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Basic", credentials);
+        using var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+        if (!response.IsSuccessStatusCode)
+            return Result<byte[]>.Failure(NetUtilsErrors.ChecksumUnavailable(
+                $"The published checksum could not be fetched (HTTP {(int)response.StatusCode}); set GeoIp.VerifyChecksum to false for a mirror without one."));
+
+        string text;
+        await using (var body = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false))
+        await using (var bounded = new BoundedReadStream(body, 4096, "GeoIP checksum file"))
+        using (var reader = new StreamReader(bounded, System.Text.Encoding.ASCII))
+            text = await reader.ReadToEndAsync(ct).ConfigureAwait(false);
+
+        var token = text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
+        if (token is not { Length: 64 } || !token.All(char.IsAsciiHexDigit))
+            return Result<byte[]>.Failure(NetUtilsErrors.ChecksumUnavailable("The published checksum file does not start with a SHA-256 hex digest."));
+        return Result<byte[]>.Success(Convert.FromHexString(token));
+    }
+
+    /// <summary>Disposes a reader that was swapped out, once lookups that snapshotted it have had time to finish.</summary>
+    private void RetireLater(DatabaseReader? previous)
+    {
+        if (previous is null) return;
+        if (RetireGracePeriod <= TimeSpan.Zero)
+        {
+            previous.Dispose();
+            return;
+        }
+        var grace = RetireGracePeriod;
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(grace).ConfigureAwait(false);
+            try { previous.Dispose(); }
+            catch (Exception ex) { _logger?.Debug($"Retired GeoIP reader could not be disposed: {ex.Message}"); }
+        });
+    }
+
     /// <inheritdoc/>
+    /// <remarks>Closes the open reader at once; a lookup still running on it reports an error.</remarks>
     public void Dispose()
     {
+        DatabaseReader? reader;
         lock (_lock)
         {
-            _databaseReader?.Dispose();
+            reader = _databaseReader;
             _databaseReader = null;
         }
+        reader?.Dispose();
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────
@@ -445,8 +601,8 @@ public class GeoIpService : IDisposable
             _databaseReader = previous is null ? null : replacement;
             if (previous is not null) _kind = kind;
         }
-        previous?.Dispose();
         if (previous is null) replacement.Dispose();
+        else RetireLater(previous);
     }
 
     /// <summary>
@@ -482,12 +638,19 @@ public class GeoIpService : IDisposable
     /// <summary>
     /// Extracts the <c>.mmdb</c> entry of a <c>tar.gz</c> or <c>zip</c> archive to <paramref name="outputPath"/>.
     /// Prefers an entry named <paramref name="preferredName"/>, else the first <c>.mmdb</c>; only the entry's
-    /// content is used, never its path, and no other entry is written anywhere.
+    /// content is used, never its path, and no other entry is written anywhere. The decompressed bytes are capped at
+    /// <paramref name="maxBytes"/>, so an archive that inflates past the limit stops there.
     /// </summary>
     /// <exception cref="InvalidDataException">
     /// The archive format is not supported, it holds no <c>.mmdb</c>, or the file is not a MaxMind database.
     /// </exception>
-    internal static void ExtractDatabase(string archivePath, string outputPath, string preferredName, GeoIpDatabaseKind? expectedKind = null)
+    /// <exception cref="DownloadTooLargeException">The decompressed content exceeds <paramref name="maxBytes"/>.</exception>
+    internal static void ExtractDatabase(
+        string archivePath,
+        string outputPath,
+        string preferredName,
+        GeoIpDatabaseKind? expectedKind = null,
+        long maxBytes = GeoIpConfig.DefaultMaxDownloadBytes)
     {
         static bool IsMmdb(string name) => name.EndsWith(".mmdb", StringComparison.OrdinalIgnoreCase);
         bool IsPreferred(string name) =>
@@ -509,7 +672,8 @@ public class GeoIpService : IDisposable
             if (read >= 2 && magic[0] == 0x1F && magic[1] == 0x8B)
             {
                 using var gzip = new GZipStream(file, CompressionMode.Decompress);
-                using var tar = new TarReader(gzip);
+                using var bounded = new BoundedReadStream(gzip, maxBytes, "unpacked GeoIP archive");
+                using var tar = new TarReader(bounded);
                 while (tar.GetNextEntry() is { } entry)
                 {
                     if (entry.EntryType is not (TarEntryType.RegularFile or TarEntryType.V7RegularFile)
@@ -531,7 +695,7 @@ public class GeoIpService : IDisposable
                 var entry = candidates.FirstOrDefault(e => IsPreferred(e.FullName)) ?? candidates.FirstOrDefault();
                 if (entry is not null)
                 {
-                    using var source = entry.Open();
+                    using var source = new BoundedReadStream(entry.Open(), maxBytes, "unpacked GeoIP database");
                     Write(source, outputPath);
                     found = true;
                 }

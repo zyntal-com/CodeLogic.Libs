@@ -22,6 +22,18 @@ All notable changes to **CodeLogic.NetUtils** are documented here. Versions foll
   validation fails.
 - **SharpCompress dependency removed.** The GeoIP archive is read with the built-in `System.Formats.Tar`
   and `System.IO.Compression` (`tar.gz` and `zip`).
+- **`GeoIpService.DownloadDatabaseAsync` returns `Result`** (audit round 5). It used to swallow every failure into a
+  log line; it now reports a `netutils.*` error (`NetUtilsErrors`: `download_refused`, `download_failed`,
+  `download_timeout`, `download_too_large`, `checksum_unavailable`, `checksum_mismatch`, `invalid_database`,
+  `cancelled`). `await`-ing it as before still compiles.
+- **GeoIP downloads are verified against MaxMind's published SHA-256 by default** (`GeoIp.VerifyChecksum`, new,
+  default `true`): the `.sha256` next to the archive (`…download?suffix=tar.gz.sha256`) is fetched first and a
+  mismatch installs nothing. A mirror in `TrustedDownloadHosts` that publishes no checksum needs
+  `VerifyChecksum = false`.
+- **`GeoIp.TimeoutSeconds` now covers the whole download** (checksum, request and the entire body; before it stopped
+  at the response headers) and its default is 120 s instead of 30 s, enough for GeoLite2-City (about 70 MB) on a slow link.
+- **`DnsblCheckStatus.Cancelled`** (new member): a check whose cancellation token fired reports it instead of
+  `Status = Error`, so a caller can tell its own abort from a failed check. Switches over the enum need the case.
 - **`GeoIp.DatabaseType` is validated.** It becomes the default file name, so a value with path separators or
   `..` could place the database outside the data directory. It must now be an edition id (letters, digits, `-`,
   `_`, `.`, at most 64 characters); otherwise configuration validation fails and `GeoIpService` throws
@@ -42,8 +54,28 @@ All notable changes to **CodeLogic.NetUtils** are documented here. Versions foll
   `DnsblCheckResult.FailedServices` and `DnsblCheckResult.Indeterminate(...)`.
 - `DnsblCheckRequest.ParallelQueries` (default `true`).
 - `GeoIpConfig.TrustedDownloadHosts` and `GeoIpConfig.TryGetTrustedDownloadUri(...)`.
+- **`NetUtilsLibrary` implements `IConfigReloadable`** (audit round 5): a change to `config.netutils.json` (admin UI,
+  `LibraryManager.UpdateConfigAsync`, reload, file watcher) is applied without a restart. DNSBL settings replace
+  `Dnsbl` at once; GeoIP settings build a new `GeoIpService` (downloading when needed) and swap it in, the old one
+  closing after a grace period; a GeoIP configuration that fails to initialize keeps the previous database serving
+  and reports Degraded; the library can be turned on and off. Read `Dnsbl` and `GeoIp` per use rather than caching them.
+- `GeoIp.MaxDownloadBytes` (default 512 MB): the most a database download may be, enforced on the archive body as it
+  arrives and again on the unpacked database, so neither a long body nor a small archive that inflates to gigabytes
+  fills the disk (`netutils.download_too_large`).
+- `NetUtilsErrors`: the `netutils.*` error codes and factories.
+- `DnsblCheckResult.Cancelled(...)` and the localized string `NetUtilsStrings.DnsblCancelled`.
 
 ### Fixed
+
+- **`DnsblCheckRequest.IsAllowedAsync` receives the canonical address** (audit round 5). It was given the caller's
+  text, so an allowlist holding `1.2.3.4` did not match a check for `::ffff:1.2.3.4` or `0x01.0x02.0x03.0x04`; it now
+  gets `ip.ToString()` of the parsed (IPv4-unmapped) address. `DnsblCheckResult.IpAddress` still echoes the input.
+- **Caller cancellation of a DNSBL check is no longer reported as `Status = Error`**; see `DnsblCheckStatus.Cancelled`.
+- **`GeoIpService.LookupIpAsync` no longer holds the service lock for the MaxMind lookup.** It snapshots the reader
+  under the lock and looks up outside it, so lookups run concurrently and a database swap never waits for them; a
+  replaced reader stays open for a grace period (10 s) so lookups that started on it finish.
+- `NetUtilsLibrary` awaits the GeoIP initialization with `ConfigureAwait(false)` and a token that is cancelled when
+  the library stops, so a download still running at shutdown gives up instead of outliving the library.
 
 - **`NetUtilsLibrary.Dnsbl` no longer throws when DNSBL checking is disabled** (audit 2026-11-01). The docs
   said it is always available, but with `dnsbl.enabled` (or `enabled`) off it threw `InvalidOperationException`.

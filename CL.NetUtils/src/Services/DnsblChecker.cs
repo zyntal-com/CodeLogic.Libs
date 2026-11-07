@@ -90,8 +90,15 @@ public class DnsblChecker
     /// the static library configuration.
     /// </summary>
     /// <param name="ipAddress">The IP address string to check (IPv4 or IPv6).</param>
-    /// <param name="request">Per-call service lists, allowlist predicate, and timeout.</param>
-    /// <param name="cancellationToken">Optional cancellation token.</param>
+    /// <param name="request">
+    /// Per-call service lists, allowlist predicate, and timeout. <see cref="DnsblCheckRequest.IsAllowedAsync"/> receives
+    /// the address in canonical form (<c>1.2.3.4</c>, also for the input <c>::ffff:1.2.3.4</c>), so an allowlist compares
+    /// one spelling.
+    /// </param>
+    /// <param name="cancellationToken">
+    /// Cancels the check: the result is then <see cref="DnsblCheckStatus.Cancelled"/>, never <c>Error</c> and never a
+    /// verdict on the address.
+    /// </param>
     public async Task<DnsblCheckResult> CheckIpAsync(
         string ipAddress,
         DnsblCheckRequest request,
@@ -100,6 +107,7 @@ public class DnsblChecker
         ArgumentNullException.ThrowIfNull(request);
         var strings = Strings();
         var shown = InputText.ForLog(ipAddress);
+        var type = IpAddressType.Unknown;
         try
         {
             if (!IPAddress.TryParse(ipAddress, out var ip))
@@ -108,21 +116,23 @@ public class DnsblChecker
                 return DnsblCheckResult.Error(ipAddress, IpAddressType.Unknown, strings.InvalidIpAddressFormat);
             }
 
-            if (!_enabled)
-                return DnsblCheckResult.Error(ipAddress, GetAddressType(ip.IsIPv4MappedToIPv6 ? ip.MapToIPv4() : ip), strings.DnsblDisabled);
-
             // An IPv4 client seen through a dual-stack socket (::ffff:a.b.c.d) is listed in the IPv4 zones.
             if (ip.IsIPv4MappedToIPv6)
                 ip = ip.MapToIPv4();
+            type = GetAddressType(ip);
+
+            if (!_enabled)
+                return DnsblCheckResult.Error(ipAddress, type, strings.DnsblDisabled);
 
             if (IsLocalOrPrivateIp(ip))
             {
                 _logger?.Debug($"Skipping DNSBL check for local/private IP: {shown}");
-                return DnsblCheckResult.NotBlacklisted(ipAddress, GetAddressType(ip));
+                return DnsblCheckResult.NotBlacklisted(ipAddress, type);
             }
 
+            // The allowlist sees the canonical address, so "::ffff:1.2.3.4", "1.2.3.4" and "0x01.0x02.0x03.0x04" compare equal.
             if (request.IsAllowedAsync is not null &&
-                await request.IsAllowedAsync(ipAddress, cancellationToken).ConfigureAwait(false))
+                await request.IsAllowedAsync(ip.ToString(), cancellationToken).ConfigureAwait(false))
             {
                 _logger?.Debug($"IP {shown} is on the caller-supplied allowlist — skipping DNSBL");
                 return DnsblCheckResult.NotBlacklisted(ipAddress, GetAddressType(ip));
@@ -137,10 +147,16 @@ public class DnsblChecker
             _logger?.Debug($"DNSBL check skipped for unsupported address family: {shown}");
             return DnsblCheckResult.NotBlacklisted(ipAddress, IpAddressType.Unknown);
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // The caller gave up (request aborted, shutdown): say so, instead of an error the caller might count as a failed zone.
+            _logger?.Debug($"DNSBL check for {shown} was cancelled by the caller");
+            return DnsblCheckResult.Cancelled(ipAddress, type, strings.DnsblCancelled);
+        }
         catch (Exception ex)
         {
             _logger?.Error($"Error checking DNSBL for {shown}", ex);
-            return DnsblCheckResult.Error(ipAddress, IpAddressType.Unknown, ex.Message);
+            return DnsblCheckResult.Error(ipAddress, type, ex.Message);
         }
     }
 
