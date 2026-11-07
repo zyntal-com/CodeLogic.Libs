@@ -1,5 +1,3 @@
-using System.Security.Cryptography;
-using System.Text;
 using CL.Mqtt.Models;
 
 namespace CL.Mqtt.Services;
@@ -9,13 +7,20 @@ namespace CL.Mqtt.Services;
 /// <list type="bullet">
 ///   <item><description>A client without a user name is accepted only when <see cref="MqttBrokerConfig.AllowAnonymous"/> is on,
 ///     and may then use every topic.</description></item>
-///   <item><description>A client with a user name must match a configured user and password (compared in constant time).</description></item>
-///   <item><description>A user's <see cref="MqttBrokerUser.PublishTopics"/> and <see cref="MqttBrokerUser.SubscribeTopics"/> limit
-///     what it may use; an empty list allows everything.</description></item>
+///   <item><description>A client with a user name must match a configured user and password (clear or hashed, compared in
+///     constant time), and one of the user's <see cref="MqttBrokerUser.ClientIds"/> when any are listed.</description></item>
+///   <item><description>A user's <see cref="MqttBrokerUser.CanPublish"/> / <see cref="MqttBrokerUser.PublishTopics"/> and
+///     <see cref="MqttBrokerUser.CanSubscribe"/> / <see cref="MqttBrokerUser.SubscribeTopics"/> limit what it may use;
+///     an empty list allows everything.</description></item>
 /// </list>
+/// The broker itself binds every client id to the user that holds it, so this class does not have to.
 /// </summary>
 public sealed class ConfigBrokerAuthorizer : IMqttBrokerAuthorizer
 {
+    // A hashed dummy, so an unknown user costs the same PBKDF2 work as a wrong password when hashes are in use.
+    private static readonly Lazy<string> DummyHash = new(() => MqttBrokerUser.HashPassword("\0no-such-user\0"));
+    private const string DummyClear = "\0no-such-user\0";
+
     private volatile MqttBrokerConfig _config;
 
     /// <summary>Creates the authorizer for a broker configuration.</summary>
@@ -36,8 +41,10 @@ public sealed class ConfigBrokerAuthorizer : IMqttBrokerAuthorizer
 
         var user = FindUser(config, request.Username);
         // Compare against a dummy when the user is unknown, so the answer takes as long either way.
-        var expected = user?.Password ?? "\0no-such-user\0";
-        var matches = PasswordEquals(expected, request.Password ?? "") && user is not null;
+        var expected = user?.Password ?? (config.Users.Any(u => u.HasHashedPassword) ? DummyHash.Value : DummyClear);
+        var matches = MqttBrokerUser.PasswordMatches(expected, request.Password ?? "") & user is not null;
+        if (matches && user!.ClientIds.Count > 0 && !user.ClientIds.Contains(request.ClientId, StringComparer.Ordinal))
+            matches = false;
         return ValueTask.FromResult(matches);
     }
 
@@ -47,7 +54,7 @@ public sealed class ConfigBrokerAuthorizer : IMqttBrokerAuthorizer
         if (string.IsNullOrEmpty(username))
             return _config.AllowAnonymous;
         var user = FindUser(_config, username);
-        return user is not null && (user.PublishTopics.Count == 0 || user.PublishTopics.Any(f => MqttTopic.Matches(topic, f)));
+        return user is { CanPublish: true } && (user.PublishTopics.Count == 0 || user.PublishTopics.Any(f => MqttTopic.Matches(topic, f)));
     }
 
     /// <inheritdoc/>
@@ -56,15 +63,9 @@ public sealed class ConfigBrokerAuthorizer : IMqttBrokerAuthorizer
         if (string.IsNullOrEmpty(username))
             return _config.AllowAnonymous;
         var user = FindUser(_config, username);
-        return user is not null && (user.SubscribeTopics.Count == 0 || user.SubscribeTopics.Any(f => MqttTopic.Covers(f, filter)));
+        return user is { CanSubscribe: true } && (user.SubscribeTopics.Count == 0 || user.SubscribeTopics.Any(f => MqttTopic.Covers(f, filter)));
     }
 
     private static MqttBrokerUser? FindUser(MqttBrokerConfig config, string username) =>
         config.Users.FirstOrDefault(u => string.Equals(u.Username, username, StringComparison.Ordinal));
-
-    /// <summary>Constant-time comparison of the SHA-256 hashes, so length and content leak nothing through timing.</summary>
-    private static bool PasswordEquals(string expected, string actual) =>
-        CryptographicOperations.FixedTimeEquals(
-            SHA256.HashData(Encoding.UTF8.GetBytes(expected)),
-            SHA256.HashData(Encoding.UTF8.GetBytes(actual)));
 }

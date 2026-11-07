@@ -1,6 +1,3 @@
-using System.Text;
-using System.Text.Json;
-using System.Text.Json.Serialization.Metadata;
 using CL.Mqtt.Events;
 using CL.Mqtt.Models;
 using CodeLogic.Core.Events;
@@ -19,6 +16,7 @@ namespace CL.Mqtt.Services;
 /// <b>Connection.</b> <see cref="ConnectAsync"/> connects once and returns the outcome. With
 /// <see cref="MqttConnectionConfig.AutoReconnect"/> (the default) a failed first attempt or a lost connection
 /// is retried in the background with exponential back-off and jitter, until <see cref="DisconnectAsync"/>.
+/// Refused credentials are retried too, but only at the longest delay: the broker is not hammered with a bad password.
 /// </para>
 /// <para>
 /// <b>Subscriptions</b> are kept by the client, not only by the broker: a handler registered with
@@ -31,8 +29,9 @@ namespace CL.Mqtt.Services;
 /// short or hand work off; a slow handler delays every later message. An exception in a handler is logged and
 /// does not affect other handlers.
 /// </para>
+/// This file holds the connection lifecycle; <c>MqttClientService.Messaging.cs</c> holds publish and subscribe.
 /// </summary>
-public sealed class MqttClientService : IAsyncDisposable
+public sealed partial class MqttClientService : IAsyncDisposable
 {
     private readonly ILogger _logger;
     private readonly IEventBus? _events;
@@ -128,7 +127,7 @@ public sealed class MqttClientService : IAsyncDisposable
 
         var result = await TryConnectOnceAsync(cancellationToken).ConfigureAwait(false);
         if (result.IsFailure && _config.AutoReconnect && !cancellationToken.IsCancellationRequested)
-            StartReconnectLoop();
+            StartReconnectLoop(result.Error!.Code == MqttErrorCodes.AuthenticationFailed);
         return result;
     }
 
@@ -172,177 +171,6 @@ public sealed class MqttClientService : IAsyncDisposable
         _config = config;
         ClientId = ResolveClientId(Name, config);
         return wasWanted ? await ConnectAsync(cancellationToken).ConfigureAwait(false) : Result.Success();
-    }
-
-    // ── Publish ───────────────────────────────────────────────────────────────
-
-    /// <summary>Publishes raw bytes.</summary>
-    /// <param name="topic">The topic name (no wildcards).</param>
-    /// <param name="payload">The payload; empty is allowed (and clears a retained message when retained).</param>
-    /// <param name="options">QoS, retain and MQTT 5 properties; <see cref="MqttPublishOptions.Default"/> when null.</param>
-    /// <param name="cancellationToken">Cancels the publish.</param>
-    /// <returns>
-    /// Success once the broker acknowledged (QoS 1/2) or the message was sent (QoS 0); otherwise
-    /// <see cref="MqttErrorCodes.InvalidTopic"/>, <see cref="MqttErrorCodes.NotConnected"/>,
-    /// <see cref="MqttErrorCodes.PublishRejected"/>, <see cref="MqttErrorCodes.Timeout"/>, <see cref="MqttErrorCodes.Cancelled"/>.
-    /// Publishing never queues while disconnected: the caller decides whether to retry.
-    /// </returns>
-    public async Task<Result> PublishAsync(string topic, ReadOnlyMemory<byte> payload, MqttPublishOptions? options = null, CancellationToken cancellationToken = default)
-    {
-        if (MqttTopic.ValidateTopic(topic) is { } invalid)
-            return MqttErrors.InvalidTopic(invalid);
-        if (_disposed)
-            return MqttErrors.Disposed($"MQTT connection '{Name}'");
-        if (!_client.IsConnected)
-            return MqttErrors.NotConnected(Name);
-
-        var message = MqttMessageMapper.ToNative(topic, payload, options ?? MqttPublishOptions.Default);
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _lifetime.Token);
-        timeout.CancelAfter(TimeSpan.FromSeconds(_config.TimeoutSeconds));
-        try
-        {
-            var result = await _client.PublishAsync(message, timeout.Token).ConfigureAwait(false);
-            return result.IsSuccess
-                ? Result.Success()
-                : MqttErrors.PublishRejected(topic, result.ReasonCode.ToString(), result.ReasonString);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            return MqttErrors.Cancelled();
-        }
-        catch (OperationCanceledException)
-        {
-            return _disposed ? MqttErrors.Disposed($"MQTT connection '{Name}'") : MqttErrors.Timeout(Name, $"publish to '{topic}'");
-        }
-        catch (MqttCommunicationTimedOutException)
-        {
-            return MqttErrors.Timeout(Name, $"publish to '{topic}'");
-        }
-        catch (Exception ex) when (ex is MqttCommunicationException or MqttClientNotConnectedException or ObjectDisposedException)
-        {
-            return MqttErrors.NotConnected(Name);
-        }
-    }
-
-    /// <summary>Publishes UTF-8 text. See <see cref="PublishAsync(string, ReadOnlyMemory{byte}, MqttPublishOptions?, CancellationToken)"/>.</summary>
-    public Task<Result> PublishAsync(string topic, string payload, MqttPublishOptions? options = null, CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(payload);
-        return PublishAsync(topic, Encoding.UTF8.GetBytes(payload), options, cancellationToken);
-    }
-
-    /// <summary>
-    /// Publishes <paramref name="value"/> as JSON with reflection-based serialization. The content type is set to
-    /// <c>application/json</c> unless <paramref name="options"/> sets one.
-    /// </summary>
-    public Task<Result> PublishJsonAsync<T>(string topic, T value, JsonSerializerOptions? json = null, MqttPublishOptions? options = null, CancellationToken cancellationToken = default)
-    {
-        byte[] bytes;
-        try
-        {
-            bytes = JsonSerializer.SerializeToUtf8Bytes(value, json);
-        }
-        catch (Exception ex) when (ex is JsonException or NotSupportedException)
-        {
-            return Task.FromResult<Result>(MqttErrors.InvalidJson($"The value for '{topic}' cannot be written as JSON.", ex));
-        }
-        return PublishAsync(topic, bytes, WithJsonContentType(options), cancellationToken);
-    }
-
-    /// <summary>Publishes <paramref name="value"/> as JSON with source-generated metadata (trimming and Native AOT safe).</summary>
-    public Task<Result> PublishJsonAsync<T>(string topic, T value, JsonTypeInfo<T> typeInfo, MqttPublishOptions? options = null, CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(typeInfo);
-        byte[] bytes;
-        try
-        {
-            bytes = JsonSerializer.SerializeToUtf8Bytes(value, typeInfo);
-        }
-        catch (Exception ex) when (ex is JsonException or NotSupportedException)
-        {
-            return Task.FromResult<Result>(MqttErrors.InvalidJson($"The value for '{topic}' cannot be written as JSON.", ex));
-        }
-        return PublishAsync(topic, bytes, WithJsonContentType(options), cancellationToken);
-    }
-
-    // ── Subscribe ─────────────────────────────────────────────────────────────
-
-    /// <summary>
-    /// Registers <paramref name="handler"/> for every message matching <paramref name="filter"/>.
-    /// While connected, the broker is asked first and a refusal is returned as an error. While not connected the
-    /// handler is registered and the broker is asked on the next connect.
-    /// </summary>
-    /// <param name="filter">Topic filter; <c>+</c> and <c>#</c> wildcards are allowed.</param>
-    /// <param name="handler">Called for each matching message. The token is cancelled when the client is disposed.</param>
-    /// <param name="qos">Highest QoS the broker should deliver with.</param>
-    /// <param name="cancellationToken">Cancels the subscribe request.</param>
-    /// <returns>The subscription (dispose it to stop), or <see cref="MqttErrorCodes.InvalidFilter"/>,
-    /// <see cref="MqttErrorCodes.SubscribeRejected"/>, <see cref="MqttErrorCodes.Timeout"/>, <see cref="MqttErrorCodes.Cancelled"/>.</returns>
-    public async Task<Result<MqttSubscription>> SubscribeAsync(
-        string filter,
-        Func<MqttMessage, CancellationToken, Task> handler,
-        MqttQos qos = MqttQos.AtLeastOnce,
-        CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(handler);
-        if (MqttTopic.ValidateFilter(filter) is { } invalid)
-            return MqttErrors.InvalidFilter(invalid);
-        if (_disposed)
-            return MqttErrors.Disposed($"MQTT connection '{Name}'");
-
-        var subscription = new MqttSubscription(this, filter, qos, handler);
-        bool askBroker;
-        lock (_lock)
-        {
-            // Ask the broker only when this filter is new, or when this handler needs a higher QoS than the others.
-            var existing = _subscriptions.Where(s => s.Filter == filter).Select(s => (int)s.Qos).DefaultIfEmpty(-1).Max();
-            askBroker = (int)qos > existing;
-            _subscriptions.Add(subscription);
-        }
-
-        if (askBroker && _client.IsConnected)
-        {
-            var sent = await SendSubscribeAsync([(filter, qos)], cancellationToken).ConfigureAwait(false);
-            if (sent.IsFailure)
-            {
-                lock (_lock)
-                    _subscriptions.Remove(subscription);
-                return sent.Error!;
-            }
-        }
-        _logger.Debug($"MQTT '{Name}': subscribed to '{filter}' (QoS {(int)qos})");
-        return subscription;
-    }
-
-    /// <summary>Registers a synchronous handler. See <see cref="SubscribeAsync(string, Func{MqttMessage, CancellationToken, Task}, MqttQos, CancellationToken)"/>.</summary>
-    public Task<Result<MqttSubscription>> SubscribeAsync(string filter, Action<MqttMessage> handler, MqttQos qos = MqttQos.AtLeastOnce, CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(handler);
-        return SubscribeAsync(filter, (message, _) => { handler(message); return Task.CompletedTask; }, qos, cancellationToken);
-    }
-
-    /// <summary>Removes a subscription; unsubscribes from the broker when no other handler uses its filter.</summary>
-    internal async Task RemoveAsync(MqttSubscription subscription)
-    {
-        bool lastForFilter;
-        lock (_lock)
-        {
-            _subscriptions.Remove(subscription);
-            lastForFilter = !_subscriptions.Any(s => s.Filter == subscription.Filter);
-        }
-        if (!lastForFilter || !_client.IsConnected || _disposed)
-            return;
-
-        try
-        {
-            var options = new MqttClientUnsubscribeOptionsBuilder().WithTopicFilter(subscription.Filter).Build();
-            await _client.UnsubscribeAsync(options, _lifetime.Token).ConfigureAwait(false);
-            _logger.Debug($"MQTT '{Name}': unsubscribed from '{subscription.Filter}'");
-        }
-        catch (Exception ex) when (ex is MqttCommunicationException or OperationCanceledException or MqttClientNotConnectedException or ObjectDisposedException)
-        {
-            // Not connected any more: the broker forgets the subscription with the session anyway.
-        }
     }
 
     // ── Dispose ───────────────────────────────────────────────────────────────
@@ -426,10 +254,9 @@ public sealed class MqttClientService : IAsyncDisposable
         }
         catch (MqttConnectingFailedException ex)
         {
-            // Thrown when the broker answers CONNACK with a failure code.
-            return Failed(ex.Message.Contains("BadUserNameOrPassword", StringComparison.Ordinal) || ex.Message.Contains("NotAuthorized", StringComparison.Ordinal)
-                ? MqttErrors.AuthenticationFailed(Name, ex.Message)
-                : MqttErrors.ConnectFailed(Name, ex.Message));
+            // Thrown when the broker answers CONNACK with a failure code. MQTTnet 5 only puts the code's name in the
+            // text ("... failed (BadUserNameOrPassword)."), so every known code is matched by name.
+            return Failed(MapConnectResult(ParseConnectResultCode(ex.Message), ex.Message));
         }
         catch (MqttCommunicationException ex)
         {
@@ -468,45 +295,19 @@ public sealed class MqttClientService : IAsyncDisposable
         _ => MqttErrors.ConnectFailed(Name, string.IsNullOrEmpty(reason) ? code.ToString() : reason, code.ToString())
     };
 
-    private async Task<Result> ResubscribeAsync(CancellationToken cancellationToken)
+    /// <summary>Finds the CONNACK reason code named in an MQTTnet connect failure message; <c>UnspecifiedError</c> when none is.</summary>
+    internal static MqttClientConnectResultCode ParseConnectResultCode(string message)
     {
-        List<(string Filter, MqttQos Qos)> filters;
-        lock (_lock)
+        var best = MqttClientConnectResultCode.UnspecifiedError;
+        var bestLength = 0;
+        foreach (var code in Enum.GetValues<MqttClientConnectResultCode>())
         {
-            filters = [.. _subscriptions.GroupBy(s => s.Filter).Select(g => (g.Key, g.Max(s => s.Qos)))];
+            var name = code.ToString();
+            // The longest matching name wins, so "NotAuthorized" is not shadowed by a shorter one.
+            if (name.Length > bestLength && message.Contains(name, StringComparison.Ordinal))
+                (best, bestLength) = (code, name.Length);
         }
-        return filters.Count == 0 ? Result.Success() : await SendSubscribeAsync(filters, cancellationToken).ConfigureAwait(false);
-    }
-
-    private async Task<Result> SendSubscribeAsync(IReadOnlyList<(string Filter, MqttQos Qos)> filters, CancellationToken cancellationToken)
-    {
-        var builder = new MqttClientSubscribeOptionsBuilder();
-        foreach (var (filter, qos) in filters)
-            builder.WithTopicFilter(f => f.WithTopic(filter).WithQualityOfServiceLevel(MqttMessageMapper.ToNative(qos)));
-
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _lifetime.Token);
-        timeout.CancelAfter(TimeSpan.FromSeconds(_config.TimeoutSeconds));
-        try
-        {
-            var result = await _client.SubscribeAsync(builder.Build(), timeout.Token).ConfigureAwait(false);
-            // Granted codes are 0, 1 and 2 (the QoS granted); 0x80 and above are refusals.
-            var refused = result.Items.FirstOrDefault(i => (int)i.ResultCode >= 0x80);
-            return refused is null
-                ? Result.Success()
-                : MqttErrors.SubscribeRejected(refused.TopicFilter.Topic, refused.ResultCode.ToString());
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            return MqttErrors.Cancelled();
-        }
-        catch (OperationCanceledException)
-        {
-            return MqttErrors.Timeout(Name, "subscribe");
-        }
-        catch (Exception ex) when (ex is MqttCommunicationException or MqttClientNotConnectedException or ObjectDisposedException)
-        {
-            return MqttErrors.NotConnected(Name);
-        }
+        return best;
     }
 
     private MqttClientOptions BuildOptions()
@@ -518,6 +319,10 @@ public sealed class MqttClientService : IAsyncDisposable
             .WithCleanSession(_config.CleanSession)
             .WithKeepAlivePeriod(TimeSpan.FromSeconds(_config.KeepAliveSeconds))
             .WithTimeout(TimeSpan.FromSeconds(_config.TimeoutSeconds));
+
+        // MQTT 5 drops a session at disconnect unless an expiry is sent; without this, cleanSession=false does nothing.
+        if (!_config.CleanSession && _config.Protocol == MqttProtocol.V500)
+            builder.WithSessionExpiryInterval((uint)Math.Max(1, _config.SessionExpirySeconds));
 
         if (!string.IsNullOrEmpty(_config.Username))
             builder.WithCredentials(_config.Username, _config.Password ?? "");
@@ -543,37 +348,6 @@ public sealed class MqttClientService : IAsyncDisposable
         return builder.Build();
     }
 
-    private async Task OnMessageReceivedAsync(MqttApplicationMessageReceivedEventArgs e)
-    {
-        MqttSubscription[] matching;
-        var topic = e.ApplicationMessage.Topic;
-        lock (_lock)
-        {
-            matching = [.. _subscriptions.Where(s => MqttTopic.Matches(topic, s.Filter))];
-        }
-        if (matching.Length == 0)
-            return;
-
-        var message = MqttMessageMapper.FromNative(e.ApplicationMessage);
-        foreach (var subscription in matching)
-        {
-            if (!subscription.IsActive)
-                continue;
-            try
-            {
-                await subscription.Handler(message, _lifetime.Token).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
-            {
-                return;
-            }
-            catch (Exception ex)
-            {
-                _logger.Error($"MQTT '{Name}': handler for '{subscription.Filter}' failed on '{topic}': {ex}");
-            }
-        }
-    }
-
     private Task OnDisconnectedAsync(MqttClientDisconnectedEventArgs e)
     {
         if (e.ClientWasConnected)
@@ -594,13 +368,14 @@ public sealed class MqttClientService : IAsyncDisposable
             }
             SetState(willReconnect ? MqttConnectionState.Reconnecting : MqttConnectionState.Disconnected);
             if (willReconnect)
-                StartReconnectLoop();
+                StartReconnectLoop(authFailed: false);
         }
         return Task.CompletedTask;
     }
 
     /// <summary>Starts the background reconnect loop unless one is already running.</summary>
-    private void StartReconnectLoop()
+    /// <param name="authFailed">True when the last attempt was refused for its credentials: start at the longest delay.</param>
+    private void StartReconnectLoop(bool authFailed)
     {
         lock (_lock)
         {
@@ -608,19 +383,23 @@ public sealed class MqttClientService : IAsyncDisposable
                 return;
             _reconnectCancel = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
             var token = _reconnectCancel.Token;
-            _reconnectLoop = Task.Run(() => ReconnectLoopAsync(token), CancellationToken.None);
+            _reconnectLoop = Task.Run(() => ReconnectLoopAsync(token, authFailed), CancellationToken.None);
         }
     }
 
-    private async Task ReconnectLoopAsync(CancellationToken token)
+    private async Task ReconnectLoopAsync(CancellationToken token, bool authFailed)
     {
         try
         {
             var attempt = 0;
             while (!token.IsCancellationRequested && _wantConnected && !_client.IsConnected)
             {
-                await Task.Delay(ReconnectDelay(attempt++), _time, token).ConfigureAwait(false);
+                // Bad credentials are not a transient fault: wait the longest delay rather than hammering the broker.
+                var delay = authFailed ? MaxReconnectDelay() : ReconnectDelay(attempt);
+                attempt++;
+                await Task.Delay(delay, _time, token).ConfigureAwait(false);
                 var result = await TryConnectOnceAsync(token).ConfigureAwait(false);
+                authFailed = result.IsFailure && result.Error!.Code == MqttErrorCodes.AuthenticationFailed;
                 // Log the first failure and then every tenth, so a long outage does not flood the log.
                 if (result.IsFailure && !token.IsCancellationRequested && (attempt == 1 || attempt % 10 == 0))
                     _logger.Warning($"MQTT '{Name}': reconnect attempt {attempt} failed: {result.Error!.Message}");
@@ -642,7 +421,7 @@ public sealed class MqttClientService : IAsyncDisposable
                 restart = _wantConnected && !_disposed && !_client.IsConnected && !token.IsCancellationRequested;
             }
             if (restart)
-                StartReconnectLoop();
+                StartReconnectLoop(authFailed);
         }
     }
 
@@ -668,10 +447,10 @@ public sealed class MqttClientService : IAsyncDisposable
         return TimeSpan.FromSeconds(Math.Clamp(seconds * jitter, min * 0.8, max * 1.2));
     }
 
-    private void SetState(MqttConnectionState state) => State = state;
+    /// <summary>The longest back-off, with jitter: used after refused credentials.</summary>
+    internal TimeSpan MaxReconnectDelay() => ReconnectDelay(int.MaxValue / 2);
 
-    private static MqttPublishOptions WithJsonContentType(MqttPublishOptions? options) =>
-        options is { ContentType: not null } ? options : (options ?? MqttPublishOptions.Default) with { ContentType = "application/json" };
+    private void SetState(MqttConnectionState state) => State = state;
 
     private static string ResolveClientId(string name, MqttConnectionConfig config)
     {

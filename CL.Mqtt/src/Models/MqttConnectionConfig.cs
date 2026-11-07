@@ -57,6 +57,14 @@ public sealed class MqttConnectionConfig
     [ConfigField(Label = "Clean Session", Group = "Session", Order = 21)]
     public bool CleanSession { get; set; } = true;
 
+    /// <summary>
+    /// MQTT 5 only: seconds the broker keeps the session after a disconnect when <see cref="CleanSession"/> is false.
+    /// MQTT 5 discards a session the moment the connection closes unless this is sent, so without it
+    /// <c>cleanSession: false</c> would do nothing on <c>V500</c>. MQTT 3.1.1 sessions follow the broker's own rules.
+    /// </summary>
+    [ConfigField(Label = "Session Expiry (s)", Min = 1, Max = int.MaxValue, Group = "Session", Order = 24, Collapsed = true)]
+    public int SessionExpirySeconds { get; set; } = 86_400;
+
     /// <summary>Seconds between keep-alive pings; the broker drops the client after 1.5 × this without traffic.</summary>
     [ConfigField(Label = "Keep Alive (s)", Min = 5, Max = 3600, Group = "Session", Order = 22, Collapsed = true)]
     public int KeepAliveSeconds { get; set; } = 30;
@@ -115,6 +123,10 @@ public sealed class MqttConnectionConfig
             yield return new($"{path}.reconnectMinDelaySeconds", "ReconnectMinDelaySeconds cannot be greater than ReconnectMaxDelaySeconds.");
         if (!CleanSession && string.IsNullOrWhiteSpace(ClientId))
             yield return new($"{path}.clientId", "A persistent session (CleanSession = false) needs a fixed ClientId.");
+        if (SessionExpirySeconds < 1)
+            yield return new($"{path}.sessionExpirySeconds", "SessionExpirySeconds must be at least 1.");
+        if (!string.IsNullOrWhiteSpace(ClientId) && ClientId.TrimStart().StartsWith('$'))
+            yield return new($"{path}.clientId", "Client ids starting with '$' are reserved by brokers.");
         if (!string.IsNullOrEmpty(WillTopic) && Services.MqttTopic.ValidateTopic(WillTopic) is { } willError)
             yield return new($"{path}.willTopic", willError);
     }

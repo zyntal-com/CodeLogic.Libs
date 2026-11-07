@@ -1,11 +1,17 @@
+using System.Collections;
+using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
+using System.Security.Authentication;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using CL.Mqtt.Events;
 using CL.Mqtt.Models;
 using CodeLogic.Core.Events;
 using CodeLogic.Core.Logging;
 using CodeLogic.Core.Results;
+using MQTTnet;
 using MQTTnet.Protocol;
 using MQTTnet.Server;
 
@@ -15,8 +21,11 @@ namespace CL.Mqtt.Services;
 /// The embedded MQTT broker: an MQTT server inside the application process.
 /// <para>
 /// <b>Security.</b> Every connection, publish and subscription goes through <see cref="Authorizer"/>
-/// (by default <see cref="ConfigBrokerAuthorizer"/>, the users in <c>config.mqtt.json</c>). The default bind
-/// address is <c>127.0.0.1</c>, so only local programs can connect until you open it up.
+/// (by default <see cref="ConfigBrokerAuthorizer"/>, the users in <c>config.mqtt.json</c>). On top of that the broker
+/// itself refuses client ids starting with <c>$</c>, binds every client id to the user that first connected with it
+/// (another user cannot take the session over), caps the sessions a user may hold and the retained messages it may
+/// store, and expires persistent sessions nobody reconnects to. The default bind address is <c>127.0.0.1</c>, so only
+/// local programs can connect until you open it up; do that with <see cref="MqttBrokerConfig.Tls"/> on.
 /// </para>
 /// <para>
 /// <b>Taps</b> (<see cref="Tap"/>) let the application see messages clients publish without connecting a client
@@ -28,10 +37,16 @@ namespace CL.Mqtt.Services;
 /// a file path was given, so devices that publish their state retained are known again after a restart.
 /// </para>
 /// </summary>
-public sealed class MqttBrokerService : IAsyncDisposable
+public sealed partial class MqttBrokerService : IAsyncDisposable
 {
     /// <summary>The client id messages published by the broker itself carry.</summary>
     public const string BrokerClientId = "$broker";
+
+    /// <summary>How often persistent sessions are checked for expiry.</summary>
+    internal static readonly TimeSpan SessionSweepInterval = TimeSpan.FromMinutes(1);
+
+    /// <summary>How long a client has to send CONNECT after the TCP connection opened.</summary>
+    private static readonly TimeSpan ConnectTimeout = TimeSpan.FromSeconds(15);
 
     private readonly ILogger _logger;
     private readonly IEventBus? _events;
@@ -39,9 +54,16 @@ public sealed class MqttBrokerService : IAsyncDisposable
     private readonly Lock _lock = new();
     private readonly List<BrokerTap> _taps = [];
     private readonly SemaphoreSlim _gate = new(1, 1);
+    // Identifies the broker's own injected messages in the publish interceptor, whatever client id they carry.
+    private readonly IDictionary _brokerSessionItems = new Dictionary<object, object>();
+    private readonly ConcurrentDictionary<string, SessionOwner> _sessions = new(StringComparer.Ordinal);
 
+    private HashSet<string> _retainedTopics = new(StringComparer.Ordinal);
     private MqttServer? _server;
     private RetainedMessageStore? _retained;
+    private X509Certificate2? _certificate;
+    private CancellationTokenSource? _sweepCancel;
+    private Task? _sweeper;
     private IMqttBrokerAuthorizer _authorizer;
 
     /// <summary>Creates the broker. It does not listen until <see cref="StartAsync"/>.</summary>
@@ -76,8 +98,16 @@ public sealed class MqttBrokerService : IAsyncDisposable
     /// <summary>True while the broker is listening.</summary>
     public bool IsRunning => _server?.IsStarted == true;
 
-    /// <summary>The address and port the broker listens on (or will listen on).</summary>
-    public string Endpoint => $"{Config.BindAddress}:{Config.Port}";
+    /// <summary>The address and port(s) the broker listens on (or will listen on), e.g. <c>127.0.0.1:1883, tls 127.0.0.1:8883</c>.</summary>
+    public string Endpoint
+    {
+        get
+        {
+            var plain = Config.Tls is { Enabled: true, DisablePlainPort: true } ? null : $"{Config.BindAddress}:{Config.Port}";
+            var tls = Config.Tls.Enabled ? $"tls {Config.BindAddress}:{Config.Tls.Port}" : null;
+            return string.Join(", ", new[] { plain, tls }.Where(e => e is not null));
+        }
+    }
 
     /// <summary>The underlying MQTTnet server while running, for features this wrapper does not cover.</summary>
     public MqttServer? RawServer => _server;
@@ -85,7 +115,7 @@ public sealed class MqttBrokerService : IAsyncDisposable
     // ── Lifecycle ─────────────────────────────────────────────────────────────
 
     /// <summary>Starts listening. Starting a running broker succeeds immediately.</summary>
-    /// <returns>Success, or <see cref="MqttErrorCodes.BrokerStartFailed"/> (port in use, address not available).</returns>
+    /// <returns>Success, or <see cref="MqttErrorCodes.BrokerStartFailed"/> (port in use, address not available, bad certificate).</returns>
     public async Task<Result> StartAsync(CancellationToken cancellationToken = default)
     {
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -94,20 +124,34 @@ public sealed class MqttBrokerService : IAsyncDisposable
             if (IsRunning)
                 return Result.Success();
 
-            var server = new MqttServerFactory().CreateMqttServer(BuildOptions(Config));
+            MqttServer server;
+            X509Certificate2? certificate = null;
+            try
+            {
+                server = new MqttServerFactory().CreateMqttServer(BuildOptions(Config, out certificate));
+            }
+            catch (Exception ex) when (ex is CryptographicException or IOException or UnauthorizedAccessException)
+            {
+                certificate?.Dispose();
+                _logger.Error($"MQTT broker: cannot load the TLS certificate: {ex.Message}");
+                return MqttErrors.BrokerStartFailed(Config.Tls.Port, ex);
+            }
+
             server.ValidatingConnectionAsync += OnValidatingConnectionAsync;
             server.ClientConnectedAsync += OnClientConnectedAsync;
             server.ClientDisconnectedAsync += OnClientDisconnectedAsync;
+            server.SessionDeletedAsync += OnSessionDeletedAsync;
             server.InterceptingPublishAsync += OnInterceptingPublishAsync;
             server.InterceptingSubscriptionAsync += OnInterceptingSubscriptionAsync;
+            server.RetainedMessageChangedAsync += OnRetainedChangedAsync;
+            server.RetainedMessagesClearedAsync += OnRetainedClearedAsync;
 
             if (_retainedFile is not null && Config.PersistRetainedMessages)
             {
                 var store = new RetainedMessageStore(_retainedFile, _logger);
                 var loaded = await store.LoadAsync(cancellationToken).ConfigureAwait(false);
+                TrackRetained(loaded.Select(m => m.Topic));
                 server.LoadingRetainedMessageAsync += e => { e.LoadedRetainedMessages = loaded; return Task.CompletedTask; };
-                server.RetainedMessageChangedAsync += e => { store.Schedule(e.StoredRetainedMessages); return Task.CompletedTask; };
-                server.RetainedMessagesClearedAsync += _ => { store.Schedule([]); return Task.CompletedTask; };
                 _retained = store;
             }
 
@@ -118,13 +162,19 @@ public sealed class MqttBrokerService : IAsyncDisposable
             catch (Exception ex) when (ex is SocketException or IOException or UnauthorizedAccessException)
             {
                 server.Dispose();
+                certificate?.Dispose();
                 await DisposeRetainedAsync().ConfigureAwait(false);
                 _logger.Error($"MQTT broker: could not listen on {Endpoint}: {ex.Message}");
                 return MqttErrors.BrokerStartFailed(Config.Port, ex);
             }
 
             _server = server;
+            _certificate = certificate;
+            _sweepCancel = new CancellationTokenSource();
+            _sweeper = Task.Run(() => SweepLoopAsync(_sweepCancel.Token), CancellationToken.None);
             _logger.Info($"MQTT broker listening on {Endpoint} (anonymous {(Config.AllowAnonymous ? "allowed" : "refused")}, {Config.Users.Count} user(s))");
+            if (!Config.IsLoopback && !Config.Tls.Enabled)
+                _logger.Warning($"MQTT broker: {Endpoint} is reachable from the network without TLS; passwords and payloads travel in clear. Configure broker.tls.");
             _events?.Publish(new MqttBrokerStartedEvent(Endpoint));
             return Result.Success();
         }
@@ -144,6 +194,7 @@ public sealed class MqttBrokerService : IAsyncDisposable
             _server = null;
             if (server is null)
                 return;
+            await StopSweeperAsync().ConfigureAwait(false);
             try
             {
                 await server.StopAsync(new MqttServerStopOptionsBuilder().Build()).ConfigureAwait(false);
@@ -151,6 +202,11 @@ public sealed class MqttBrokerService : IAsyncDisposable
             finally
             {
                 server.Dispose();
+                _certificate?.Dispose();
+                _certificate = null;
+                _sessions.Clear();
+                lock (_lock)
+                    _retainedTopics.Clear();
                 await DisposeRetainedAsync().ConfigureAwait(false);
             }
             _logger.Info("MQTT broker stopped");
@@ -163,8 +219,8 @@ public sealed class MqttBrokerService : IAsyncDisposable
     }
 
     /// <summary>
-    /// Applies new settings. Listener changes (port, address, storage) restart the broker, which disconnects
-    /// every client (they reconnect on their own). User changes alone apply without a restart.
+    /// Applies new settings. Listener changes (ports, address, TLS, storage) restart the broker, which disconnects
+    /// every client (they reconnect on their own). User and limit changes alone apply without a restart.
     /// </summary>
     public async Task<Result> ReconfigureAsync(MqttBrokerConfig config, CancellationToken cancellationToken = default)
     {
@@ -174,11 +230,7 @@ public sealed class MqttBrokerService : IAsyncDisposable
         if (_authorizer is ConfigBrokerAuthorizer configAuthorizer)
             configAuthorizer.Update(config);
 
-        var listenerChanged = previous.Port != config.Port
-            || !string.Equals(previous.BindAddress, config.BindAddress, StringComparison.Ordinal)
-            || previous.PersistRetainedMessages != config.PersistRetainedMessages
-            || previous.MaxPendingMessagesPerClient != config.MaxPendingMessagesPerClient;
-        if (!listenerChanged || !IsRunning)
+        if (previous.ListenerEquals(config) || !IsRunning)
             return Result.Success();
 
         await StopAsync().ConfigureAwait(false);
@@ -228,7 +280,8 @@ public sealed class MqttBrokerService : IAsyncDisposable
         var message = MqttMessageMapper.ToNative(topic, payload, options ?? MqttPublishOptions.Default);
         try
         {
-            await server.InjectApplicationMessage(new InjectedMqttApplicationMessage(message) { SenderClientId = BrokerClientId }, cancellationToken).ConfigureAwait(false);
+            var injected = new InjectedMqttApplicationMessage(message) { SenderClientId = BrokerClientId, CustomSessionItems = _brokerSessionItems };
+            await server.InjectApplicationMessage(injected, cancellationToken).ConfigureAwait(false);
             return Result.Success();
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -262,123 +315,63 @@ public sealed class MqttBrokerService : IAsyncDisposable
         return tap;
     }
 
-    // ── Server events ─────────────────────────────────────────────────────────
-
-    private async Task OnValidatingConnectionAsync(ValidatingConnectionEventArgs e)
-    {
-        var username = string.IsNullOrEmpty(e.UserName) ? null : e.UserName;
-        var endpoint = e.RemoteEndPoint?.ToString() ?? "";
-        var request = new MqttBrokerConnectRequest(e.ClientId, username, e.Password, endpoint, e.IsSecureConnection);
-
-        bool accepted;
-        try
-        {
-            accepted = await Authorizer.AuthenticateAsync(request, e.CancellationToken).ConfigureAwait(false);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _logger.Error($"MQTT broker: the authorizer failed for {request}, refusing: {ex}");
-            accepted = false;
-        }
-
-        if (!accepted)
-        {
-            e.ReasonCode = MqttConnectReasonCode.BadUserNameOrPassword;
-            _logger.Warning($"MQTT broker: refused {request}");
-            _events?.Publish(new MqttBrokerConnectionRejectedEvent(e.ClientId, username, endpoint));
-        }
-    }
-
-    private Task OnClientConnectedAsync(ClientConnectedEventArgs e)
-    {
-        var username = string.IsNullOrEmpty(e.UserName) ? null : e.UserName;
-        _logger.Debug($"MQTT broker: client '{e.ClientId}' connected ({username ?? "anonymous"}, {e.RemoteEndPoint})");
-        _events?.Publish(new MqttBrokerClientConnectedEvent(e.ClientId, username, e.RemoteEndPoint?.ToString() ?? ""));
-        return Task.CompletedTask;
-    }
-
-    private Task OnClientDisconnectedAsync(ClientDisconnectedEventArgs e)
-    {
-        var username = string.IsNullOrEmpty(e.UserName) ? null : e.UserName;
-        var clean = e.DisconnectType == MqttClientDisconnectType.Clean;
-        _logger.Debug($"MQTT broker: client '{e.ClientId}' disconnected ({(clean ? "clean" : e.DisconnectType.ToString())})");
-        _events?.Publish(new MqttBrokerClientDisconnectedEvent(e.ClientId, username, clean));
-        return Task.CompletedTask;
-    }
-
-    private async Task OnInterceptingPublishAsync(InterceptingPublishEventArgs e)
-    {
-        // The broker's own publishes (PublishAsync) pass through here too. They are trusted and are not shown to
-        // taps; without this, a broker that refuses anonymous clients would drop its own messages.
-        if (e.ClientId == BrokerClientId)
-            return;
-
-        var topic = e.ApplicationMessage.Topic;
-        var username = string.IsNullOrEmpty(e.UserName) ? null : e.UserName;
-        if (!Authorizer.CanPublish(username, e.ClientId, topic))
-        {
-            e.ProcessPublish = false;
-            // MQTT 5 publishers (QoS 1/2) see this reason code; MQTT 3.1.1 has no way to report it.
-            e.Response.ReasonCode = MqttPubAckReasonCode.NotAuthorized;
-            _logger.Debug($"MQTT broker: dropped publish by '{e.ClientId}' to '{topic}' (not allowed)");
-            return;
-        }
-
-        BrokerTap[] matching;
-        lock (_lock)
-            matching = [.. _taps.Where(t => MqttTopic.Matches(topic, t.Filter))];
-        if (matching.Length == 0)
-            return;
-
-        var message = MqttMessageMapper.FromNative(e.ApplicationMessage, e.ClientId, username);
-        foreach (var tap in matching)
-        {
-            try
-            {
-                await tap.Handler(message, e.CancellationToken).ConfigureAwait(false);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                _logger.Error($"MQTT broker: tap for '{tap.Filter}' failed on '{topic}': {ex}");
-            }
-        }
-    }
-
-    private Task OnInterceptingSubscriptionAsync(InterceptingSubscriptionEventArgs e)
-    {
-        var filter = e.TopicFilter.Topic;
-        var username = string.IsNullOrEmpty(e.UserName) ? null : e.UserName;
-        if (!Authorizer.CanSubscribe(username, e.ClientId, filter))
-        {
-            e.ProcessSubscription = false;
-            e.Response.ReasonCode = MqttSubscribeReasonCode.NotAuthorized;
-            _logger.Debug($"MQTT broker: refused subscription of '{e.ClientId}' to '{filter}'");
-        }
-        return Task.CompletedTask;
-    }
 
     // ── Internals ─────────────────────────────────────────────────────────────
 
-    private static MqttServerOptions BuildOptions(MqttBrokerConfig config)
+    private static MqttServerOptions BuildOptions(MqttBrokerConfig config, out X509Certificate2? certificate)
     {
+        certificate = null;
         var address = IPAddress.Parse(config.BindAddress);
         var builder = new MqttServerOptionsBuilder()
             .WithDefaultEndpoint()
             .WithDefaultEndpointPort(config.Port)
-            .WithMaxPendingMessagesPerClient(config.MaxPendingMessagesPerClient);
+            .WithMaxPendingMessagesPerClient(config.MaxPendingMessagesPerClient)
+            .WithPendingMessagesOverflowStrategy(MqttPendingMessagesOverflowStrategy.DropOldestQueuedMessage)
+            .WithDefaultCommunicationTimeout(ConnectTimeout);
 
         // Listen on exactly the configured address. "0.0.0.0" also opens IPv6 ("::"), so the whole network is reachable
         // either way; a specific IPv4 address must not leave an IPv6 listener open behind it, and vice versa.
-        if (address.AddressFamily == AddressFamily.InterNetworkV6)
-            builder.WithDefaultEndpointBoundIPV6Address(address).WithDefaultEndpointBoundIPAddress(IPAddress.None);
-        else if (address.Equals(IPAddress.Any))
-            builder.WithDefaultEndpointBoundIPAddress(IPAddress.Any).WithDefaultEndpointBoundIPV6Address(IPAddress.IPv6Any);
-        else
-            builder.WithDefaultEndpointBoundIPAddress(address).WithDefaultEndpointBoundIPV6Address(IPAddress.None);
+        var (v4, v6) = address.AddressFamily == AddressFamily.InterNetworkV6 ? (IPAddress.None, address)
+            : address.Equals(IPAddress.Any) ? (IPAddress.Any, IPAddress.IPv6Any)
+            : (address, IPAddress.None);
+        builder.WithDefaultEndpointBoundIPAddress(v4).WithDefaultEndpointBoundIPV6Address(v6);
+
+        if (config.Tls.Enabled)
+        {
+            certificate = config.Tls.LoadCertificate();
+            builder.WithEncryptedEndpoint()
+                .WithEncryptedEndpointPort(config.Tls.Port)
+                .WithEncryptionCertificate(certificate)
+                .WithEncryptionSslProtocol(SslProtocols.None)   // the OS default set of versions
+                .WithEncryptedEndpointBoundIPAddress(v4)
+                .WithEncryptedEndpointBoundIPV6Address(v6);
+            if (config.Tls.DisablePlainPort)
+                builder.WithoutDefaultEndpoint();
+        }
 
         var options = builder.Build();
         options.EnablePersistentSessions = true;   // honour CleanSession = false from clients
         return options;
+    }
+
+    private async Task StopSweeperAsync()
+    {
+        var cancel = _sweepCancel;
+        var sweeper = _sweeper;
+        _sweepCancel = null;
+        _sweeper = null;
+        if (cancel is null || sweeper is null)
+            return;
+        await cancel.CancelAsync().ConfigureAwait(false);
+        try
+        {
+            await sweeper.ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            // Expected.
+        }
+        cancel.Dispose();
     }
 
     private async Task DisposeRetainedAsync()
@@ -395,6 +388,9 @@ public sealed class MqttBrokerService : IAsyncDisposable
         lock (_lock)
             _taps.Remove(tap);
     }
+
+    /// <summary>Who holds a client id, and since when its client has been away (null while connected).</summary>
+    private sealed record SessionOwner(string? Username, DateTimeOffset? DisconnectedAt);
 
     /// <summary>A registered tap; disposing it removes it.</summary>
     private sealed class BrokerTap(MqttBrokerService owner, string filter, Func<MqttMessage, CancellationToken, Task> handler) : IDisposable

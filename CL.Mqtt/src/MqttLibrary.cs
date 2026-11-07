@@ -24,7 +24,7 @@ namespace CL.Mqtt;
 /// Config changes made while running are applied live — see <see cref="OnConfigChangedAsync"/>.
 /// </para>
 /// </summary>
-public sealed class MqttLibrary : ILibrary, IConfigReloadable
+public sealed class MqttLibrary : ILibrary, IConfigReloadable, IAsyncDisposable
 {
     private const string RetainedFileName = "retained.json";
 
@@ -231,8 +231,23 @@ public sealed class MqttLibrary : ILibrary, IConfigReloadable
 
     // ── IDisposable ───────────────────────────────────────────────────────────
 
-    /// <inheritdoc/>
-    public void Dispose() => TearDownAsync().GetAwaiter().GetResult();
+    /// <summary>Disconnects every client and stops the broker. <see cref="OnStopAsync"/> already did this in a normal shutdown.</summary>
+    public ValueTask DisposeAsync() => new(TearDownAsync());
+
+    /// <summary>
+    /// Synchronous dispose for hosts that cannot await. Prefer <see cref="DisposeAsync"/>; after <see cref="OnStopAsync"/>
+    /// there is nothing left to do and this returns at once.
+    /// </summary>
+    public void Dispose()
+    {
+        bool idle;
+        lock (_lock)
+            idle = _clients.Count == 0 && _broker is null;
+        if (idle)
+            return;
+        // Off the caller's context, so a synchronization context cannot deadlock the awaits inside.
+        Task.Run(TearDownAsync).GetAwaiter().GetResult();
+    }
 
     // ── Internals ─────────────────────────────────────────────────────────────
 

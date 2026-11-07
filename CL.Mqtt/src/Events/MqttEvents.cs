@@ -33,8 +33,12 @@ public sealed record MqttBrokerClientConnectedEvent(string ClientId, string? Use
 /// <param name="Clean">True when the client disconnected properly; false when the connection dropped (its last will is published).</param>
 public sealed record MqttBrokerClientDisconnectedEvent(string ClientId, string? Username, bool Clean) : IEvent;
 
-/// <summary>The embedded broker refused a client's credentials. Useful as a security signal (repeated attempts).</summary>
+/// <summary>The embedded broker refused a client. Useful as a security signal (repeated attempts).</summary>
 /// <param name="ClientId">The client id the client sent.</param>
 /// <param name="Username">The user name it sent, or null.</param>
 /// <param name="Endpoint">The remote address and port.</param>
-public sealed record MqttBrokerConnectionRejectedEvent(string ClientId, string? Username, string Endpoint) : IEvent;
+/// <param name="Reason">
+/// Why: <c>credentials</c> (user name or password), <c>reserved client id</c> (an id starting with <c>$</c>),
+/// <c>client id held by …</c> (another user holds that session) or <c>session limit of N reached</c>.
+/// </param>
+public sealed record MqttBrokerConnectionRejectedEvent(string ClientId, string? Username, string Endpoint, string Reason = "credentials") : IEvent;

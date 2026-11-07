@@ -81,8 +81,11 @@ if (connected.IsFailure)
 **State you can read:** `State` (`Disconnected`, `Connecting`, `Connected`, `Reconnecting`), `IsConnected`,
 `ConnectedSince`, `FailedAttempts`, `LastError`, `ClientId`.
 
-**Client id:** when `clientId` is empty the client uses `cl-{machine}-{connection}`. Two clients with the same id
-disconnect each other, so give every process its own.
+**Client id:** when `clientId` is empty the client uses `cl-{machine}-{connection}`. Two clients of the same user with
+the same id disconnect each other, so give every process its own. Ids starting with `$` are reserved by brokers.
+
+**Persistent sessions:** `cleanSession: false` needs a fixed `clientId`. On `V500` the client also sends
+`sessionExpirySeconds` (1 day by default); MQTT 5 drops a session at disconnect without it.
 
 ### Subscribing
 
@@ -152,12 +155,18 @@ subscription. The library uses it for live config changes, so code holding a cli
 "broker": {
   "enabled": true,
   "port": 1883,
-  "bindAddress": "127.0.0.1",
+  "bindAddress": "0.0.0.0",
+  "tls": { "enabled": true, "port": 8883, "certificatePath": "/etc/app/broker.pfx", "certificatePassword": "…", "disablePlainPort": true },
   "allowAnonymous": false,
+  "maxSessionsPerUser": 100,
+  "persistentSessionExpiryMinutes": 1440,
   "persistRetainedMessages": true,
   "maxPendingMessagesPerClient": 1000,
+  "maxRetainedMessages": 10000,
+  "maxRetainedPayloadBytes": 1048576,
   "users": [
-    { "username": "sensor", "password": "…", "publishTopics": ["sensors/#"], "subscribeTopics": ["commands/sensor/+"] },
+    { "username": "sensor", "password": "…", "publishTopics": ["sensors/#"], "subscribeTopics": ["commands/sensor/+"], "clientIds": ["sensor-1"] },
+    { "username": "dashboard", "password": "$pbkdf2-sha256$600000$…$…", "canPublish": false, "subscribeTopics": ["home/#"] },
     { "username": "admin",  "password": "…" }
   ]
 }
@@ -166,16 +175,23 @@ subscription. The library uses it for live config changes, so code holding a cli
 **Security model:**
 - **Listening address:** the broker listens on exactly `bindAddress`.
   - The default `127.0.0.1` accepts local programs only, and no IPv6 listener is opened behind it.
-  - `0.0.0.0` accepts the whole network on IPv4 and IPv6. Turn `allowAnonymous` off and configure users before you open it.
+  - `0.0.0.0` accepts the whole network on IPv4 and IPv6. Turn `allowAnonymous` off, configure users and turn `tls` on before you open it: without TLS, passwords and payloads travel in clear, and the broker logs a warning at start.
+- **TLS** (`tls`): a PKCS#12 certificate with its private key, served on `tls.port` (8883). `disablePlainPort` closes the plain listener once every client has moved. The certificate is validated with the configuration; a certificate that cannot be loaded fails the start with `mqtt.broker_start_failed`.
 - **Anonymous clients** (no user name) are accepted only with `allowAnonymous`, and may then use every topic.
 - **Users:**
-  - A user must match `username` and `password`. Passwords are compared in constant time, and an unknown user takes as long as a wrong password.
-  - `publishTopics` limits where a user may publish; a message to another topic is dropped. MQTT 3.1.1 gives the publisher no error; MQTT 5 does.
-  - `subscribeTopics` limits what a user may subscribe to; other subscriptions are refused with "not authorized". A requested filter is allowed when a permission **covers** it:
+  - A user must match `username` and `password`. The password is either clear text or a hash made with `MqttBrokerUser.HashPassword` (PBKDF2-SHA256, 600 000 iterations, `$pbkdf2-sha256$…`), so it need not sit in the configuration file. Both are compared in constant time, and an unknown user takes as long as a wrong password.
+  - `clientIds` pins the account to the listed client ids (empty allows any), so a leaked device password cannot be used from elsewhere.
+  - `canPublish` / `canSubscribe` (default true) forbid a direction entirely. With them on, `publishTopics` limits where a user may publish (a message to another topic is dropped; MQTT 3.1.1 gives the publisher no error, MQTT 5 does) and `subscribeTopics` limits what it may subscribe to (other subscriptions are refused with "not authorized"). A requested filter is allowed when a permission **covers** it:
     - `home/#` covers `home/+/state`;
     - `home/+` does not cover `home/#`.
-  - Empty lists allow everything.
-- **Refused connections** are logged and published as `MqttBrokerConnectionRejectedEvent`, a useful signal for repeated attempts.
+  - **Empty lists allow everything**; use `canPublish: false` for a read-only account.
+- **Client ids and sessions** (enforced by the broker, whatever the authorizer):
+  - Ids starting with `$` are refused (`$broker` is the broker's own, see below).
+  - A client id belongs to the user that first connected with it, for as long as its session exists: another user is refused with "client identifier not valid", so it can neither resume the session (and inherit its subscriptions and queued messages) nor kick the client off. The same user may reconnect with the id at any time.
+  - `maxSessionsPerUser` (100, 0 for no limit) caps the sessions a user holds, connected or persistent and offline: MQTT 5 clients get "quota exceeded", MQTT 3.1.1 clients "server unavailable".
+  - `persistentSessionExpiryMinutes` (1 day, 0 to keep until stop) deletes persistent sessions whose client has been away that long; MQTT 3.1.1 has no expiry of its own.
+- **Retained messages:** `maxRetainedMessages` (10 000) and `maxRetainedPayloadBytes` (1 MiB) bound what clients can store. Beyond them a retained publish is dropped (MQTT 5: "quota exceeded"); updates of existing topics and clears (empty payload) always pass.
+- **Refused connections** are logged and published as `MqttBrokerConnectionRejectedEvent` with a `Reason`, a useful signal for repeated attempts.
 
 ### Your own accounts
 
@@ -214,14 +230,20 @@ var clients = (await mqtt.Broker.GetClientsAsync()).ValueOrThrow();  // id, endp
 ```
 
 **How taps work:**
-- **What they see:** messages that clients publish, after the authorizer allowed them, without connecting a client of your own. They do not see the broker's own `PublishAsync`.
+- **What they see:** messages that clients publish, after the authorizer allowed them, without connecting a client of your own. They do not see the broker's own `PublishAsync` (recognised by its session, not by the `$broker` id, which no client can claim).
 - **Where they run:** on the publishing client's connection, so keep them short.
 
 ### Retained messages
 
 With `persistRetainedMessages` (the default), the broker keeps retained messages in `retained.json` in the library's data
 directory and loads them at start. Devices that publish their state retained are therefore known again right after a
-restart. Writes are batched (at most one every two seconds, plus one at stop) and atomic.
+restart. Writes are batched (one writer, at most one write every two seconds, plus one at stop) and atomic. The caps
+`maxRetainedMessages` and `maxRetainedPayloadBytes` apply to what clients store, not to the broker's own publishes.
+
+### Queues
+
+`maxPendingMessagesPerClient` (1000) is how many messages the broker queues for a slow or offline client; beyond it the
+oldest queued message is dropped. A client has 15 seconds to send CONNECT after the TCP connection opened.
 
 ## Configuration reference
 
@@ -243,12 +265,13 @@ restart. Writes are batched (at most one every two seconds, plus one at stop) an
 | `useTls`, `allowUntrustedCertificates` | `false`, `false` | TLS; accepting untrusted certificates is for test setups only. |
 | `protocol` | `V311` | `V311` or `V500`. |
 | `username`, `password` | — | Credentials (the password is a secret: masked in the admin schema). |
-| `clientId` | generated | Required for `cleanSession: false`. |
+| `clientId` | generated | Required for `cleanSession: false`; cannot start with `$`. |
 | `cleanSession` | `true` | `false` keeps subscriptions and queued messages at the broker while away. |
+| `sessionExpirySeconds` | `86400` | MQTT 5 only: how long the broker keeps the session after a disconnect (sent with `cleanSession: false`). |
 | `keepAliveSeconds` | `30` | Ping interval. |
 | `timeoutSeconds` | `10` | Connect, publish and subscribe timeout. |
 | `autoConnect` | `true` | Connect at start. |
-| `autoReconnect` | `true` | Retry after failures. |
+| `autoReconnect` | `true` | Retry after failures. Refused credentials are retried at the longest delay only. |
 | `reconnectMinDelaySeconds`, `reconnectMaxDelaySeconds` | `1`, `60` | Back-off range. |
 | `willTopic`, `willPayload`, `willRetain` | — | Last will, published by the broker when the client vanishes. |
 
@@ -258,8 +281,8 @@ restart. Writes are batched (at most one every two seconds, plus one at stop) an
   - a removed one is disposed;
   - a changed one is reconfigured in place, keeping its subscriptions.
 - **Broker:**
-  - user and anonymous-access changes apply at once;
-  - port, address and storage changes restart the broker, and clients reconnect on their own.
+  - user, anonymous-access and limit changes apply at once;
+  - port, address, TLS and storage changes restart the broker, and clients reconnect on their own.
 - **Invalid changes:** a change that fails validation is logged and ignored.
 
 ## Events
@@ -273,7 +296,7 @@ Published on the CodeLogic event bus (`context.Events` / `CodeLogic.GetEventBus(
 | `MqttBrokerStartedEvent(Endpoint)` / `MqttBrokerStoppedEvent` | The broker started or stopped. |
 | `MqttBrokerClientConnectedEvent(ClientId, Username, Endpoint)` | A client connected to the broker. |
 | `MqttBrokerClientDisconnectedEvent(ClientId, Username, Clean)` | A client left; `Clean = false` means it dropped (its last will is published). |
-| `MqttBrokerConnectionRejectedEvent(ClientId, Username, Endpoint)` | The broker refused credentials. |
+| `MqttBrokerConnectionRejectedEvent(ClientId, Username, Endpoint, Reason)` | The broker refused a client: `credentials`, `reserved client id`, `client id held by …` or `session limit of N reached`. |
 
 ## Error codes
 
@@ -290,7 +313,7 @@ Published on the CodeLogic event bus (`context.Events` / `CodeLogic.GetEventBus(
 | `mqtt.subscribe_rejected` | Unauthorized | Broker refused a subscription (`Details` = reason code). |
 | `mqtt.invalid_json` | Validation | Payload not readable/writable as JSON. |
 | `mqtt.broker_not_running` | Unavailable | Broker operation while stopped. |
-| `mqtt.broker_start_failed` | Unavailable | Broker could not listen (`Details` = cause). |
+| `mqtt.broker_start_failed` | Unavailable | Broker could not listen or load its TLS certificate (`Details` = cause). |
 | `mqtt.disposed` | Unavailable | Client or broker was disposed (for example removed by a config change). |
 | `mqtt.cancelled` | Unavailable | The caller's token was cancelled. |
 | `mqtt.unknown` | Internal | Unexpected failure. |
@@ -307,3 +330,5 @@ Published on the CodeLogic event bus (`context.Events` / `CodeLogic.GetEventBus(
 `MqttClientService.RawClient` (MQTTnet `IMqttClient`) and `MqttBrokerService.RawServer` (MQTTnet `MqttServer`) expose
 features the wrapper does not cover, such as enhanced authentication or packet inspection. Do not connect, disconnect or
 subscribe through them: the wrapper would not know.
+
+`MqttLibrary` is `IAsyncDisposable`; a normal `StopAsync` already tears everything down, so `Dispose()` after it returns at once.

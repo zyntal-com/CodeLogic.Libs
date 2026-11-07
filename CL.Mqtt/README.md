@@ -10,7 +10,8 @@
   - **Subscriptions:** they belong to the client, so they survive reconnects and can be registered before the first connect.
   - **Publishing:** text, bytes or JSON.
 - **Embedded broker:** run an MQTT server inside your app.
-  - **Access:** user accounts and per-user topic permissions; it binds to `127.0.0.1` by default.
+  - **Access:** user accounts (clear or hashed passwords) with per-user topic permissions and optional pinned client ids; it binds to `127.0.0.1` by default, and has a TLS listener for anything else.
+  - **Protection:** a client id belongs to the user holding it (no session takeover), `$` ids are reserved, sessions per user and retained messages are capped, idle persistent sessions expire.
   - **Retained messages:** kept across restarts.
   - **Taps and publishing:** taps see what clients publish, and the broker can publish as itself.
 - **CodeLogic conventions:**
@@ -62,14 +63,19 @@ await subscription.DisposeAsync();  // stop receiving
     "enabled": true,
     "port": 1883,
     "bindAddress": "0.0.0.0",
+    "tls": { "enabled": true, "port": 8883, "certificatePath": "C:/certs/broker.pfx", "certificatePassword": "…", "disablePlainPort": true },
     "allowAnonymous": false,
     "users": [
-      { "username": "zigbee2mqtt", "password": "…", "publishTopics": ["zigbee2mqtt/#"], "subscribeTopics": ["zigbee2mqtt/#"] },
-      { "username": "dashboard",   "password": "…", "publishTopics": [],                "subscribeTopics": ["home/#"] }
+      { "username": "zigbee2mqtt", "password": "…", "publishTopics": ["zigbee2mqtt/#"], "subscribeTopics": ["zigbee2mqtt/#"], "clientIds": ["zigbee2mqtt"] },
+      { "username": "dashboard",   "password": "$pbkdf2-sha256$600000$…", "canPublish": false, "subscribeTopics": ["home/#"] }
     ]
   }
 }
 ```
+
+Empty `publishTopics` / `subscribeTopics` allow *every* topic; use `canPublish: false` / `canSubscribe: false` to
+forbid one direction. `MqttBrokerUser.HashPassword("…")` makes the hashed form of a password. Open the broker to a
+network only with `tls` on: without it, passwords and payloads travel in clear (the broker logs a warning).
 
 ```csharp
 var broker = mqtt.Broker;

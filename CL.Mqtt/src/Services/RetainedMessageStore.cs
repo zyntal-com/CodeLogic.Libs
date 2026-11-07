@@ -11,6 +11,7 @@ namespace CL.Mqtt.Services;
 /// Keeps the broker's retained messages in a JSON file. Changes are written at most every
 /// <see cref="WriteDelay"/> (a burst of retained publishes costs one write), and once more on stop.
 /// The file is written to a temporary name and then moved, so a crash never leaves half a file.
+/// One writer runs at a time; a change that arrives during a write is written by the next round.
 /// </summary>
 internal sealed class RetainedMessageStore : IAsyncDisposable
 {
@@ -21,7 +22,7 @@ internal sealed class RetainedMessageStore : IAsyncDisposable
     private readonly ILogger _logger;
     private readonly Lock _lock = new();
     private List<MqttApplicationMessage>? _pending;
-    private Task _writer = Task.CompletedTask;
+    private Task? _writer;
 
     public RetainedMessageStore(string path, ILogger logger)
     {
@@ -52,24 +53,38 @@ internal sealed class RetainedMessageStore : IAsyncDisposable
     {
         lock (_lock)
         {
-            var writerIdle = _pending is null;
             _pending = all;
-            if (writerIdle)
-                _writer = Task.Run(WriteSoonAsync);
+            _writer ??= Task.Run(WriteLoopAsync);
         }
     }
 
-    /// <summary>Writes anything still pending.</summary>
+    /// <summary>Waits for the running write and writes anything still pending.</summary>
     public async ValueTask DisposeAsync()
     {
-        await _writer.ConfigureAwait(false);
+        Task? writer;
+        lock (_lock)
+            writer = _writer;
+        if (writer is not null)
+            await writer.ConfigureAwait(false);
         await FlushAsync().ConfigureAwait(false);
     }
 
-    private async Task WriteSoonAsync()
+    /// <summary>Writes the pending set after <see cref="WriteDelay"/>, again while new changes keep arriving, then exits.</summary>
+    private async Task WriteLoopAsync()
     {
-        await Task.Delay(WriteDelay).ConfigureAwait(false);
-        await FlushAsync().ConfigureAwait(false);
+        while (true)
+        {
+            await Task.Delay(WriteDelay).ConfigureAwait(false);
+            await FlushAsync().ConfigureAwait(false);
+            lock (_lock)
+            {
+                if (_pending is null)
+                {
+                    _writer = null;
+                    return;
+                }
+            }
+        }
     }
 
     private async Task FlushAsync()
@@ -91,8 +106,9 @@ internal sealed class RetainedMessageStore : IAsyncDisposable
                 await JsonSerializer.SerializeAsync(stream, [.. snapshot.Select(ToEntry)], RetainedJsonContext.Default.ListRetainedEntry).ConfigureAwait(false);
             File.Move(temp, _path, overwrite: true);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (Exception ex)
         {
+            // Never let a failed write fault the writer task: the next change schedules another attempt.
             _logger.Warning($"MQTT broker: could not save retained messages to {_path}: {ex.Message}");
         }
     }
