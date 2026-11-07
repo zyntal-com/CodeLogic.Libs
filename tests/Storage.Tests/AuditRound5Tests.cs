@@ -349,6 +349,11 @@ public sealed class LocalProviderAuditTests : IDisposable
         Assert.True(insensitive.IsContained(Path.Combine(swapped, "x")));
         Assert.Null(sensitive.ToStoragePath(Path.Combine(swapped, "x")));
         Assert.Equal("x", insensitive.ToStoragePath(Path.Combine(swapped, "x")));
+        Assert.Equal(string.Empty, insensitive.ToStoragePath(swapped));
+        Assert.Equal("Nested/File.txt", insensitive.ToStoragePath(Path.Combine(swapped, "Nested", "File.txt")));
+        Assert.Null(insensitive.ToStoragePath(swapped + "-outside"));
+        var volumeRoot = new LocalPathResolver(Path.GetPathRoot(_root)!, followLinks: false, caseInsensitive: true);
+        Assert.Equal("Nested/File.txt", volumeRoot.ToStoragePath(Path.Combine(volumeRoot.Root, "Nested", "File.txt")));
     }
 
     [Fact]

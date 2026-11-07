@@ -4,6 +4,8 @@
 
 ### Audit completion (2026-11-07)
 
+- Apply the probed volume case rules when converting contained paths back to storage paths, including Linux mounts that compare names without case. Preserve descendant spelling and root-volume boundaries.
+
 - Make synchronous disposal start observed asynchronous cleanup; split large source files and extract transfer inspection/reporting helpers without changing transfer policy.
 
 

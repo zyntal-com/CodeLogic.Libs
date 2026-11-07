@@ -146,8 +146,11 @@ internal sealed class LocalPathResolver
     {
         var full = Path.GetFullPath(fullPath);
         if (!IsContained(full)) return null;
-        var relative = Path.GetRelativePath(Root, full).Replace(Path.DirectorySeparatorChar, '/');
-        return relative == "." ? string.Empty : relative;
+        if (string.Equals(full, Root, Comparison)) return string.Empty;
+        // GetRelativePath uses the OS's case rules. The mounted volume may use different rules,
+        // so remove the already-validated root prefix instead of comparing the paths a second time.
+        var offset = Root.Length + (Root.EndsWith(Path.DirectorySeparatorChar) ? 0 : 1);
+        return full[offset..].Replace(Path.DirectorySeparatorChar, '/');
     }
 
     /// <summary>
