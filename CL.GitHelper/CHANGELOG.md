@@ -26,6 +26,22 @@ All notable changes to **CodeLogic.GitHelper** are documented here. Versions fol
     return diagnostics; clone logs its duration and messages instead.
 - `GitHelperLibrary` / `GitManager`: `FetchAllAsync` → `Task<Dictionary<string, Result<GitDiagnostics>>>`,
   `GetAllStatusAsync` → `Task<Dictionary<string, Result<RepositoryStatus>>>`.
+- **Expected failures are results, not exceptions** (audit 2026-11):
+  - `GetRepositoryAsync` (library and manager) → `Task<Result<GitRepository>>`. An unknown id is a `NotFoundError`
+    `git.repository_not_found` with `Details = "not_configured"` (was `ArgumentException`); on the library, calling it
+    before initialization, while disabled or after stop is an `UnavailableError` `git.not_initialized` (was
+    `InvalidOperationException`). Migrate with `(await git.GetRepositoryAsync(id)).ValueOrThrow()` or check `IsFailure`.
+  - `RegisterRepository` (library and manager) → `Result`: a duplicate id is a `ConflictError` `git.repository_exists`,
+    a missing URL/path or an escaping path a `ValidationError` `git.invalid_configuration`, and on the library
+    `git.not_initialized` (all used to throw).
+  - `GitHelperLibrary.FetchAllAsync` / `GetAllStatusAsync` → `Task<Result<Dictionary<…>>>` (`git.not_initialized`
+    instead of `InvalidOperationException`). The `GitManager` versions are unchanged.
+- **`Dispose()` on a `GitRepository` obtained from the manager is a no-op.** The manager owns cached instances and
+  disposes them on eviction, config change or stop; a consumer `using` used to dispose the cached instance and
+  break every later caller. Instances you construct yourself are not affected.
+- `GitHelperConfig.Validate()` and `RepositoryConfiguration.IsValid()` reject a relative `LocalPath` that climbs out of
+  `BaseDirectory` (`../../etc`, `a/../../b`); use a path inside it or an absolute path.
+- `GitManager` implements `IAsyncDisposable`; `GitManager.Retire()` (internal) is gone.
 - Failures have a kind and a stable code, all listed as constants on the new
   `CL.GitHelper.Errors.GitErrors`:
   - `NotFoundError`: `git.repository_not_found` (not cloned), `git.remote_not_found`,
@@ -53,6 +69,23 @@ All notable changes to **CodeLogic.GitHelper** are documented here. Versions fol
 
 ### Fixed
 
+- **Reads no longer race disposal** (audit 2026-11). `GetStatusAsync`, `GetRepositoryInfoAsync`, `ListBranchesAsync`,
+  `GetCommitLogAsync`, the dirty check of `EnsureUpToDateAsync` and the lazy open used the native handle without the
+  repository lock, so an eviction could dispose it mid-read (and two first calls could each open, leaking a handle).
+  Every operation now runs under the lock; an operation on a disposed instance returns `git.repository_disposed`.
+- **A disposed cached instance is never handed out again**: `GetRepositoryAsync` and the cleanup sweep check
+  `IsDisposed` and create a fresh instance.
+- **Runtime registration is thread-safe.** `RegisterRepository` / `UnregisterRepositoryAsync` mutated the repository
+  list that batch calls, the health check and auto-fetch enumerate; they now replace the configuration as a whole
+  under the cache lock, like live config changes. Repository ids in the cache are case-insensitive.
+- **Stopping waits for running operations.** `OnStopAsync` disposed every repository at once, under running clones;
+  it now awaits `GitManager.DisposeAsync()`, which disposes each repository once its operation finishes, bounded by
+  `GitManager.DefaultDisposeTimeout` (30 s; a repository still busy then is disposed when it returns).
+- **A stalled transfer no longer wedges the repository.** A connection that hangs before any progress callback kept
+  libgit2 (and the repository lock) busy forever and queued every later call behind it. A watchdog now logs
+  "transfer stalled" `GitRepository.DefaultStallGrace` (30 s) after the timeout; from then on, until the native call
+  returns, waiting and new calls return `git.timeout` at once (`GitRepository.IsStalled`).
+- `ConfigureAwait(false)` on every library await.
 - **Cache eviction no longer disposes a repository under a running operation.** The idle-expiry timer,
   `GetRepositoryAsync` replacing a stale entry, `EvictFromCacheAsync` and `ClearCacheAsync` disposed the
   evicted `GitRepository` at once. Idle time only counts `GetRepositoryAsync` calls, so a clone or fetch that ran
@@ -82,6 +115,11 @@ All notable changes to **CodeLogic.GitHelper** are documented here. Versions fol
 
 ### Security
 
+- **Redaction gaps closed** (audit 2026-11). Commit, checkout and reset failures, and the catch blocks of the batch
+  calls, auto-fetch, start-up probe and health check, logged or returned the raw exception message (and handed the
+  exception, with its message, to the logger). All now go through redaction. `Redact` masks the configured token
+  before the URL user-info, so a token containing `@` is no longer half-masked (`https://***@ss@host`), and also
+  masks its percent-encoded form (`p%40ss`).
 - **The PAT is sent only to the configured host.** The credentials callback answered every request,
   so a submodule, second remote or redirect on another host received the token. It now hands it out only
   when the request's scheme, host and port match `RepositoryUrl` (no `https` → `http` downgrade); other
@@ -92,6 +130,8 @@ All notable changes to **CodeLogic.GitHelper** are documented here. Versions fol
 
 ### Added
 
+- Error codes `git.repository_exists`, `git.invalid_configuration`, `git.not_initialized`, `git.repository_disposed`
+  and `GitErrors.NotConfiguredDetails`; `GitRepository.IsDisposed` is public.
 - Error codes `git.timeout` (`TimeoutError`), `git.merge_conflict` and `git.push_rejected` (`ConflictError`)
   on `GitErrors`.
 - **Pull strategies.** `Merge` fast-forwards or creates a merge commit; on conflicts it returns

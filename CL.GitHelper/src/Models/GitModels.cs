@@ -265,8 +265,10 @@ public sealed class CloneOptions
     public bool Bare { get; set; }
 
     /// <summary>
-    /// Invoked with progress updates during the clone (on a libgit2 worker thread). May be null.
-    /// Exceptions it throws are logged and ignored.
+    /// Invoked with progress updates during the clone. May be null. It runs on the libgit2 worker thread,
+    /// inside the native call: keep it short and never block in it (a callback that waits holds the
+    /// transfer and the repository's lock), and hand UI or logging work off to another thread. Exceptions
+    /// it throws are logged and ignored.
     /// </summary>
     public Action<GitProgress>? OnProgress { get; set; }
 
@@ -289,8 +291,10 @@ public sealed class FetchOptions
     public bool FetchTags { get; set; } = true;
 
     /// <summary>
-    /// Invoked with progress updates during the fetch (on a libgit2 worker thread). May be null.
-    /// Exceptions it throws are logged and ignored.
+    /// Invoked with progress updates during the fetch. May be null. It runs on the libgit2 worker thread,
+    /// inside the native call: keep it short and never block in it (a callback that waits holds the
+    /// transfer and the repository's lock), and hand UI or logging work off to another thread. Exceptions
+    /// it throws are logged and ignored.
     /// </summary>
     public Action<GitProgress>? OnProgress { get; set; }
 
@@ -369,8 +373,10 @@ public sealed class PushOptions
     public bool PushTags { get; set; }
 
     /// <summary>
-    /// Invoked with progress updates during the push (on a libgit2 worker thread). May be null.
-    /// Exceptions it throws are logged and ignored.
+    /// Invoked with progress updates during the push. May be null. It runs on the libgit2 worker thread,
+    /// inside the native call: keep it short and never block in it (a callback that waits holds the
+    /// transfer and the repository's lock), and hand UI or logging work off to another thread. Exceptions
+    /// it throws are logged and ignored.
     /// </summary>
     public Action<GitProgress>? OnProgress { get; set; }
 

@@ -26,6 +26,16 @@ public sealed class GitSecurityTests
     public void Redact_strips_user_info_from_urls(string input, string expected) =>
         Assert.Equal(expected, GitSecurity.Redact(input));
 
+    [Theory]
+    [InlineData("https://user:p@ss@host/x", "p@ss", "https://***@host/x")]                 // the @ in the secret used to split the user-info match, leaving "ss@"
+    [InlineData("remote said: bad token p@ss for user", "p@ss", "remote said: bad token *** for user")]
+    [InlineData("https://user:p%40ss@host/x", "p@ss", "https://***@host/x")]              // percent-encoded in the URL
+    [InlineData("GET https://host/x?token=p%40ss failed", "p@ss", "GET https://host/x?token=*** failed")]
+    [InlineData("token a+b/c=d", "a+b/c=d", "token ***")]
+    [InlineData("token a%2Bb%2Fc%3Dd", "a+b/c=d", "token ***")]
+    public void Redact_masks_secrets_with_reserved_characters_and_their_percent_encoding(string input, string secret, string expected) =>
+        Assert.Equal(expected, GitSecurity.Redact(input, secret));
+
     [Fact]
     public void Redact_masks_the_configured_secret_wherever_it_appears()
     {
@@ -225,7 +235,7 @@ public sealed class LocalRemoteTests : IDisposable
         return path;
     }
 
-    private GitRepository Open(string localPath, int timeoutSeconds = 300, string? url = null)
+    private GitRepository Open(string localPath, int timeoutSeconds = 300, string? url = null, string? password = null, TimeSpan? stallGrace = null)
     {
         var repository = new GitRepository(new RepositoryConfiguration
         {
@@ -233,8 +243,9 @@ public sealed class LocalRemoteTests : IDisposable
             RepositoryUrl = url ?? _remote,
             LocalPath = localPath,
             DefaultBranch = _branch,
-            TimeoutSeconds = timeoutSeconds
-        }, localPath);
+            TimeoutSeconds = timeoutSeconds,
+            Password = password
+        }, localPath, stallGrace: stallGrace);
         _repositories.Add(repository);
         return repository;
     }
@@ -489,6 +500,64 @@ public sealed class LocalRemoteTests : IDisposable
         Assert.Equal("https://***@github.com/org/repo.git", info.Value!.RemoteUrl);
     }
 
+    // ── Stall watchdog: a transfer that never returns must not wedge the repository ──
+
+    [Fact]
+    public async Task A_stalled_transfer_releases_waiting_callers_and_fails_later_calls_fast()
+    {
+        var work = CloneRemote("work");
+        Publish("big.txt", "payload", commits: 20);
+        using var gate = new ManualResetEventSlim(false);
+        var calls = 0;
+        var repository = Open(work, timeoutSeconds: 1, stallGrace: TimeSpan.FromMilliseconds(500));
+
+        // libgit2 cannot return while its progress callback blocks: a hung connection looks the same.
+        var fetch = repository.FetchAsync(new FetchOptions
+        {
+            OnProgress = _ => { Interlocked.Increment(ref calls); gate.Wait(); }
+        });
+        for (var i = 0; i < 500 && Volatile.Read(ref calls) == 0; i++) await Task.Delay(10);
+        Assert.True(calls > 0, "the transfer never started");
+
+        var queued = repository.GetCommitLogAsync();            // waits on the lock behind the transfer
+        for (var i = 0; i < 500 && !repository.IsStalled; i++) await Task.Delay(10);
+        Assert.True(repository.IsStalled, "the stall was not declared after timeout + grace");
+
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        var later = await repository.GetStatusAsync();          // started after the stall: fails at once
+        var released = await queued;                            // was waiting: released with the same error
+        Assert.True(watch.ElapsedMilliseconds < 5_000);
+        Assert.Equal(GitErrors.TimeoutCode, Assert.IsType<TimeoutError>(later.Error).Code);
+        Assert.Equal(GitErrors.TimeoutCode, Assert.IsType<TimeoutError>(released.Error).Code);
+
+        gate.Set();                                             // the native call returns
+        var result = await fetch;
+        Assert.Equal(GitErrors.TimeoutCode, result.Error!.Code);
+        Assert.False(repository.IsStalled);
+        Assert.True((await repository.GetStatusAsync()).IsSuccess, "operations resume once the transfer returned");
+    }
+
+    // ── Redaction of the configured token in every failure path ──
+
+    [Fact]
+    public async Task Checkout_commit_and_reset_failures_redact_the_token()
+    {
+        var work = CloneRemote("work");
+        const string token = "ghp_leak_me";
+        var repository = Open(work, password: token);
+
+        var checkout = await repository.CheckoutBranchAsync("no-such-" + token);
+        var commit = await repository.CommitAsync(new CL.GitHelper.Models.CommitOptions { Message = "x", FilesToStage = [token + ".txt"] });
+        var reset = await repository.ResetHardAsync("no-such-" + token);
+
+        foreach (var error in new[] { checkout.Error!, commit.Error!, reset.Error! })
+            Assert.DoesNotContain(token, error.Message);
+        // Checkout (libgit2's message names the missing branch) and reset (our own message) carry the mask;
+        // staging a missing file is a no-op in LibGit2Sharp, so the commit fails with "nothing to commit".
+        Assert.Contains(GitSecurity.Mask, checkout.Error!.Message);
+        Assert.Contains(GitSecurity.Mask, reset.Error!.Message);
+    }
+
     // ── Background auto-fetch ──
 
     [Fact]
@@ -527,6 +596,7 @@ public sealed class LocalRemoteTests : IDisposable
         }, _root);
 
         await manager.AutoFetchAsync("Work");
+        await manager.AutoFetchAsync("Gone");   // an unknown id is a no-op, not an exception
 
         using var repo = new Repository(work);
         Assert.Equal(tip, repo.Branches[$"origin/{_branch}"].Tip.Sha);

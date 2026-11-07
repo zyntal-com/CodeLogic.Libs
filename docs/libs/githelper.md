@@ -34,10 +34,17 @@ var git = Libraries.Get<GitHelperLibrary>();
 You don't construct repositories directly. Ask the library for one by id — `GetRepositoryAsync` looks it up in configuration (or the runtime registry), opens or caches the underlying LibGit2Sharp handle, and returns a `GitRepository`.
 
 ```csharp
-GitRepository repo = await git.GetRepositoryAsync("Default");
+Result<GitRepository> lookup = await git.GetRepositoryAsync("Default");
+if (lookup.IsFailure) { /* git.repository_not_found (unknown id) or git.not_initialized */ }
+GitRepository repo = lookup.Value!;
+// or, in startup code: var repo = (await git.GetRepositoryAsync("Default")).ValueOrThrow();
 ```
 
-`GetRepositoryAsync` defaults to the `"Default"` id, so `await git.GetRepositoryAsync()` resolves the first configured repository. The returned object exposes the entire single-repo workflow below. Write operations (clone, pull, push, commit, checkout, reset) are serialized through an internal semaphore so two writers never collide; reads can overlap.
+`GetRepositoryAsync` defaults to the `"Default"` id (ids are case-insensitive). An unknown id is a `NotFoundError` with code `git.repository_not_found` and `Details` `"not_configured"`; before initialization, while disabled or after stop it is an `UnavailableError` `git.not_initialized`. The returned object exposes the entire single-repo workflow below.
+
+**Concurrency.** Every operation on a repository, reads included, runs under one internal async lock, so the native LibGit2Sharp handle is never used by two operations at once and is never disposed under a running one.
+
+**Ownership.** Cached instances belong to the manager: calling `Dispose()` on one (for example with `using`) does nothing. The manager disposes an instance when it is evicted, replaced by a config change, or the library stops, each time once its running operation has finished. An operation on an instance that was disposed returns `git.repository_disposed`; call `GetRepositoryAsync` again for a fresh one.
 
 ### EnsureUpToDateAsync — the easy path
 
@@ -93,7 +100,7 @@ Result<GitDiagnostics> push = await repo.PushAsync(new GitPushOptions { Force = 
 | `GitPullOptions` | `RemoteName` (`"origin"`), `Strategy` (`MergeStrategy.Merge`), `FetchOptions` (`new()`), `CancellationToken` |
 | `GitPushOptions` | `RemoteName` (`"origin"`), `BranchName?`, `Force` (`false`), `PushTags` (`false`), `OnProgress?`, `CancellationToken` |
 
-`MergeStrategy` is `Merge`, `Rebase`, or `FastForwardOnly`. The `OnProgress?` callbacks receive a `GitProgress` (stage, percentage, objects/bytes received) so you can surface transfer progress. They run on a libgit2 worker thread; an exception they throw is logged and ignored.
+`MergeStrategy` is `Merge`, `Rebase`, or `FastForwardOnly`. The `OnProgress?` callbacks receive a `GitProgress` (stage, percentage, objects/bytes received) so you can surface transfer progress. **They run on the libgit2 worker thread, inside the native call**, while the repository lock is held: keep them short, never block or wait in them, and marshal UI updates to your own thread. An exception they throw is logged and ignored.
 
 **Pull.** `PullAsync` fetches from `RemoteName`, then integrates the current branch's upstream on that remote (or the remote branch with the same name when the branch has no upstream there):
 
@@ -108,6 +115,8 @@ When `RemoteName` is left at `"origin"`, `FetchOptions.RemoteName` is used inste
 ### Cancellation and timeouts
 
 The `CancellationToken` on each options model is checked by libgit2 at every progress callback, so cancelling stops a clone, fetch or push that is already transferring data and returns `git.cancelled`. Each repository's network operations (clone, fetch, the fetch step of pull, push) are also bounded by `TimeoutSeconds` (or `DefaultTimeoutSeconds` when it is `0`); a transfer that runs longer returns a `TimeoutError` with `git.timeout`. Both take effect at the next progress callback: a connection that hangs before any data arrives is bounded only by the operating system's network timeouts. A clone that fails or is cancelled removes the directory it created.
+
+**Stalled transfers.** Because the timeout can only act at a progress callback, a connection that hangs inside libgit2 would otherwise hold the repository lock forever. A watchdog covers that case: if a clone, fetch or push is still inside libgit2 `GitRepository.DefaultStallGrace` (30 s) after its timeout, the library logs an error ("transfer stalled") and `GitRepository.IsStalled` becomes `true`. From then on, until the native call finally returns, callers already waiting on the repository and every new call get a `TimeoutError` `git.timeout` at once instead of queuing behind it. When the transfer returns, it reports `git.timeout` itself and operations resume normally.
 
 ## Commit
 
@@ -205,7 +214,7 @@ Clone, fetch, pull and push all use these credentials. They are sent **only to t
 
 ## Results and errors
 
-No public method on `GitRepository` or the library throws for an operational failure — failures are returned as CodeLogic results (`CodeLogic.Core.Results`). Check `IsSuccess` before reading `Value`, or `switch` on the result.
+No public method on `GitRepository`, `GitManager` or the library throws for an operational failure (`GetManager()` before initialization is the one exception: it is a programming error) — failures are returned as CodeLogic results (`CodeLogic.Core.Results`). Check `IsSuccess` before reading `Value`, or `switch` on the result.
 
 | Method | Returns |
 |--------|---------|
@@ -216,20 +225,24 @@ No public method on `GitRepository` or the library throws for an operational fai
 | `ListBranchesAsync` | `Result<List<BranchInfo>>` |
 | `GetCommitLogAsync` | `Result<List<CommitInfo>>` |
 | `CheckoutBranchAsync`, `ResetHardAsync` | `Result` |
-| `FetchAllAsync` | `Dictionary<string, Result<GitDiagnostics>>` |
-| `GetAllStatusAsync` | `Dictionary<string, Result<RepositoryStatus>>` |
+| `GetRepositoryAsync` | `Result<GitRepository>` |
+| `RegisterRepository` | `Result` |
+| `FetchAllAsync`, `GetAllStatusAsync` (manager) | `Dictionary<string, Result<GitDiagnostics>>` / `Dictionary<string, Result<RepositoryStatus>>` |
+| `FetchAllAsync`, `GetAllStatusAsync` (library) | the same dictionaries wrapped in `Result<…>` (`git.not_initialized` when the library is not running) |
 
 A failure's `Error` has a kind (its subtype) and a stable `Code`; the codes are constants on `CL.GitHelper.Errors.GitErrors`. `Message` is the human-readable text. When the failure came from a caught exception, the library logs the exception and `Details` holds its type name (e.g. `NotFoundException`).
 
 | Kind | Codes |
 |------|-------|
-| `NotFoundError` | `git.repository_not_found` (not cloned yet), `git.remote_not_found`, `git.branch_not_found` (checkout or reset target), `git.not_found` (e.g. a file to stage) |
+| `NotFoundError` | `git.repository_not_found` (not cloned yet, or an unknown id passed to `GetRepositoryAsync` with `Details` `"not_configured"`), `git.remote_not_found`, `git.branch_not_found` (checkout or reset target), `git.not_found` (e.g. a file to stage) |
 | `ValidationError` | `git.empty_commit_message`, `git.nothing_to_commit`, `git.ssh_not_supported` |
 | `UnauthorizedError` | `git.authentication_failed` |
 | `ConflictError` | `git.directory_not_empty` (clone target), `git.uncommitted_changes` (`EnsureUpToDateAsync`), `git.checkout_conflict`, `git.non_fast_forward` |
 | `ConflictError` (pull, push) | `git.merge_conflict` (pull stopped on conflicts), `git.push_rejected` (the remote refused a reference) |
-| `TimeoutError` | `git.timeout` (a network operation ran past `TimeoutSeconds`) |
-| `UnavailableError` | `git.cancelled` |
+| `TimeoutError` | `git.timeout` (a network operation ran past `TimeoutSeconds`, or a transfer on the repository has stalled) |
+| `UnavailableError` | `git.cancelled`, `git.not_initialized` (library not running), `git.repository_disposed` (instance evicted or replaced) |
+| `ValidationError` (registration) | `git.invalid_configuration` (missing URL/path, or a relative path leaving `BaseDirectory`) |
+| `ConflictError` (registration) | `git.repository_exists` |
 | `InternalError` | `git.clone_failed`, `git.fetch_failed`, `git.pull_failed`, `git.push_failed`, `git.commit_failed`, `git.status_failed`, `git.info_failed`, `git.list_branches_failed`, `git.checkout_failed`, `git.reset_failed`, `git.log_failed` |
 
 ```csharp
@@ -255,10 +268,10 @@ var line = pull.Error switch
 GitManager manager = git.GetManager();
 
 // Fetch every configured repository (bounded concurrency; 0 = use MaxConcurrentOperations)
-Dictionary<string, Result<GitDiagnostics>> fetched = await git.FetchAllAsync();
+Dictionary<string, Result<GitDiagnostics>> fetched = await manager.FetchAllAsync();
 
-// Status of every configured repository
-Dictionary<string, Result<RepositoryStatus>> statuses = await git.GetAllStatusAsync();
+// Status of every configured repository (the library versions wrap the dictionary in a Result)
+Result<Dictionary<string, Result<RepositoryStatus>>> statuses = await git.GetAllStatusAsync();
 
 // Per-repository health check (id -> healthy)
 Dictionary<string, bool> health = await manager.HealthCheckAsync();
@@ -268,10 +281,10 @@ Both `FetchAllAsync` and `GetAllStatusAsync` accept a `maxConcurrency` argument 
 
 ### Runtime registration
 
-Add or remove repositories after startup. The manager and the library both expose `RegisterRepository`; removal is on the manager.
+Add or remove repositories after startup. The manager and the library both expose `RegisterRepository`; removal is on the manager. Registration returns a `Result`: `git.repository_exists` for a duplicate id, `git.invalid_configuration` for a missing URL/path or a relative path that leaves `BaseDirectory`. Registering replaces the manager's configuration as a whole, so it is safe while batch calls run.
 
 ```csharp
-git.RegisterRepository(new RepositoryConfiguration
+Result added = git.RegisterRepository(new RepositoryConfiguration
 {
     Id            = "Docs",
     Name          = "Docs",
@@ -365,7 +378,7 @@ The library writes `config.githelper.json` (section `githelper`) with defaults o
 | `AutoFetchIntervalMinutes` | `int` | `0` | Fetch in the background every *n* minutes while the library runs; `0` disables it. A fetch still running at the next tick is not started twice, and stopping the library cancels it. |
 | `TimeoutSeconds` | `int` | `300` | Timeout for this repository's network operations (0–3600; `0` = `DefaultTimeoutSeconds`). |
 
-`RepositoryConfiguration.IsValid()` returns `true` when both `RepositoryUrl` and `LocalPath` are non-empty. `GitHelperConfig.Validate()` rejects an empty repository list, duplicate repository ids (case-insensitive), a negative `AutoFetchIntervalMinutes` and out-of-range timeouts.
+`RepositoryConfiguration.IsValid()` returns `true` when both `RepositoryUrl` and `LocalPath` are non-empty and a relative `LocalPath` stays inside `BaseDirectory` (`RepositoryConfiguration.LocalPathEscapesBaseDirectory`: `../../etc` is rejected, `sub/../x` and absolute paths are fine). `GitHelperConfig.Validate()` rejects an empty repository list, duplicate repository ids (case-insensitive), an escaping `LocalPath`, a negative `AutoFetchIntervalMinutes` and out-of-range timeouts.
 
 ### Changing config while running
 
@@ -379,6 +392,10 @@ Config changes apply live: `config.githelper.json` applies live when changed thr
 - Repositories added with `RegisterRepository` are kept across changes and never written to the file.
 - **`enabled`** can be switched either way.
 - A configuration that fails `Validate()` is rejected, as an invalid file stops initialization: the library logs the errors and keeps its current settings.
+
+## Stopping
+
+`OnStopAsync` cancels background fetches and awaits `GitManager.DisposeAsync()`: every cached repository is disposed once its running operation finishes, waiting at most `GitManager.DefaultDisposeTimeout` (30 s). A repository still busy after that is logged and disposed when its operation returns. `Dispose()` does the same without waiting.
 
 ## Health check
 
