@@ -317,7 +317,7 @@ public sealed class SteamIdValidationTests
     public async Task Profile_reads_refuse_a_malformed_steamid(string steamId)
     {
         using var service = new CL.SocialConnect.Services.Steam.SteamProfileService(
-            new SteamConfig { ApiKey = "k", ApiBaseUrl = "http://127.0.0.1:1" });
+            new SteamConfig { ApiKey = "k", ApiBaseUrl = "https://127.0.0.1:1" });
 
         var player = await service.GetPlayerAsync(steamId);
         var bans = await service.GetPlayerBansAsync(steamId);

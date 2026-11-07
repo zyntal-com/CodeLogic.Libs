@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>CL.Mqtt</RootNamespace>
+    <AssemblyName>CL.Mqtt</AssemblyName>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <PackageId>CodeLogic.Mqtt</PackageId>
+    <PackageTags>mqtt;iot;broker;pubsub;mqttnet</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <Authors>Zyntal.com</Authors>
+    <Description>MQTT clients with automatic reconnect and an embedded MQTT broker for CodeLogic 5 applications</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="MQTTnet" Version="5.2.0.1603" />
+    <PackageReference Include="MQTTnet.Server" Version="5.2.0.1603" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Mqtt.Tests" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
+</Project>

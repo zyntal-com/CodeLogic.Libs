@@ -100,7 +100,8 @@ public sealed class SeedRunner
     {
         var locked = await SystemTables.LockAsync(_db, LockName, _options.LockTimeout, ct).ConfigureAwait(false);
         if (locked.IsFailure) return locked.Error!;
-        await using var held = locked.Value!;
+        var held = locked.Value!;
+        await using var heldLifetime = held.ConfigureAwait(false);
 
         var ensured = await SystemTables.EnsureAsync(_db, Definition(), ct).ConfigureAwait(false);
         if (ensured.IsFailure) return ensured.Error!;

@@ -32,6 +32,12 @@ public class NetUtilsConfig : ConfigModelBase
         else if (!GeoIp.TryGetTrustedDownloadUri(out _, out var urlError))
             errors.Add(urlError);
 
+        if (GeoIp.TimeoutSeconds <= 0)
+            errors.Add("GeoIp.TimeoutSeconds must be > 0");
+
+        if (GeoIp.MaxDownloadBytes <= 0)
+            errors.Add("GeoIp.MaxDownloadBytes must be > 0");
+
         return errors.Count > 0
             ? ConfigValidationResult.Invalid(errors)
             : ConfigValidationResult.Valid();
@@ -167,10 +173,41 @@ public class GeoIpConfig
         && !databaseType.Contains("..", StringComparison.Ordinal)
         && databaseType.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_' or '.');
 
-    /// <summary>HTTP download timeout in seconds.</summary>
-    [ConfigField(Label = "Download Timeout (s)", Min = 1, Max = 600,
+    /// <summary>
+    /// Time allowed for one database download as a whole, in seconds: the checksum fetch, the request, and reading the
+    /// entire archive body (GeoLite2-City is about 70 MB). A download that runs longer fails with
+    /// <c>netutils.download_timeout</c>; an existing database stays in use.
+    /// </summary>
+    [ConfigField(Label = "Download Timeout (s)", Min = 1, Max = 3600,
+        Description = "Covers the whole download, body included; GeoLite2-City is about 70 MB.",
         Group = "GeoIP", Order = 28, Collapsed = true)]
-    public int TimeoutSeconds { get; set; } = 30;
+    public int TimeoutSeconds { get; set; } = DefaultTimeoutSeconds;
+
+    /// <summary>The default <see cref="TimeoutSeconds"/>: two minutes, enough for a City edition on a slow link.</summary>
+    public const int DefaultTimeoutSeconds = 120;
+
+    /// <summary>The default <see cref="MaxDownloadBytes"/>: 512 MB.</summary>
+    public const long DefaultMaxDownloadBytes = 512L * 1024 * 1024;
+
+    /// <summary>
+    /// The most bytes a download may have, applied to the archive body as it arrives and again to the database as it
+    /// is unpacked (so a small archive cannot inflate past it). Default 512 MB; the largest MaxMind edition unpacks to
+    /// well under that. A larger download fails with <c>netutils.download_too_large</c>.
+    /// </summary>
+    [ConfigField(Label = "Max Download Bytes", Min = 1,
+        Description = "Limit for the archive body and for the unpacked database. Default 512 MB.",
+        Group = "GeoIP", Order = 29, Collapsed = true)]
+    public long MaxDownloadBytes { get; set; } = DefaultMaxDownloadBytes;
+
+    /// <summary>
+    /// Whether the download is checked against the SHA-256 the server publishes next to it (MaxMind serves it at the
+    /// same URL with <c>.sha256</c> appended to the <c>suffix</c>: <c>…download?suffix=tar.gz.sha256</c>). A mismatch
+    /// fails with <c>netutils.checksum_mismatch</c> and installs nothing. Default on; turn it off only for a mirror in
+    /// <see cref="TrustedDownloadHosts"/> that does not publish checksums.
+    /// </summary>
+    [ConfigField(Label = "Verify Checksum", Description = "Compare the download with the published .sha256 (MaxMind provides it).",
+        Group = "GeoIP", Order = 30, Collapsed = true)]
+    public bool VerifyChecksum { get; set; } = true;
 
     /// <summary>
     /// Checks that <see cref="DownloadUrl"/> is an absolute <c>https</c> URL whose host is in

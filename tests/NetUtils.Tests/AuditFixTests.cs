@@ -228,7 +228,8 @@ public sealed class GeoIpEditionTests : IDisposable
     {
         var archive = GeoIpDownloadTests.TarGz(("GeoLite2-Country_20261031/GeoLite2-Country.mmdb", GeoIpDownloadTests.FakeMmdb("c", "GeoLite2-Country")));
         var handler = new GeoIpDownloadTests.RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(archive) });
-        var config = new GeoIpConfig { AccountId = 42, LicenseKey = "k", DatabaseType = "GeoLite2-Country" };
+        // Checksum verification (on by default) has its own tests; here the handler serves only the archive.
+        var config = new GeoIpConfig { AccountId = 42, LicenseKey = "k", DatabaseType = "GeoLite2-Country", VerifyChecksum = false };
         using var service = new GeoIpService(config, null, _dir, handler);
 
         await service.InitializeAsync();

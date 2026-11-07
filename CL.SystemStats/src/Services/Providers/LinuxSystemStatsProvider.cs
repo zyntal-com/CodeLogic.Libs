@@ -42,13 +42,13 @@ public sealed class LinuxSystemStatsProvider : ISystemStatsProvider
     {
         try
         {
-            var lines = await File.ReadAllLinesAsync("/proc/cpuinfo");
+            var lines = await File.ReadAllLinesAsync("/proc/cpuinfo").ConfigureAwait(false);
             double? maxMHz = null;
             try
             {
                 const string maxFreq = "/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq";
                 if (File.Exists(maxFreq))
-                    maxMHz = CpuInfoParsers.ParseMaxFrequencyKHz(await File.ReadAllTextAsync(maxFreq));
+                    maxMHz = CpuInfoParsers.ParseMaxFrequencyKHz(await File.ReadAllTextAsync(maxFreq).ConfigureAwait(false));
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* no cpufreq: use cpu MHz */ }
 
@@ -91,9 +91,9 @@ public sealed class LinuxSystemStatsProvider : ISystemStatsProvider
         try
         {
             // Sample twice with a delay to compute a meaningful delta
-            var (overall1, cores1) = await ReadProcStatAsync();
-            await Task.Delay(_config.CpuSamplingIntervalMs);
-            var (overall2, cores2) = await ReadProcStatAsync();
+            var (overall1, cores1) = await ReadProcStatAsync().ConfigureAwait(false);
+            await Task.Delay(_config.CpuSamplingIntervalMs).ConfigureAwait(false);
+            var (overall2, cores2) = await ReadProcStatAsync().ConfigureAwait(false);
 
             double overallUsage = ComputeCpuUsage(overall1, overall2);
 
@@ -113,7 +113,7 @@ public sealed class LinuxSystemStatsProvider : ISystemStatsProvider
 
     private static async Task<(long[] overall, List<long[]> cores)> ReadProcStatAsync()
     {
-        var lines = await File.ReadAllLinesAsync("/proc/stat");
+        var lines = await File.ReadAllLinesAsync("/proc/stat").ConfigureAwait(false);
         long[] overall = [];
         var cores = new List<long[]>();
 
@@ -162,7 +162,7 @@ public sealed class LinuxSystemStatsProvider : ISystemStatsProvider
     {
         try
         {
-            var memInfo = await ReadMemInfoAsync();
+            var memInfo = await ReadMemInfoAsync().ConfigureAwait(false);
             if (!memInfo.TryGetValue("MemTotal", out long total))
                 return Result<MemoryInfo>.Failure(Error.Internal(SystemStatsErrorCodes.MemoryInfo, "MemTotal not found in /proc/meminfo"));
 
@@ -180,7 +180,7 @@ public sealed class LinuxSystemStatsProvider : ISystemStatsProvider
     {
         try
         {
-            var memInfo = await ReadMemInfoAsync();
+            var memInfo = await ReadMemInfoAsync().ConfigureAwait(false);
 
             long GetKb(string key) => memInfo.TryGetValue(key, out long v) ? v : 0;
 
@@ -208,7 +208,7 @@ public sealed class LinuxSystemStatsProvider : ISystemStatsProvider
     private static async Task<Dictionary<string, long>> ReadMemInfoAsync()
     {
         var result = new Dictionary<string, long>(StringComparer.Ordinal);
-        var lines = await File.ReadAllLinesAsync("/proc/meminfo");
+        var lines = await File.ReadAllLinesAsync("/proc/meminfo").ConfigureAwait(false);
         foreach (var line in lines)
         {
             var parts = line.Split(':', 2);
@@ -229,7 +229,7 @@ public sealed class LinuxSystemStatsProvider : ISystemStatsProvider
     {
         try
         {
-            var content = await File.ReadAllTextAsync("/proc/uptime");
+            var content = await File.ReadAllTextAsync("/proc/uptime").ConfigureAwait(false);
             var firstField = content.Trim().Split(' ')[0];
             if (!double.TryParse(firstField, System.Globalization.NumberStyles.Float,
                     System.Globalization.CultureInfo.InvariantCulture, out double seconds))
@@ -289,19 +289,19 @@ public sealed class LinuxSystemStatsProvider : ISystemStatsProvider
     /// <inheritdoc/>
     public async Task<Result<IReadOnlyList<ProcessStats>>> GetTopProcessesByCpuAsync(int topCount)
     {
-        var result = await GetAllProcessesAsync();
+        var result = await GetAllProcessesAsync().ConfigureAwait(false);
         if (result.IsFailure) return result;
         // Per-process CPU% requires sampling processor time over an interval — a single
         // snapshot can't measure it. Delegate to the shared sampler.
         var top = await ProcessCpuSampler.TopByCpuAsync(
-            result.Value!, _config.CpuSamplingIntervalMs, topCount);
+            result.Value!, _config.CpuSamplingIntervalMs, topCount).ConfigureAwait(false);
         return Result<IReadOnlyList<ProcessStats>>.Success(top);
     }
 
     /// <inheritdoc/>
     public async Task<Result<IReadOnlyList<ProcessStats>>> GetTopProcessesByMemoryAsync(int topCount)
     {
-        var result = await GetAllProcessesAsync();
+        var result = await GetAllProcessesAsync().ConfigureAwait(false);
         if (result.IsFailure) return result;
         var top = result.Value!.OrderByDescending(p => p.WorkingSetBytes).Take(topCount).ToList();
         return Result<IReadOnlyList<ProcessStats>>.Success(top);
@@ -312,20 +312,20 @@ public sealed class LinuxSystemStatsProvider : ISystemStatsProvider
     /// <inheritdoc/>
     public async Task<Result<SystemSnapshot>> GetSystemSnapshotAsync()
     {
-        var cpuResult = await GetCpuStatsAsync();
+        var cpuResult = await GetCpuStatsAsync().ConfigureAwait(false);
         if (cpuResult.IsFailure)
             return Result<SystemSnapshot>.Failure(cpuResult.Error!);
 
-        var memResult = await GetMemoryStatsAsync();
+        var memResult = await GetMemoryStatsAsync().ConfigureAwait(false);
         if (memResult.IsFailure)
             return Result<SystemSnapshot>.Failure(memResult.Error!);
 
-        var uptimeResult = await GetSystemUptimeAsync();
+        var uptimeResult = await GetSystemUptimeAsync().ConfigureAwait(false);
         if (uptimeResult.IsFailure)
             return Result<SystemSnapshot>.Failure(uptimeResult.Error!);
 
-        var topCpu = await GetTopProcessesByCpuAsync(_config.MaxTopProcesses);
-        var topMem = await GetTopProcessesByMemoryAsync(_config.MaxTopProcesses);
+        var topCpu = await GetTopProcessesByCpuAsync(_config.MaxTopProcesses).ConfigureAwait(false);
+        var topMem = await GetTopProcessesByMemoryAsync(_config.MaxTopProcesses).ConfigureAwait(false);
 
         var snapshot = new SystemSnapshot(
             cpuResult.Value!,

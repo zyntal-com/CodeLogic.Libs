@@ -2,6 +2,13 @@
 
 ## 5.0 (unreleased)
 
+### Audit completion (2026-11-07)
+
+- Apply the probed volume case rules when converting contained paths back to storage paths, including Linux mounts that compare names without case. Preserve descendant spelling and root-volume boundaries.
+
+- Make synchronous disposal start observed asynchronous cleanup; split large source files and extract transfer inspection/reporting helpers without changing transfer policy.
+
+
 ### Breaking
 
 - Targets **.NET 11** (`net11.0`) and requires **CodeLogic 5.0** (`[5.0.0, 6.0.0)`). On .NET 10, stay on
@@ -24,8 +31,29 @@
 - Configuration examples in the README and the docs use the camelCase keys the CodeLogic loader reads.
   The PascalCase keys shown before are matched case-sensitively and were ignored, leaving defaults active.
 - Local connections: the root-path checks are documented as traversal protection for caller-supplied paths, not a sandbox. A process that can modify the tree under the root at the same time can swap a checked path for a link before it is opened.
+- SFTP jump hosts: the local end of the tunnel is a loopback listener that any process on the machine can connect to
+  while the session is open (SSH.NET keeps accepting on a started forward, and stopping it would drop the SFTP session
+  running through it). What such a client reaches is the target's SSH port, which still authenticates it. The code
+  comment that claimed only this process could reach the port was wrong and is corrected.
 
 ### Security
+
+- **Swift: a storage URL returned by the server gets the same scheme check as a configured one** (audit round 5).
+  `SwiftConnectionConfig` requires `https` unless `AllowInsecureHttp`, but the `X-Storage-Url` of a TempAuth reply and
+  the object-store endpoint of a Keystone catalog were accepted with any scheme, so a server (or whoever answers for
+  it) could have the token sent over plain `http`. Such a URL is now refused and the operation fails with
+  `storage.provider_error`; nothing is sent to it.
+- **Local links no longer disclose targets outside the root** (audit round 5). Listings reported
+  `StorageItem.LinkTarget` and `ReadLinkAsync` returned `StorageLinkInfo.RawTarget` as stored on disk even for a
+  link whose target lies outside the root, revealing paths outside the mount. The target is now reported only when
+  it resolves inside the root; otherwise `LinkTarget` is null, `RawTarget` empty and `StoragePath` null (the item
+  is still a link). An in-root target is reported with `FollowLinks` off as well: it names nothing beyond the mount,
+  and sync's `LinkHandling.Follow` maps links through it on such connections.
+- **Object-store listings skip keys the library cannot address** (audit round 5). S3, Azure Blob, Google Cloud Storage
+  and Swift mapped a key to a storage path by stripping the prefix, so a key such as `../x`, `a/../b` or `a//b` came
+  back in a listing as a path the library would normalise to a different key (and that a directory download would map
+  below its destination). One normaliser (`ObjectKeyPaths`) now serves all four providers: a key whose relative part
+  `StoragePath.Normalize` would rewrite or reject is left out of the listing.
 
 - **FTP command injection through paths.** `StoragePath.Normalize` rejected only NUL and `..`, so a CR/LF in a
   caller-supplied name reached the FTP control connection unescaped (`RMD {path}`, `AVBL {path}` and the commands
@@ -54,6 +82,27 @@
 
 - **Google Cloud Storage flat listings** send a `/` delimiter, so the server returns one level (sub-folders as
   prefixes) instead of the client scanning every descendant object of the folder.
+- **Local path comparisons follow the probed case sensitivity** (audit round 5). The backend probes the root's volume
+  to decide `CaseInsensitivePaths`, but the path resolver's containment checks and the transfer-path checks compared
+  by operating system (`OperatingSystem.IsWindows()`); a case-sensitive folder on Windows, or a case-insensitive mount
+  on Linux, got the wrong comparison. The probed answer now drives every comparison.
+- **`LocalStorageBackend.AppendAsync` behaves like an upload with default options**: it creates a missing parent as
+  `StorageUploadOptions.CreateParents` (default `true`) does, and a directory at the path is `storage.conflict`
+  instead of a provider error.
+- `known_hosts` wildcard patterns (`*.example.com`, `host?`) are compiled once per pattern with a 250 ms match
+  timeout instead of a new `Regex` per match on the SSH session's thread; a pattern that cannot be evaluated in time
+  trusts nothing.
+- `StorageLibrary`, `BackendEntry` and the sync apply gate lock on `System.Threading.Lock` instead of plain objects
+  and dictionaries.
+
+### Tests
+
+- Local provider: recursive delete of a tree holding a junction or symlink to a directory outside the root leaves the
+  target intact; `FollowLinks = true` still refuses a mid-path link that leaves the root; Windows trailing dots and
+  spaces (`foo.txt.`) resolve to the same file and honour `Overwrite = false`; a `\\?\`-prefixed root works and stays
+  contained; a remote listing that returns `../x` (or any item outside the requested directory) fails
+  `DownloadDirectoryAsync` with `storage.provider_error` and writes nothing beside the destination. Link tests skip
+  themselves where the OS or privileges do not allow links.
 
 ### Tests
 

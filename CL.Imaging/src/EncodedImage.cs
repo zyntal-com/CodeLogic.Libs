@@ -39,12 +39,15 @@ public sealed record ImageEncodeOptions
 }
 
 /// <summary>
-/// Encoded image bytes in a pooled buffer, with their format and size. Dispose returns the buffer to the pool;
-/// don't use <see cref="Span"/> or <see cref="Memory"/> after that (copy with <see cref="ToArray"/> to keep the bytes).
+/// Encoded image bytes in a pooled buffer, with their format and size. Dispose releases the buffer; don't use
+/// <see cref="Span"/> or <see cref="Memory"/> after that (copy with <see cref="ToArray"/> to keep the bytes). A stream
+/// from <see cref="AsStream"/> holds its own reference to the buffer, so it stays valid until it is disposed itself,
+/// even after the image is.
 /// </summary>
 public sealed class EncodedImage : IDisposable
 {
     private readonly PooledBuffer _buffer;
+    private int _disposed;
 
     internal EncodedImage(PooledBuffer buffer, ImageFormat format, int width, int height)
     {
@@ -53,6 +56,8 @@ public sealed class EncodedImage : IDisposable
         Width = width;
         Height = height;
     }
+
+    private PooledBuffer Buffer => _disposed == 0 ? _buffer : throw new ObjectDisposedException(nameof(EncodedImage));
 
     /// <summary>The format of the bytes.</summary>
     public ImageFormat Format { get; }
@@ -70,19 +75,22 @@ public sealed class EncodedImage : IDisposable
     public string MimeType => Format.MimeType();
 
     /// <summary>The encoded bytes (valid until disposed).</summary>
-    public ReadOnlySpan<byte> Span => _buffer.Span;
+    public ReadOnlySpan<byte> Span => Buffer.Span;
 
     /// <summary>The encoded bytes (valid until disposed).</summary>
-    public ReadOnlyMemory<byte> Memory => _buffer.Memory;
+    public ReadOnlyMemory<byte> Memory => Buffer.Memory;
 
     /// <summary>A copy of the bytes that outlives this object.</summary>
-    public byte[] ToArray() => _buffer.Span.ToArray();
+    public byte[] ToArray() => Buffer.Span.ToArray();
 
-    /// <summary>A read-only stream over the bytes (valid until this object is disposed).</summary>
-    public Stream AsStream() => new MemoryStream(_buffer.Array, 0, _buffer.Length, writable: false);
+    /// <summary>
+    /// A read-only stream over the bytes. It keeps the buffer alive on its own: dispose the stream when done, and the
+    /// bytes stay valid for it even after this object is disposed.
+    /// </summary>
+    public Stream AsStream() => PooledBufferStream.Open(Buffer);
 
     /// <summary>The bytes as Base64.</summary>
-    public string ToBase64() => Convert.ToBase64String(_buffer.Span);
+    public string ToBase64() => Convert.ToBase64String(Buffer.Span);
 
     /// <summary>A <c>data:</c> URI, e.g. <c>data:image/webp;base64,…</c>.</summary>
     public string ToDataUri() => $"data:{MimeType};base64,{ToBase64()}";
@@ -93,7 +101,7 @@ public sealed class EncodedImage : IDisposable
     public ValueTask WriteToAsync(Stream destination, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(destination);
-        return destination.WriteAsync(_buffer.Memory, ct);
+        return destination.WriteAsync(Buffer.Memory, ct);
     }
 
     /// <summary>Writes the bytes to a file, creating its directory.</summary>
@@ -104,10 +112,15 @@ public sealed class EncodedImage : IDisposable
         ArgumentException.ThrowIfNullOrEmpty(path);
         var dir = Path.GetDirectoryName(Path.GetFullPath(path));
         if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
-        await using var file = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None, 64 * 1024, useAsync: true);
-        await file.WriteAsync(_buffer.Memory, ct).ConfigureAwait(false);
+        var memory = Buffer.Memory;
+        var file = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None, 64 * 1024, useAsync: true);
+        await using var fileLifetime = file.ConfigureAwait(false);
+        await file.WriteAsync(memory, ct).ConfigureAwait(false);
     }
 
-    /// <summary>Returns the buffer to the pool.</summary>
-    public void Dispose() => _buffer.Dispose();
+    /// <summary>Releases this object's reference to the buffer; the array returns to the pool once every stream from <see cref="AsStream"/> is disposed too.</summary>
+    public void Dispose()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) == 0) _buffer.Dispose();
+    }
 }

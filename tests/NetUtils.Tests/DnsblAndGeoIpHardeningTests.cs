@@ -265,12 +265,14 @@ public sealed class GeoIpDownloadTests : IDisposable
         return output.ToArray();
     }
 
+    // These tests exercise the archive handling; the checksum round trip has its own tests (AuditRound5Tests).
     private static GeoIpConfig Config(string? url = null, List<string>? hosts = null) => new()
     {
         AccountId = 42,
         LicenseKey = "secret-key",
         DownloadUrl = url ?? "https://download.maxmind.com/geoip/databases/GeoLite2-City/download?suffix=tar.gz",
-        TrustedDownloadHosts = hosts ?? ["download.maxmind.com"]
+        TrustedDownloadHosts = hosts ?? ["download.maxmind.com"],
+        VerifyChecksum = false
     };
 
     [Theory]

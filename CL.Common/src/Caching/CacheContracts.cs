@@ -101,7 +101,11 @@ public interface ICache<TKey> where TKey : notnull
     /// <param name="key">The key.</param>
     /// <param name="value">The value.</param>
     /// <param name="options">Entry options; null uses the defaults (no expiration, size 1, normal priority).</param>
-    void Set<T>(TKey key, T value, CacheEntryOptions? options = null);
+    /// <returns>
+    /// <c>true</c> when the entry was stored; <c>false</c> when it was not because its size exceeds the cache's
+    /// size limit (a previous entry under the key is removed either way).
+    /// </returns>
+    bool Set<T>(TKey key, T value, CacheEntryOptions? options = null);
 
     /// <summary>Removes an entry.</summary>
     /// <param name="key">The key.</param>

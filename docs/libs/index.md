@@ -20,6 +20,11 @@ your application or from other libraries after `StartAsync()`.
     <div class="lib-pkg">CodeLogic.Mail</div>
     <p class="lib-desc">SMTP send, IMAP read + IDLE, and a template engine.</p>
   </a>
+  <a class="lib-card" href="mqtt.md">
+    <div class="lib-name">CL.Mqtt</div>
+    <div class="lib-pkg">CodeLogic.Mqtt</div>
+    <p class="lib-desc">MQTT clients with automatic reconnect, and an embedded MQTT broker.</p>
+  </a>
   <a class="lib-card" href="socialconnect.md">
     <div class="lib-name">CL.SocialConnect</div>
     <div class="lib-pkg">CodeLogic.SocialConnect</div>

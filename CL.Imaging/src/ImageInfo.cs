@@ -34,7 +34,11 @@ public sealed record ImageInfo(ImageFormat Format, int Width, int Height, ImageO
     /// seekable stream is left where it was.
     /// </summary>
     /// <param name="stream">A readable stream positioned at the image.</param>
-    /// <returns>The header information, or <c>imaging.decode_failed</c> / <c>imaging.unsupported_format</c>.</returns>
+    /// <returns>
+    /// The header information, or <c>imaging.decode_failed</c> / <c>imaging.unsupported_format</c>; a header claiming a
+    /// side longer than 32 767 pixels (what the decoder would refuse anyway) is <c>imaging.too_large</c>, decided
+    /// without allocating for the pixels.
+    /// </returns>
     public static Result<ImageInfo> Probe(Stream stream)
     {
         ArgumentNullException.ThrowIfNull(stream);
@@ -112,6 +116,9 @@ public sealed record ImageInfo(ImageFormat Format, int Width, int Height, ImageO
     {
         var info = codec.Info;
         if (info.Width <= 0 || info.Height <= 0) return ImagingErrors.DecodeFailed("The image has no pixels.");
+        // The same ceiling the decoder applies, decided from the header alone: nothing has been allocated for pixels.
+        if (info.Width > SkiaOps.MaxDimension || info.Height > SkiaOps.MaxDimension)
+            return ImagingErrors.TooLarge($"The image header claims {info.Width}×{info.Height} pixels, beyond the {SkiaOps.MaxDimension} pixel side limit.");
         var format = ImageFormatExtensions.FromSkia(codec.EncodedFormat);
         if (format == ImageFormat.Unknown) format = sniffed;
         var origin = codec.EncodedOrigin;

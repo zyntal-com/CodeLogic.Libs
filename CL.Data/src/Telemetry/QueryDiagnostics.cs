@@ -27,11 +27,13 @@ public sealed class ExplainSession
     /// <summary>Runs <paramref name="sql"/> (with the slow query's parameters when <paramref name="withParameters"/>) and returns each row as text.</summary>
     public async Task<List<string>> ReadAsync(string sql, bool withParameters, CancellationToken ct)
     {
-        await using var command = _connection.CreateCommand();
+        var command = _connection.CreateCommand();
+        await using var commandLifetime = command.ConfigureAwait(false);
         if (withParameters) _bind(command, _spec with { Sql = sql });
         else command.CommandText = sql;
         List<string> lines = [];
-        await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
+        var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
+        await using var readerLifetime = reader.ConfigureAwait(false);
         do
         {
             while (await reader.ReadAsync(ct).ConfigureAwait(false))
@@ -58,7 +60,8 @@ public sealed class ExplainSession
     /// <summary>Runs a statement without parameters (session settings).</summary>
     public async Task ExecuteAsync(string sql, CancellationToken ct)
     {
-        await using var command = _connection.CreateCommand();
+        var command = _connection.CreateCommand();
+        await using var commandLifetime = command.ConfigureAwait(false);
         command.CommandText = sql;
         await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
     }
@@ -133,7 +136,8 @@ internal sealed class QueryDiagnostics(Database db)
         try
         {
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-            await using var connection = await node.DataSource.OpenConnectionAsync(timeout.Token).ConfigureAwait(false);
+            var connection = await node.DataSource.OpenConnectionAsync(timeout.Token).ConfigureAwait(false);
+            await using var connectionLifetime = connection.ConfigureAwait(false);
             var session = new ExplainSession(connection, spec, db.Executor.Bind);
             return await db.Provider.Explainer!.ExplainAsync(session, timeout.Token).ConfigureAwait(false);
         }

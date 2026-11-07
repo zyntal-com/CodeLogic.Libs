@@ -4,7 +4,7 @@ namespace CL.Storage.Registry;
 
 internal sealed class BackendEntry
 {
-    private readonly object _gate = new();
+    private readonly Lock _gate = new();
     private readonly bool _ownsBackend;
     private TaskCompletionSource? _drained;
     private int _activeOperations;

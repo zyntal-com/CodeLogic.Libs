@@ -8,6 +8,7 @@
             "CL.GitHelper/CL.GitHelper.csproj",
             "CL.Imaging/CL.Imaging.csproj",
             "CL.Mail/CL.Mail.csproj",
+            "CL.Mqtt/CL.Mqtt.csproj",
             "CL.Data/CL.Data.csproj",
             "CL.Data.MySql/CL.Data.MySql.csproj",
             "CL.Data.PostgreSql/CL.Data.PostgreSql.csproj",

@@ -6,7 +6,7 @@ _layout: landing
   <img src="images/logo.svg" alt="CodeLogic Libraries logo" />
   <h1>CodeLogic Libraries</h1>
   <p class="lead">
-    Fourteen production-ready .NET 11 libraries for the
+    Fifteen production-ready .NET 11 libraries for the
     <a href="https://github.com/zyntal-com/CodeLogic">CodeLogic 5</a> framework.
     Databases, email, storage, security, monitoring, and more — each a self-contained
     <code>ILibrary</code> that manages its own configuration, lifecycle, and health checks.
@@ -49,6 +49,11 @@ var mail = Libraries.Get<CL.Mail.MailLibrary>();
     <div class="lib-name">CL.Mail</div>
     <div class="lib-pkg">CodeLogic.Mail</div>
     <p class="lib-desc">SMTP send + IMAP read (with IDLE) and a lightweight template engine for HTML and plain-text mail.</p>
+  </a>
+  <a class="lib-card" href="libs/mqtt.md">
+    <div class="lib-name">CL.Mqtt</div>
+    <div class="lib-pkg">CodeLogic.Mqtt</div>
+    <p class="lib-desc">MQTT 3.1.1/5 clients with automatic reconnect and resubscribe, plus an embedded broker with users, topic permissions and persistent retained messages.</p>
   </a>
   <a class="lib-card" href="libs/socialconnect.md">
     <div class="lib-name">CL.SocialConnect</div>

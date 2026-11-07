@@ -118,9 +118,15 @@ public record TotpValidationResult
     public const string ValidationErrorMessage = "The code could not be validated.";
 
     /// <summary>
+    /// The <see cref="ErrorMessage"/> returned when the code matched but its time step was already accepted for the
+    /// user (replay), or an older step than the last accepted one: the <c>ITotpUsedStepStore</c> refused it.
+    /// </summary>
+    public const string ReplayedCodeMessage = "This code has already been used.";
+
+    /// <summary>
     /// Human-readable error message when <see cref="IsValid"/> is <c>false</c>: <c>"Invalid code"</c> for a
-    /// code that did not match, <see cref="ValidationErrorMessage"/> when validation failed. Never contains
-    /// exception text.
+    /// code that did not match, <see cref="ReplayedCodeMessage"/> for a code used before, and
+    /// <see cref="ValidationErrorMessage"/> when validation failed. Never contains exception text.
     /// </summary>
     public string? ErrorMessage { get; init; }
 

@@ -28,6 +28,8 @@
       href: mail/index.md
     - name: Receiving & Templates
       href: mail/receiving-templates.md
+- name: CL.Mqtt
+  href: mqtt.md
 - name: CL.SocialConnect
   href: socialconnect.md
 

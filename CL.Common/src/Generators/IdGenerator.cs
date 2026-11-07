@@ -70,10 +70,12 @@ public static class IdGenerator
     /// <summary>
     /// Generates a cryptographically random hexadecimal string of the specified length.
     /// </summary>
-    /// <param name="length">The number of hex characters to generate. Default: 32.</param>
+    /// <param name="length">The number of hex characters to generate. Default: 32. Must be positive.</param>
     /// <returns>A lowercase hexadecimal string of the specified length.</returns>
+    /// <exception cref="ArgumentOutOfRangeException">Thrown when <paramref name="length"/> is zero or negative.</exception>
     public static string RandomHex(int length = 32)
     {
+        if (length <= 0) throw new ArgumentOutOfRangeException(nameof(length), "Length must be positive.");
         var bytes = RandomNumberGenerator.GetBytes((length + 1) / 2);
         return Convert.ToHexString(bytes).ToLowerInvariant()[..length];
     }

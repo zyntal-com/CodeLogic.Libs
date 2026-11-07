@@ -9,12 +9,19 @@ namespace CL.TwoFactorAuth.Services;
 
 /// <summary>
 /// Provides TOTP (Time-based One-Time Password) generation and validation using OtpNet.
+/// <para>
+/// With a <c>userId</c>, <see cref="ValidateTotp(string, string, string?)"/> also refuses a code whose time step was
+/// already accepted for that user (replay) through the <see cref="ITotpUsedStepStore"/>. The library does
+/// <b>not</b> rate-limit: a six-digit code is guessable, so the application must throttle and lock out failed
+/// attempts per user (for example 5 failures, then a growing delay or a lockout).
+/// </para>
 /// </summary>
 public sealed class TwoFactorAuthenticator
 {
     private readonly TwoFactorAuthConfig _config;
     private readonly ILogger? _logger;
     private readonly IEventBus? _events;
+    private readonly ITotpUsedStepStore _usedSteps;
 
     /// <summary>
     /// Initializes a new instance of <see cref="TwoFactorAuthenticator"/>.
@@ -22,11 +29,17 @@ public sealed class TwoFactorAuthenticator
     /// <param name="config">Two-factor authentication configuration.</param>
     /// <param name="logger">Optional scoped logger.</param>
     /// <param name="events">Optional event bus for publishing TOTP events.</param>
-    public TwoFactorAuthenticator(TwoFactorAuthConfig config, ILogger? logger = null, IEventBus? events = null)
+    /// <param name="usedSteps">
+    /// Where the last accepted time step per user is kept for replay protection; <c>null</c> for a new
+    /// <see cref="InMemoryTotpUsedStepStore"/>. Applications on several servers pass a shared store.
+    /// </param>
+    public TwoFactorAuthenticator(TwoFactorAuthConfig config, ILogger? logger = null, IEventBus? events = null, ITotpUsedStepStore? usedSteps = null)
     {
+        ArgumentNullException.ThrowIfNull(config);
         _config = config;
         _logger = logger;
         _events = events;
+        _usedSteps = usedSteps ?? new InMemoryTotpUsedStepStore();
     }
 
     // ── Public API ────────────────────────────────────────────────────────────
@@ -88,12 +101,19 @@ public sealed class TwoFactorAuthenticator
     }
 
     /// <summary>
-    /// Validates a TOTP code against the given secret key.
-    /// Publishes a <see cref="TotpValidatedEvent"/> on the event bus when a <paramref name="userId"/> is provided.
+    /// Validates a TOTP code against the given secret key. Whitespace in <paramref name="code"/> is ignored
+    /// (<c>"123 456"</c> is <c>"123456"</c>).
+    /// <para>
+    /// With a <paramref name="userId"/>, a code whose time step is not newer than the last step accepted for that
+    /// user is refused with <see cref="TotpValidationResult.ReplayedCodeMessage"/> (the check is atomic in the
+    /// <see cref="ITotpUsedStepStore"/>), and a <see cref="TotpValidatedEvent"/> is published. Without one the code is
+    /// only checked against the secret: the caller must then do its own replay tracking with
+    /// <see cref="TotpValidationResult.MatchedWindow"/>.
+    /// </para>
     /// </summary>
     /// <param name="code">The 6-digit TOTP code to validate.</param>
     /// <param name="secretKey">The Base32-encoded TOTP secret key.</param>
-    /// <param name="userId">Optional user identifier for event publishing.</param>
+    /// <param name="userId">The user the code belongs to: enables replay protection and event publishing.</param>
     /// <returns>
     /// A <see cref="TotpValidationResult"/> indicating success or failure. On success
     /// <see cref="TotpValidationResult.MatchedWindow"/> is the absolute time step for replay tracking and
@@ -109,20 +129,28 @@ public sealed class TwoFactorAuthenticator
     /// <param name="code">The TOTP code to validate.</param>
     /// <param name="secretKey">The Base32-encoded TOTP secret key.</param>
     /// <param name="timestampUtc">The moment to validate at (UTC).</param>
-    /// <param name="userId">Optional user identifier for event publishing.</param>
+    /// <param name="userId">The user the code belongs to: enables replay protection and event publishing.</param>
     /// <returns>A <see cref="TotpValidationResult"/> indicating success or failure.</returns>
     public TotpValidationResult ValidateTotp(string code, string secretKey, DateTime timestampUtc, string? userId = null)
     {
         try
         {
+            var normalizedCode = NormalizeCode(code);
             var secretBytes = Base32Encoding.ToBytes(secretKey);
             var totp = new Totp(secretBytes, step: _config.TimeStepSeconds);
 
             var window = new VerificationWindow(previous: _config.WindowSize, future: _config.WindowSize);
-            var isValid = totp.VerifyTotp(timestampUtc, code, out long matchedWindow, window);
+            var isValid = totp.VerifyTotp(timestampUtc, normalizedCode, out long matchedWindow, window);
 
             TotpValidationResult result;
-            if (isValid)
+            if (isValid && userId is not null && !_usedSteps.TryUse(userId, matchedWindow))
+            {
+                // The code matched, but this step (or a later one) was already accepted for the user.
+                isValid = false;
+                result = TotpValidationResult.Invalid(TotpValidationResult.ReplayedCodeMessage);
+                _logger?.Warning($"TOTP code refused for user '{userId}': time step {matchedWindow} was already used");
+            }
+            else if (isValid)
             {
                 var currentStep = new DateTimeOffset(DateTime.SpecifyKind(timestampUtc, DateTimeKind.Utc)).ToUnixTimeSeconds()
                     / _config.TimeStepSeconds;
@@ -148,6 +176,19 @@ public sealed class TwoFactorAuthenticator
             _logger?.Error($"TOTP validation error: {ex.Message}", ex);
             return TotpValidationResult.Invalid(TotpValidationResult.ValidationErrorMessage);
         }
+    }
+
+    /// <summary>Removes every whitespace character a user may have typed or pasted ("123 456", " 123456 ").</summary>
+    private static string NormalizeCode(string? code)
+    {
+        if (string.IsNullOrEmpty(code)) return string.Empty;
+        return string.Create(code.Count(c => !char.IsWhiteSpace(c)), code, static (span, source) =>
+        {
+            var i = 0;
+            foreach (var c in source)
+                if (!char.IsWhiteSpace(c))
+                    span[i++] = c;
+        });
     }
 
     /// <summary>

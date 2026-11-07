@@ -42,8 +42,17 @@ public class SocialConnectConfig : ConfigModelBase
         if (Steam.CacheTtlSeconds <= 0)
             errors.Add("Steam cache TTL must be greater than 0");
 
+        if (Steam.MaxCacheEntries <= 0)
+            errors.Add("Steam MaxCacheEntries must be greater than 0");
+
         if (Steam.OpenIdNonceMaxAgeSeconds < 0)
             errors.Add("Steam OpenID max assertion age cannot be negative");
+
+        if (!Steam.TryGetApiBaseUri(out _, out var apiBaseUrlError))
+            errors.Add(apiBaseUrlError);
+
+        if (!Steam.TryGetOpenIdRealm(out _, out var realmError))
+            errors.Add(realmError);
 
         return errors.Any()
             ? ConfigValidationResult.Invalid(errors)
@@ -124,6 +133,15 @@ public class SteamConfig
         Group = "Steam", Order = 24, Collapsed = true)]
     public int CacheTtlSeconds { get; set; } = 300;
 
+    /// <summary>
+    /// Most entries each of the profile caches (players, bans, games) keeps. Default: 10 000. When a cache is full,
+    /// its oldest entries are evicted to make room; expired entries are dropped when read. Must be greater than 0.
+    /// </summary>
+    [ConfigField(Label = "Max cache entries", Min = 1,
+        Description = "Upper bound per profile cache (players, bans, games); the oldest entries are evicted when full.",
+        Group = "Steam", Order = 30, Collapsed = true)]
+    public int MaxCacheEntries { get; set; } = 10_000;
+
     /// <summary>HTTP request timeout in seconds for Steam API calls.</summary>
     [ConfigField(Label = "Timeout (s)", Min = 1, Max = 120,
         Group = "Steam", Order = 25, Collapsed = true)]
@@ -147,9 +165,96 @@ public class SteamConfig
         Group = "Steam", Order = 28, Collapsed = true)]
     public int OpenIdNonceMaxAgeSeconds { get; set; } = 300;
 
-    /// <summary>Base URL for the Steam Web API. Typically not changed.</summary>
+    /// <summary>
+    /// The site Steam sign-in belongs to, as an absolute http(s) URL (for example <c>https://example.com/</c>).
+    /// When set, every <c>return_to</c> passed to <c>SteamOpenIdService.BuildLoginUrl</c> must lie inside it, so a
+    /// return URL taken from user input cannot send the browser (and the signed assertion) to another site, and it
+    /// is the realm Steam shows the user unless the call gives one. Empty (the default) keeps the realm derived
+    /// from the return URL's scheme and host; set it whenever <c>return_to</c> is not a constant in your code.
+    /// </summary>
+    [ConfigField(Label = "OpenID realm", InputType = ConfigInputType.Url,
+        Description = "Site URL every Steam sign-in return URL must lie inside (e.g. https://example.com/). Empty = derived from the return URL.",
+        Placeholder = "https://example.com/", Group = "Steam", Order = 29)]
+    public string OpenIdRealm { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Base URL for the Steam Web API. Typically not changed. Must be an absolute <c>https</c> URL without user info:
+    /// the API key travels in the query string of every request.
+    /// </summary>
     [ConfigField(Label = "API Base URL", InputType = ConfigInputType.Url,
-        Description = "Rarely changed.",
+        Description = "Rarely changed. Must be https.",
         Group = "Steam", Order = 26, Collapsed = true)]
     public string ApiBaseUrl { get; set; } = "https://api.steampowered.com";
+
+    /// <summary>
+    /// Parses <see cref="ApiBaseUrl"/> into the base address the Steam services send requests to: an absolute
+    /// <c>https</c> URL without user info, normalised to end in <c>/</c>. The API key is part of every request, so
+    /// <c>http</c> (which would send it in clear) and embedded credentials are refused.
+    /// </summary>
+    /// <param name="uri">The base address, or <c>null</c> when the value is refused.</param>
+    /// <param name="error">Why the value is refused, or empty.</param>
+    /// <returns><c>true</c> when <see cref="ApiBaseUrl"/> is usable.</returns>
+    public bool TryGetApiBaseUri([System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out Uri? uri, out string error)
+    {
+        uri = null;
+        var value = ApiBaseUrl?.Trim() ?? string.Empty;
+        if (value.Length == 0)
+        {
+            error = "Steam.ApiBaseUrl is required";
+            return false;
+        }
+        if (!Uri.TryCreate(value.TrimEnd('/') + "/", UriKind.Absolute, out var parsed))
+        {
+            error = "Steam.ApiBaseUrl must be an absolute URL";
+            return false;
+        }
+        if (parsed.Scheme != Uri.UriSchemeHttps)
+        {
+            error = "Steam.ApiBaseUrl must use https (the Steam API key is sent to it)";
+            return false;
+        }
+        if (!string.IsNullOrEmpty(parsed.UserInfo))
+        {
+            error = "Steam.ApiBaseUrl must not contain user info";
+            return false;
+        }
+        if (!string.IsNullOrEmpty(parsed.Query) || !string.IsNullOrEmpty(parsed.Fragment))
+        {
+            error = "Steam.ApiBaseUrl must not contain a query or fragment";
+            return false;
+        }
+
+        uri = parsed;
+        error = string.Empty;
+        return true;
+    }
+
+    /// <summary>
+    /// Parses <see cref="OpenIdRealm"/>: empty gives <c>null</c> (no configured realm); otherwise it must be an
+    /// absolute http(s) URL without user info, query or fragment.
+    /// </summary>
+    /// <param name="realm">The configured realm, or <c>null</c> when none is set.</param>
+    /// <param name="error">Why the value is refused, or empty.</param>
+    /// <returns><c>false</c> only when a non-empty value is not a usable realm.</returns>
+    public bool TryGetOpenIdRealm(out Uri? realm, out string error)
+    {
+        realm = null;
+        error = string.Empty;
+        var value = OpenIdRealm?.Trim() ?? string.Empty;
+        if (value.Length == 0) return true;
+
+        if (!Uri.TryCreate(value, UriKind.Absolute, out var parsed) || parsed.Scheme is not ("http" or "https"))
+        {
+            error = "Steam.OpenIdRealm must be an absolute http or https URL";
+            return false;
+        }
+        if (!string.IsNullOrEmpty(parsed.UserInfo) || !string.IsNullOrEmpty(parsed.Query) || !string.IsNullOrEmpty(parsed.Fragment))
+        {
+            error = "Steam.OpenIdRealm must not contain user info, a query or a fragment";
+            return false;
+        }
+
+        realm = parsed;
+        return true;
+    }
 }

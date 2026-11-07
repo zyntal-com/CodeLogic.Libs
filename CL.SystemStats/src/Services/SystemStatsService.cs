@@ -30,6 +30,12 @@ public sealed class SystemStatsService : IAsyncDisposable
     private readonly Queue<CpuStats> _cpuWindow = new();
     private readonly Lock _cpuWindowLock = new();
 
+    // One provider CPU sampling at a time: a snapshot samples directly (it bypasses the cache so its reading
+    // is fresh) while GetCpuStatsAsync refreshes the cache, and concurrent PerformanceCounter.NextValue()
+    // calls on the Windows counters corrupt both readings. Never disposed (a disposed SemaphoreSlim leaves
+    // waiters hanging); it holds no unmanaged resources.
+    private readonly SemaphoreSlim _cpuSampling = new(1, 1);
+
     /// <summary>
     /// Returns <see langword="true"/> after <see cref="InitializeAsync"/> has completed successfully.
     /// </summary>
@@ -60,7 +66,7 @@ public sealed class SystemStatsService : IAsyncDisposable
     /// </summary>
     public async Task InitializeAsync()
     {
-        await _provider.InitializeAsync();
+        await _provider.InitializeAsync().ConfigureAwait(false);
         IsInitialized = true;
         _logger?.Info("SystemStatsService initialized");
     }
@@ -92,10 +98,10 @@ public sealed class SystemStatsService : IAsyncDisposable
     /// </summary>
     public async Task<Result<CpuStats>> GetCpuStatsAsync()
     {
-        var result = await GetCachedAsync("cpu_stats", SampleCpuAsync);
+        var result = await GetCachedAsync("cpu_stats", SampleCpuAsync).ConfigureAwait(false);
 
         if (result.IsSuccess)
-            await CheckCpuThresholdAsync(result.Value!.OverallUsagePercent);
+            await CheckCpuThresholdAsync(result.Value!.OverallUsagePercent).ConfigureAwait(false);
 
         return result;
     }
@@ -107,10 +113,10 @@ public sealed class SystemStatsService : IAsyncDisposable
     /// <summary>Gets a live memory usage snapshot. Publishes <see cref="HighMemoryUsageEvent"/> if threshold exceeded.</summary>
     public async Task<Result<MemoryStats>> GetMemoryStatsAsync()
     {
-        var result = await GetCachedAsync("mem_stats", () => _provider.GetMemoryStatsAsync());
+        var result = await GetCachedAsync("mem_stats", () => _provider.GetMemoryStatsAsync()).ConfigureAwait(false);
 
         if (result.IsSuccess)
-            await CheckMemoryThresholdAsync(result.Value!.UsagePercent);
+            await CheckMemoryThresholdAsync(result.Value!.UsagePercent).ConfigureAwait(false);
 
         return result;
     }
@@ -177,14 +183,14 @@ public sealed class SystemStatsService : IAsyncDisposable
     /// </summary>
     public async Task<Result<SystemSnapshot>> GetSystemSnapshotAsync()
     {
-        var result = await TakeSnapshotAsync();
+        var result = await TakeSnapshotAsync().ConfigureAwait(false);
 
         if (result.IsSuccess)
         {
             var snap = result.Value!;
 
-            await CheckCpuThresholdAsync(snap.CpuStats.OverallUsagePercent);
-            await CheckMemoryThresholdAsync(snap.MemoryStats.UsagePercent);
+            await CheckCpuThresholdAsync(snap.CpuStats.OverallUsagePercent).ConfigureAwait(false);
+            await CheckMemoryThresholdAsync(snap.MemoryStats.UsagePercent).ConfigureAwait(false);
 
             if (_eventBus is not null)
             {
@@ -194,7 +200,7 @@ public sealed class SystemStatsService : IAsyncDisposable
                     snap.Uptime,
                     snap.TakenAt);
 
-                await _eventBus.PublishAsync(evt);
+                await _eventBus.PublishAsync(evt).ConfigureAwait(false);
             }
         }
 
@@ -203,23 +209,23 @@ public sealed class SystemStatsService : IAsyncDisposable
 
     private async Task<Result<SystemSnapshot>> TakeSnapshotAsync()
     {
-        var cpu = await SampleCpuAsync();
+        var cpu = await SampleCpuAsync().ConfigureAwait(false);
         if (cpu.IsFailure)
             return Result<SystemSnapshot>.Failure(cpu.Error!);
 
-        var mem = await _provider.GetMemoryStatsAsync();
+        var mem = await _provider.GetMemoryStatsAsync().ConfigureAwait(false);
         if (mem.IsFailure)
             return Result<SystemSnapshot>.Failure(mem.Error!);
 
-        var uptime = await _provider.GetSystemUptimeAsync();
+        var uptime = await _provider.GetSystemUptimeAsync().ConfigureAwait(false);
         if (uptime.IsFailure)
             return Result<SystemSnapshot>.Failure(uptime.Error!);
 
         IReadOnlyList<ProcessStats> topCpu = [], topMem = [];
         if (_config.EnableProcessMonitoring)
         {
-            var byCpu = await _provider.GetTopProcessesByCpuAsync(_config.MaxTopProcesses);
-            var byMem = await _provider.GetTopProcessesByMemoryAsync(_config.MaxTopProcesses);
+            var byCpu = await _provider.GetTopProcessesByCpuAsync(_config.MaxTopProcesses).ConfigureAwait(false);
+            var byMem = await _provider.GetTopProcessesByMemoryAsync(_config.MaxTopProcesses).ConfigureAwait(false);
             if (byCpu.IsSuccess) topCpu = byCpu.Value!;
             if (byMem.IsSuccess) topMem = byMem.Value!;
         }
@@ -234,10 +240,22 @@ public sealed class SystemStatsService : IAsyncDisposable
 
     // ── CPU smoothing ─────────────────────────────────────────────────────────
 
-    /// <summary>Takes a provider CPU sample and returns the average over the sample window.</summary>
+    /// <summary>
+    /// Takes a provider CPU sample and returns the average over the sample window. Samplings are serialised:
+    /// a snapshot and a cache refresh that overlap take their samples one after the other.
+    /// </summary>
     private async Task<Result<CpuStats>> SampleCpuAsync()
     {
-        var sample = await _provider.GetCpuStatsAsync();
+        Result<CpuStats> sample;
+        await _cpuSampling.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            sample = await _provider.GetCpuStatsAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            _cpuSampling.Release();
+        }
         return sample.IsSuccess ? Result<CpuStats>.Success(AddCpuSample(sample.Value!)) : sample;
     }
 
@@ -274,7 +292,7 @@ public sealed class SystemStatsService : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         _cache.Clear();
-        await _provider.DisposeAsync();
+        await _provider.DisposeAsync().ConfigureAwait(false);
         _logger?.Info("SystemStatsService disposed");
     }
 
@@ -283,7 +301,7 @@ public sealed class SystemStatsService : IAsyncDisposable
     private async Task<Result<T>> GetCachedAsync<T>(string key, Func<Task<Result<T>>> factory)
     {
         if (!_config.EnableCaching)
-            return await factory();
+            return await factory().ConfigureAwait(false);
 
         if (TryGetFresh<T>(key, out var cached))
             return cached;
@@ -294,7 +312,7 @@ public sealed class SystemStatsService : IAsyncDisposable
         var refresh = (Lazy<Task<Result<T>>>)_refreshes.GetOrAdd(key, mine);
         try
         {
-            return await refresh.Value;
+            return await refresh.Value.ConfigureAwait(false);
         }
         finally
         {
@@ -309,7 +327,7 @@ public sealed class SystemStatsService : IAsyncDisposable
         if (TryGetFresh<T>(key, out var cached))
             return cached;
 
-        var result = await factory();
+        var result = await factory().ConfigureAwait(false);
         if (result.IsSuccess)
             _cache[key] = (result, DateTime.UtcNow);
         return result;
@@ -332,7 +350,7 @@ public sealed class SystemStatsService : IAsyncDisposable
         if (_eventBus is not null && usagePct >= _config.HighCpuThresholdPercent)
         {
             _logger?.Warning($"High CPU usage detected: {usagePct:F1}% (threshold: {_config.HighCpuThresholdPercent}%)");
-            await _eventBus.PublishAsync(new HighCpuUsageEvent(usagePct, _config.HighCpuThresholdPercent, DateTime.UtcNow));
+            await _eventBus.PublishAsync(new HighCpuUsageEvent(usagePct, _config.HighCpuThresholdPercent, DateTime.UtcNow)).ConfigureAwait(false);
         }
     }
 
@@ -341,7 +359,7 @@ public sealed class SystemStatsService : IAsyncDisposable
         if (_eventBus is not null && usagePct >= _config.HighMemoryThresholdPercent)
         {
             _logger?.Warning($"High memory usage detected: {usagePct:F1}% (threshold: {_config.HighMemoryThresholdPercent}%)");
-            await _eventBus.PublishAsync(new HighMemoryUsageEvent(usagePct, _config.HighMemoryThresholdPercent, DateTime.UtcNow));
+            await _eventBus.PublishAsync(new HighMemoryUsageEvent(usagePct, _config.HighMemoryThresholdPercent, DateTime.UtcNow)).ConfigureAwait(false);
         }
     }
 }

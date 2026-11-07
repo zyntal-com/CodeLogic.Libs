@@ -25,7 +25,7 @@ await CodeLogic.ConfigureAsync();
 await CodeLogic.StartAsync();
 
 var git  = Libraries.Get<GitHelperLibrary>();
-var repo = await git.GetRepositoryAsync("Default");
+var repo = (await git.GetRepositoryAsync("Default")).ValueOrThrow();   // unknown id → git.repository_not_found
 
 // One idempotent call: clones if missing, else fetches + hard-resets to the remote tip.
 Result<RepositoryInfo> sync = await repo.EnsureUpToDateAsync();
@@ -48,7 +48,8 @@ else
 - **Reset & history** — `ResetHardAsync` and `GetCommitLogAsync`.
 - **Batch operations** — `FetchAllAsync` and `GetAllStatusAsync` run across every configured repository with bounded concurrency.
 - **Repository caching** — configurable in-memory pool with automatic eviction.
-- **No exceptions** — every operation returns a CodeLogic `Result<T>` (or `Result` for checkout/reset). Failures carry an `Error` of the matching kind (`NotFoundError`, `ValidationError`, `UnauthorizedError`, `ConflictError`, `InternalError`, ...) with a stable code from `GitErrors` (e.g. `git.remote_not_found`); caught exceptions are logged and their type name is in `Error.Details`.
+- **Safe under concurrency** — every operation (reads included) runs under the repository's lock, cached instances are owned and disposed by the manager (`Dispose()` on one is a no-op), and a transfer that stalls inside libgit2 makes later calls fail fast with `git.timeout` instead of queuing forever.
+- **No exceptions** — every operation, including `GetRepositoryAsync` and `RegisterRepository`, returns a CodeLogic `Result<T>` (or `Result` for checkout/reset). Failures carry an `Error` of the matching kind (`NotFoundError`, `ValidationError`, `UnauthorizedError`, `ConflictError`, `InternalError`, ...) with a stable code from `GitErrors` (e.g. `git.remote_not_found`); caught exceptions are logged and their type name is in `Error.Details`.
 
 ## Configuration
 
@@ -89,7 +90,7 @@ Auto-generated on first run as `config.githelper.json`:
 | `CacheTimeoutMinutes` | `30` | Idle eviction window (0–1440; `0` = never expire). |
 | `Repositories` | one entry | Per-repository definitions (URL, local path, branch, credentials). |
 
-Each repository entry: `Id`, `Name`, `RepositoryUrl` (required), `LocalPath` (required; absolute or relative to `BaseDirectory`), `DefaultBranch`, `Username`, `Password` (PAT), `AutoFetch` (fetch once at start), `AutoFetchIntervalMinutes` (background fetch timer; `0` = off), `TimeoutSeconds` (network timeout; `0` = `DefaultTimeoutSeconds`). Authentication is HTTPS only, and the token is only sent to the host of `RepositoryUrl` — see the full guide for details. SSH key fields exist in config but are **not currently wired**.
+Each repository entry: `Id`, `Name`, `RepositoryUrl` (required), `LocalPath` (required; absolute, or relative to `BaseDirectory` without climbing out of it), `DefaultBranch`, `Username`, `Password` (PAT), `AutoFetch` (fetch once at start), `AutoFetchIntervalMinutes` (background fetch timer; `0` = off), `TimeoutSeconds` (network timeout; `0` = `DefaultTimeoutSeconds`). Authentication is HTTPS only, and the token is only sent to the host of `RepositoryUrl` — see the full guide for details. SSH key fields exist in config but are **not currently wired**.
 
 ### Changing config while running
 
@@ -116,3 +117,5 @@ Full guide: **[CL.GitHelper documentation](https://zyntal-com.github.io/CodeLogi
 ## License
 
 MIT — see [LICENSE](https://github.com/zyntal-com/CodeLogic.Libs/blob/main/LICENSE).
+
+Audit completion notes and current limits are in [the guide](../docs/libs/githelper.md).

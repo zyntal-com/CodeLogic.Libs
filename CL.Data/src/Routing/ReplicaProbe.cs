@@ -56,7 +56,8 @@ public static class ReplicaProbes
             var lag = await db.Executor.ExecuteAsync(node, new CommandSpec(probe.Sql, []), probe,
                 static async (cmd, p, token) =>
                 {
-                    await using var reader = await cmd.ExecuteReaderAsync(token).ConfigureAwait(false);
+                    var reader = await cmd.ExecuteReaderAsync(token).ConfigureAwait(false);
+                    await using var readerLifetime = reader.ConfigureAwait(false);
                     return await reader.ReadAsync(token).ConfigureAwait(false) ? await p.ReadLagMsAsync(reader, token).ConfigureAwait(false) : null;
                 }, null, null, ct).ConfigureAwait(false);
 

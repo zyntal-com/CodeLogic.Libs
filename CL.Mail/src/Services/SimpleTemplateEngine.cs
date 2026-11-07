@@ -109,7 +109,7 @@ public sealed partial class SimpleTemplateEngine : IMailTemplateEngine
         catch (Exception ex)
         {
             _logger?.Error($"Error rendering template '{template.Id}'", ex);
-            return MailErrors.Internal(MailErrorCodes.TemplateRenderingFailed, ex);
+            return MailErrors.Internal(MailErrorCodes.TemplateRenderingFailed, $"Template '{template.Id}' could not be rendered", ex);
         }
     }
 

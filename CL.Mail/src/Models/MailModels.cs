@@ -16,14 +16,14 @@ public sealed record MailMessage
     /// <summary>Primary recipient addresses.</summary>
     public required IReadOnlyList<string> To { get; init; }
 
-    /// <summary>Carbon-copy recipient addresses.</summary>
-    public IReadOnlyList<string> Cc { get; init; } = [];
+    /// <summary>Carbon-copy recipient addresses. Setting <c>null</c> gives an empty list.</summary>
+    public IReadOnlyList<string> Cc { get; init => field = value ?? []; } = [];
 
-    /// <summary>Blind carbon-copy recipient addresses.</summary>
-    public IReadOnlyList<string> Bcc { get; init; } = [];
+    /// <summary>Blind carbon-copy recipient addresses. Setting <c>null</c> gives an empty list.</summary>
+    public IReadOnlyList<string> Bcc { get; init => field = value ?? []; } = [];
 
-    /// <summary>Reply-To addresses. Empty means replies go to <see cref="From"/>.</summary>
-    public IReadOnlyList<string> ReplyTo { get; init; } = [];
+    /// <summary>Reply-To addresses. Empty means replies go to <see cref="From"/>. Setting <c>null</c> gives an empty list.</summary>
+    public IReadOnlyList<string> ReplyTo { get; init => field = value ?? []; } = [];
 
     /// <summary>Message subject line.</summary>
     public required string Subject { get; init; }
@@ -38,18 +38,18 @@ public sealed record MailMessage
     /// Fully qualified file paths of attachments to include. A relative path fails with
     /// <see cref="MailErrorCodes.InvalidAttachment"/>, a missing file with <see cref="MailErrorCodes.AttachmentNotFound"/>,
     /// and with <see cref="SmtpConfig.AttachmentBaseDirectory"/> set, a file outside it with
-    /// <see cref="MailErrorCodes.InvalidAttachment"/>.
+    /// <see cref="MailErrorCodes.InvalidAttachment"/>. Setting <c>null</c> gives an empty list.
     /// </summary>
-    public IReadOnlyList<string> Attachments { get; init; } = [];
+    public IReadOnlyList<string> Attachments { get; init => field = value ?? []; } = [];
 
     /// <summary>
     /// Custom message headers (e.g., X-Mailer). Names must be printable US-ASCII without spaces or <c>:</c>, values
     /// cannot contain a line break or NUL, and the headers the service writes itself or that identify the sender
     /// (From, Sender, Reply-To, To, Cc, Bcc, Subject, Date, Message-Id, MIME-Version, Importance, Content-*, and the
     /// trace and Resent-* fields) cannot be supplied; otherwise sending fails with
-    /// <see cref="MailErrorCodes.InvalidHeader"/>.
+    /// <see cref="MailErrorCodes.InvalidHeader"/>. Setting <c>null</c> gives an empty dictionary.
     /// </summary>
-    public IReadOnlyDictionary<string, string> Headers { get; init; } = new Dictionary<string, string>();
+    public IReadOnlyDictionary<string, string> Headers { get; init => field = value ?? new Dictionary<string, string>(); } = new Dictionary<string, string>();
 
     /// <summary>Message importance / priority.</summary>
     public MailPriority Priority { get; init; } = MailPriority.Normal;
@@ -114,22 +114,44 @@ public sealed record ReceivedMessage
 
     /// <summary>Attachments found on the message.</summary>
     public IReadOnlyList<ReceivedAttachment> Attachments { get; init; } = [];
+
+    /// <summary>True when a body, attachment or descriptor was omitted because a configured budget was exceeded.</summary>
+    public bool ContentTruncated { get; init; }
 }
 
 /// <summary>An attachment on a received e-mail message.</summary>
 public sealed record ReceivedAttachment
 {
+    /// <summary>IMAP MIME part identifier for on-demand <c>GetAttachmentAsync</c>.</summary>
+    public string? PartSpecifier { get; init; }
+
+    /// <summary>Encoded size reported by the IMAP server; not trusted as a decoded-byte limit.</summary>
+    public long EncodedSize { get; init; }
+
     /// <summary>Attachment file name as declared in the MIME part.</summary>
     public string? FileName { get; init; }
 
     /// <summary>MIME content type (e.g., "application/pdf").</summary>
     public string? ContentType { get; init; }
 
-    /// <summary>Size in bytes.</summary>
+    /// <summary>
+    /// Decoded size in bytes when decoded; zero when a section is omitted before decoding;
+    /// <c>0</c> on the attachment stubs of <c>FetchMessagesAsync</c> / <c>SearchAsync</c>, which do not decode.
+    /// </summary>
     public long Size { get; init; }
 
-    /// <summary>Raw decoded content. Null if not downloaded.</summary>
+    /// <summary>
+    /// Raw decoded content. <c>null</c> when not downloaded (<c>FetchMessagesAsync</c> / <c>SearchAsync</c>) and when
+    /// the attachment is <see cref="TooLarge"/>.
+    /// </summary>
     public byte[]? Content { get; init; }
+
+    /// <summary>
+    /// <c>true</c> when the decoded attachment exceeds <see cref="ImapConfig.MaxAttachmentBytes"/>: <see cref="Content"/>
+    /// is <c>null</c>, and the message itself is still returned. Size can be zero when a wire or aggregate budget prevented decoding. The
+    /// decoder never holds more than the limit in memory.
+    /// </summary>
+    public bool TooLarge { get; init; }
 }
 
 /// <summary>IMAP message flags.</summary>

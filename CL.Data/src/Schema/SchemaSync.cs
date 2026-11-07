@@ -231,7 +231,8 @@ public sealed class SchemaSync
         var ddl = _db.Provider.Ddl;
         var opened = await DataSession.OpenAsync(_db, ct).ConfigureAwait(false);
         if (opened.IsFailure) return opened.Error!;
-        await using var session = opened.Value!;
+        var session = opened.Value!;
+        await using var sessionLifetime = session.ConfigureAwait(false);
 
         foreach (var statement in ddl.SessionSetup)
         {

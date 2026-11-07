@@ -5,6 +5,11 @@ All notable changes to **CodeLogic.TwoFactorAuth** are documented here. Versions
 
 ## 5.0 (unreleased)
 
+### Audit completion (2026-11-07)
+
+- Reject unsafe replay-store retention/intervals. Add TotpLoginGuard and bounded atomic ITotpAttemptStore / InMemoryTotpAttemptStore for application-controlled login lockout.
+
+
 ### Breaking
 
 - Targets **.NET 11** (`net11.0`) and requires **CodeLogic 5.0** (`[5.0.0, 6.0.0)`). On .NET 10, stay on
@@ -19,6 +24,18 @@ All notable changes to **CodeLogic.TwoFactorAuth** are documented here. Versions
 - **Configuration validation enforces the documented upper limits:** `TimeStepSeconds` 1–300,
   `WindowSize` 0–10, `QrCodeModuleSize` 1–100. Only the lower bounds were checked before, so a config with
   larger values loaded and now fails validation.
+- **`ValidateTotp` with a `userId` refuses replayed codes.** A code whose time step is not greater than the last
+  step accepted for that user (the same code again, or an older step after a newer one) now fails with
+  `IsValid = false` and `ErrorMessage = TotpValidationResult.ReplayedCodeMessage` ("This code has already been
+  used."), and the `TotpValidatedEvent` reports `IsValid = false`. The check is atomic in the new
+  `ITotpUsedStepStore` (default `InMemoryTotpUsedStepStore`, one per process; the library keeps one across its
+  lifetime). Without a `userId` the behaviour is unchanged: the code is only checked against the secret.
+  Applications that tracked `MatchedWindow` themselves can keep doing so or drop that code.
+- **`SaveQrCodeToFile` validates the path.** It accepted any string; the path must now be fully qualified and end in
+  `.png` (any case), otherwise it fails with `ValidationError` `2fa.qr_invalid_path` and nothing is written.
+- **QR code errors no longer carry exception text.** `2fa.qr_png_failed`, `2fa.qr_bmp_failed` and
+  `2fa.qr_save_failed` returned `ex.Message` (which can describe the key or the file path); they now carry a fixed
+  message, `Details` is the exception type name, and the exception is logged.
 
 ### Added
 
@@ -26,12 +43,19 @@ All notable changes to **CodeLogic.TwoFactorAuth** are documented here. Versions
 - `ValidateTotp(code, secretKey, DateTime timestampUtc, userId)` validates as of a given moment.
 - `TwoFactorKey.PeriodSeconds` (default 30) and the `MinTimeStepSeconds` / `MaxTimeStepSeconds` /
   `MaxWindowSize` / `MaxQrCodeModuleSize` constants on `TwoFactorAuthConfig`.
+- `ITotpUsedStepStore` (`bool TryUse(userId, step)`) and `InMemoryTotpUsedStepStore` (retention two hours by
+  default, longer than any drift window the configuration allows), plus the `usedSteps` parameter on the
+  `TwoFactorAuthenticator` constructor for a shared (database, cache) store on several servers.
+- `TotpValidationResult.ReplayedCodeMessage`.
+- `TwoFactorAuthLibrary.ValidateTotp(code, secretKey, userId)` passes the user id through to the authenticator.
+- `ValidateTotp` ignores whitespace in the typed code: `"123 456"` and `" 123456 "` validate as `"123456"`.
 
 ### Fixed
 
 - **Validation errors no longer leak exception text.** `ValidateTotp` returned `"TOTP validation error: <exception
   message>"` as `ErrorMessage` and `GenerateTotpCode` put the exception message and type in its `Error`. Both now return a
   generic message (`TotpValidationResult.ValidationErrorMessage`, new constant) and log the details.
+- `TwoFactorAuthenticator` and `QrCodeGenerator` throw `ArgumentNullException` for a `null` config.
 - **`ProvisioningUri` escapes the secret.** The issuer and user were escaped but the secret was spliced raw, so a
   padded (`=`) or hostile secret could add or override query parameters. It is now percent-encoded too.
 - **The provisioning URI carries the time step.** `ProvisioningUri` omitted `period`, so with a
@@ -42,6 +66,8 @@ All notable changes to **CodeLogic.TwoFactorAuth** are documented here. Versions
 ### Documentation
 
 - Configuration examples use the camelCase keys the CodeLogic loader reads (PascalCase keys were ignored).
+- The README and the guide state that the library does not rate-limit and that the application must throttle and
+  lock out failed attempts per user; the replay section describes the built-in store.
 
 ### Changed
 

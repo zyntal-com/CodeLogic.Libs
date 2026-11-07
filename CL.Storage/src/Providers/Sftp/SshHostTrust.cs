@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -110,9 +111,31 @@ internal sealed class SshHostTrust
                 return HashedMatches(pattern, hostToken);
             if (pattern.IndexOfAny(['*', '?']) < 0)
                 return string.Equals(pattern, hostToken, StringComparison.OrdinalIgnoreCase);
-            var regex = "^" + Regex.Escape(pattern).Replace("\\*", ".*", StringComparison.Ordinal).Replace("\\?", ".", StringComparison.Ordinal) + "$";
-            return Regex.IsMatch(hostToken, regex, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            try
+            {
+                return WildcardRegex(pattern).IsMatch(hostToken);
+            }
+            catch (RegexMatchTimeoutException)
+            {
+                return false; // a pattern that cannot be evaluated in time trusts nothing
+            }
         }
+
+        /// <summary>
+        /// Wildcard patterns come from a <c>known_hosts</c> file that is read once per connection, so each is compiled
+        /// once, with a match timeout: a file is operator-controlled, but a pathological pattern must not stall the
+        /// host-key callback (which runs on the SSH session's thread).
+        /// </summary>
+        private static Regex WildcardRegex(string pattern) =>
+            WildcardRegexes.GetOrAdd(pattern, static key =>
+            {
+                if (WildcardRegexes.Count >= 256) WildcardRegexes.Clear(); // bounded: a file has a handful of patterns
+                var expression = "^" + Regex.Escape(key).Replace("\\*", ".*", StringComparison.Ordinal).Replace("\\?", ".", StringComparison.Ordinal) + "$";
+                return new Regex(expression, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, WildcardMatchTimeout);
+            });
+
+        private static readonly TimeSpan WildcardMatchTimeout = TimeSpan.FromMilliseconds(250);
+        private static readonly ConcurrentDictionary<string, Regex> WildcardRegexes = new(StringComparer.Ordinal);
 
         /// <summary>Hashed entries are <c>|1|base64(salt)|base64(HMAC-SHA1(salt, host))</c>.</summary>
         private static bool HashedMatches(string pattern, string hostToken)

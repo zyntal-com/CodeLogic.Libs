@@ -106,7 +106,8 @@ public sealed class MigrationRunner
     {
         var locked = await LockAsync(ct).ConfigureAwait(false);
         if (locked.IsFailure) return locked.Error!;
-        await using var held = locked.Value!;
+        var held = locked.Value!;
+        await using var heldLifetime = held.ConfigureAwait(false);
 
         var history = await ReadHistoryAsync(ct).ConfigureAwait(false);   // under the lock: a peer may just have finished
         if (history.IsFailure) return history.Error!;
@@ -132,7 +133,8 @@ public sealed class MigrationRunner
     {
         var locked = await LockAsync(ct).ConfigureAwait(false);
         if (locked.IsFailure) return locked.Error!;
-        await using var held = locked.Value!;
+        var held = locked.Value!;
+        await using var heldLifetime = held.ConfigureAwait(false);
 
         var history = await ReadHistoryAsync(ct).ConfigureAwait(false);
         if (history.IsFailure) return history.Error!;
@@ -162,7 +164,8 @@ public sealed class MigrationRunner
         var ddl = _db.Provider.Ddl;
         var begun = await DataTransaction.BeginAsync(_db, null, ct, ddl.SessionSetup, ddl.SessionTeardown).ConfigureAwait(false);
         if (begun.IsFailure) return DataErrors.MigrationFailed(id, "could not start the transaction", begun.Error);
-        await using var tx = begun.Value!;
+        var tx = begun.Value!;
+        await using var txLifetime = tx.ConfigureAwait(false);
         var context = new MigrationContext(tx.Db);
 
         Result outcome;

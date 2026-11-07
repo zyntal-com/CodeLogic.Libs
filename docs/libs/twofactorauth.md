@@ -73,35 +73,51 @@ if (check.IsValid)
 
 ## Validating at sign-in
 
-After enrolment, every sign-in re-runs step 3 against the stored secret:
+After enrolment, every sign-in re-runs step 3 against the stored secret. Pass the user id: it turns on replay
+protection and attaches the user to the published `TotpValidatedEvent`.
 
 ```csharp
-TotpValidationResult result = tfa.ValidateTotp(userTypedCode, storedSecret);
+TotpValidationResult result = tfa.LoginGuard.Validate(userTypedCode, storedSecret, userId: "alice");
 if (!result.IsValid)
-    return Unauthorized("Invalid authentication code.");
+    return Unauthorized("Invalid authentication code.");   // same answer for a wrong, replayed or unparsable code
 ```
 
-`ValidateTotp` accepts an optional `userId`; when supplied it is attached to the published `TotpValidatedEvent` so you can audit verification attempts on the event bus.
+Whitespace in the typed code is ignored, so `"123 456"` (how most apps display it) validates as `"123456"`.
 
-```csharp
-var auth = tfa.Authenticator;
-TotpValidationResult r = auth.ValidateTotp("123456", storedSecret, userId: "alice");
-```
+> ### Apply login attempt limits
+>
+> A TOTP code has one million values, and a drift window of `WindowSize = 1` accepts three codes at any moment, so
+> an attacker who can try without limit expects to hit one in roughly 350 000 attempts: hours at web speed. The
+> `LoginGuard` counts attempts and rejects locked-out users; low-level `ValidateTotp` does not. In either case:
+>
+> - throttle verification attempts per user (and per source address): a growing delay after a few failures, a
+>   lockout or a step-up after 5–10;
+> - log every failed attempt with the user id, and alert on bursts;
+> - give the same error for a wrong code, a replayed code and a locked account, so the response does not say which;
+> - keep the first code of an enrolment under the same limits.
 
 ### Preventing replay
 
-A code stays valid for its whole time step (and for the drift window around it), so a code that was
-intercepted or submitted twice validates again. `MatchedWindow` is the absolute time step that matched
-(Unix time divided by `TimeStepSeconds`, the same unit as `GetCurrentTimeWindow()`); store the last
-accepted step per user and reject a code whose step is not greater. Make the check and the update one
-atomic operation, for example a conditional update that only succeeds while the stored step is lower;
-a read followed by a separate write lets two concurrent requests accept the same code.
+A code stays valid for its whole time step (and for the drift window around it), so without a check a code that
+was intercepted or submitted twice validates again. With a `userId`, `ValidateTotp` refuses a code whose
+time step is not greater than the last step accepted for that user, returning `IsValid = false` and
+`ErrorMessage = TotpValidationResult.ReplayedCodeMessage` ("This code has already been used."). The comparison
+and the update are one atomic operation in the `ITotpUsedStepStore`, so two concurrent requests cannot both accept
+the same code; a wrong code consumes nothing.
+
+The default store, `InMemoryTotpUsedStepStore`, keeps the last accepted step per user in memory for two hours
+(longer than any drift window the configuration allows) and serves one process: the library creates one and keeps
+it for its lifetime. An application that runs on several servers, or that must survive a restart inside the drift
+window, implements `ITotpUsedStepStore.TryUse(userId, step)` over shared storage (a conditional `UPDATE … WHERE
+last_step < @step`, a compare-and-set in a cache) and constructs the authenticator with it:
 
 ```csharp
-TotpValidationResult r = tfa.ValidateTotp(userTypedCode, storedSecret);
-if (!r.IsValid || !await users.TryAdvanceTotpStepAsync(userId, r.MatchedWindow!.Value))
-    return Unauthorized("Invalid authentication code.");
+var auth = new TwoFactorAuthenticator(config, logger, events, usedSteps: new SqlTotpStepStore(db));
 ```
+
+Without a `userId` the code is only checked against the secret; `MatchedWindow` (the absolute time step that
+matched, Unix time divided by `TimeStepSeconds`, the same unit as `GetCurrentTimeWindow()`) lets you do the
+tracking yourself.
 
 `ValidateTotp(code, secret, timestampUtc, userId)` validates as of a given moment, which makes tests deterministic.
 
@@ -118,13 +134,13 @@ The library exposes two services plus convenience pass-throughs for the most com
 | `GenerateSecretKey()` | `string` | New Base32 secret |
 | `GenerateNewKey(issuer, user)` | `TwoFactorKey` | New key + provisioning URI |
 | `GenerateTotpCode(secret)` | `Result<string>` | Current 6-digit code for a secret |
-| `ValidateTotp(code, secret)` | `TotpValidationResult` | Verify a 6-digit code |
+| `ValidateTotp(code, secret, userId?)` | `TotpValidationResult` | Verify a 6-digit code; with a user id, refuse a replay |
 | `GenerateQrCodeDataUri(key)` | `Result<string>` | `data:image/png;base64,…` URI |
 
 ### TwoFactorAuthenticator
 
 ```csharp
-var auth = tfa.Authenticator;
+var auth = tfa.Authenticator;   // or new TwoFactorAuthenticator(config, logger, events, usedSteps)
 
 string secret              = auth.GenerateSecretKey();
 Result<string> code        = auth.GenerateTotpCode(secret);
@@ -146,10 +162,15 @@ Result<byte[]> png    = qr.GenerateQrCodePng(key);
 Result<byte[]> bmp    = qr.GenerateQrCodeBmp(key);
 Result<string> base64 = qr.GenerateQrCodeBase64(key);
 Result<string> uri    = qr.GenerateQrCodeDataUri(key);
-Result         saved  = qr.SaveQrCodeToFile(key, "qrcode.png");
+Result         saved  = qr.SaveQrCodeToFile(key, @"C:\app\data\qrcode.png");
 ```
 
 Module size and error-correction level come from configuration (`QrCodeModuleSize`, `ErrorCorrectionLevel`).
+
+`SaveQrCodeToFile` takes a fully qualified path ending in `.png` (any case); anything else is a `ValidationError`
+`2fa.qr_invalid_path` and nothing is written. A failure while rendering or writing (`2fa.qr_png_failed`,
+`2fa.qr_bmp_failed`, `2fa.qr_save_failed`) carries a generic message with the exception type in `Details`; the
+exception itself, which can describe the key or the path, is logged only.
 
 ## TwoFactorKey
 
@@ -172,13 +193,15 @@ public record TotpValidationResult
     public bool IsValid { get; }
     public long? MatchedWindow { get; }   // absolute time step that matched (Unix time / TimeStepSeconds), null if invalid
     public int? WindowOffset { get; }     // drift: matched step minus the current step (0, -1, +1, ...), null if invalid
-    public string? ErrorMessage { get; }  // "Invalid code", or ValidationErrorMessage when validation could not run
+    public string? ErrorMessage { get; }  // "Invalid code", ReplayedCodeMessage, or ValidationErrorMessage
 }
 ```
 
-`ErrorMessage` never carries exception text. A malformed secret gives the generic
-`TotpValidationResult.ValidationErrorMessage` ("The code could not be validated."); the exception is logged.
-`GenerateTotpCode` likewise returns `2fa.generate_failed` with a generic message.
+`ErrorMessage` never carries exception text. A code used before gives `TotpValidationResult.ReplayedCodeMessage`
+("This code has already been used."); a malformed secret gives the generic
+`TotpValidationResult.ValidationErrorMessage` ("The code could not be validated."), and the exception is logged.
+`GenerateTotpCode` likewise returns `2fa.generate_failed` with a generic message. Show the user one message for all
+of them.
 
 `TotpValidatedEvent.MatchedWindow` carries the same absolute step (`long?`).
 
@@ -214,7 +237,7 @@ Both events implement `IEvent` and are published to the CodeLogic event bus.
 | Event | Published when |
 |-------|----------------|
 | `SecretKeyGeneratedEvent` | A new secret/key is generated. |
-| `TotpValidatedEvent` | `ValidateTotp` runs with a `userId` supplied (carries the user id and outcome). |
+| `TotpValidatedEvent` | `ValidateTotp` runs with a `userId` supplied (carries the user id and outcome; a replayed code is `IsValid = false`). |
 
 ## Health check
 
@@ -230,3 +253,23 @@ var status = await tfa.HealthCheckAsync();
 - [Getting Started](../getting-started.md) — load, configure, and use any `CL.*` library.
 - [API Reference](../api/index.md) — generated type/member documentation.
 - [Package on NuGet](https://www.nuget.org/packages/CodeLogic.TwoFactorAuth)
+
+## Login attempt guard
+
+Use `library.LoginGuard.Validate(code, storedSecret, userId)` at sign-in to combine replay checks with attempt limits.
+The default guard permits five attempts per user in a five-minute fixed window, clears the count only after a valid unused
+code, and returns the same generic invalid result for wrong, replayed and locked-out codes. Low-level `ValidateTotp` keeps
+its existing behavior and does not throttle attempts.
+
+For application-owned limits:
+
+```csharp
+var attempts = new InMemoryTotpAttemptStore(maxAttempts: 5, window: TimeSpan.FromMinutes(5), maxEntries: 10_000);
+var guard = new TotpLoginGuard(authenticator, attempts);
+var result = guard.Validate(code, storedSecret, userId);
+```
+
+The bounded local attempt store refuses new users when full; it never evicts active lockouts. For several nodes, implement
+`ITotpAttemptStore` atomically in shared storage, alongside a shared `ITotpUsedStepStore`. Continue rate-limiting by source
+at the request boundary. `InMemoryTotpUsedStepStore` requires retention of at least `MinimumRetention` (105 minutes,
+covering the largest supported drift window) and a positive sweep interval; defaults remain two hours and one minute.

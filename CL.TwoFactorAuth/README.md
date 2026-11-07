@@ -30,18 +30,21 @@ TwoFactorKey key = tfa.GenerateNewKey("MyApp", "user@example.com");
 Result<string> qr = tfa.GenerateQrCodeDataUri(key);   // data:image/png;base64,...
 if (qr.IsSuccess) { /* <img src="qr.Value"> */ }
 
-// 3. Verify a code the user typed
-TotpValidationResult check = tfa.ValidateTotp("123456", key.SecretKey);
+// 3. Verify a code the user typed. Pass the user id: a code that was already used for that user is refused.
+TotpValidationResult check = tfa.ValidateTotp("123 456", key.SecretKey, userId: "user@example.com");
 if (check.IsValid) { /* grant access */ }
 ```
+
+> **Rate limiting is your job.** A six-digit code has a million values and a drift window of three steps gives an attacker roughly three chances per guess, so unlimited attempts break TOTP in hours. The library validates codes; it does not count attempts. Throttle and lock out failed verifications per user (for example a growing delay after 3 failures and a lockout after 5–10), log them, and never reveal which factor failed.
 
 ## Features
 
 - **Secret generation** — cryptographically random Base32 TOTP secrets (`GenerateSecretKey`).
 - **Provisioning** — `GenerateNewKey(issuer, user)` returns a `TwoFactorKey` with a standard `otpauth://` `ProvisioningUri` that carries the configured `period`; issuer, user and secret are percent-encoded.
-- **Generate & validate** — `GenerateTotpCode` / `ValidateTotp` with a configurable time step and drift window; validation returns a `TotpValidationResult` with the matched absolute time step (`MatchedWindow`, a `long`, for replay tracking) and the drift in steps (`WindowOffset`). Errors are logged; `ErrorMessage` is generic and never exception text.
+- **Generate & validate** — `GenerateTotpCode` / `ValidateTotp` with a configurable time step and drift window; whitespace in a typed code is ignored. Validation returns a `TotpValidationResult` with the matched absolute time step (`MatchedWindow`, a `long`) and the drift in steps (`WindowOffset`). Errors are logged; `ErrorMessage` is generic and never exception text.
+- **Replay protection** — with a `userId`, a code whose time step was already accepted for that user is refused (`TotpValidationResult.ReplayedCodeMessage`). The check is atomic in an `ITotpUsedStepStore`; the default keeps the last accepted step per user in memory, and a shared implementation serves several servers.
 - **Lifetime helpers** — `GetSecondsUntilExpiry()` and `GetCurrentTimeWindow()`.
-- **QR rendering** — PNG / BMP bytes, Base64, data URI, and save-to-file, with configurable module size and error-correction level.
+- **QR rendering** — PNG / BMP bytes, Base64, data URI, and save-to-file (fully qualified `.png` path), with configurable module size and error-correction level. Failures carry a generic message; details go to the log.
 - **Events** — `SecretKeyGeneratedEvent` and `TotpValidatedEvent` on the CodeLogic event bus.
 
 ## Configuration
@@ -64,9 +67,9 @@ Auto-generated on first run as `config.twofactorauth.json`. Keys are camelCase a
 | `TimeStepSeconds` | `30` | TOTP time step (1–300); must match the authenticator app. |
 | `WindowSize` | `1` | Steps before/after the current window accepted (0–10); `1` ≈ ±30s drift. |
 | `QrCodeModuleSize` | `20` | Pixel size of each QR module (1–100). |
+| `ErrorCorrectionLevel` | `Q` | `L` (~7%), `M` (~15%), `Q` (~25%), `H` (~30%). |
 
 Values outside these ranges fail configuration validation.
-| `ErrorCorrectionLevel` | `Q` | `L` (~7%), `M` (~15%), `Q` (~25%), `H` (~30%). |
 
 ## Documentation
 
@@ -80,3 +83,5 @@ Full guide: **[CL.TwoFactorAuth documentation](https://zyntal-com.github.io/Code
 ## License
 
 MIT — see [LICENSE](https://github.com/zyntal-com/CodeLogic.Libs/blob/main/LICENSE).
+
+Audit completion notes and current limits are in [the guide](../docs/libs/twofactorauth.md).

@@ -282,3 +282,5 @@ Upgrading from 4.8.93 or from the legacy S3-only package? See [MIGRATION.md](MIG
 - .NET 11
 
 MIT license.
+
+Audit completion notes and current limits are in [the guide](../docs/libs/storage/index.md).

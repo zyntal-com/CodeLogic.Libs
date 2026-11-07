@@ -102,7 +102,8 @@ public sealed partial class Database
             var begun = await DataTransaction.BeginAsync(this, isolation, ct).ConfigureAwait(false);
             if (begun.IsFailure) return begun.Error!;
 
-            await using var transaction = begun.Value!;
+            var transaction = begun.Value!;
+            await using var transactionLifetime = transaction.ConfigureAwait(false);
             Result<TResult> result;
             try
             {
@@ -260,7 +261,8 @@ public sealed partial class Database
             return await RunAsync(context, read,
                 static async (cmd, build, token) =>
                 {
-                    await using var reader = await cmd.ExecuteReaderAsync(token).ConfigureAwait(false);
+                    var reader = await cmd.ExecuteReaderAsync(token).ConfigureAwait(false);
+                    await using var readerLifetime = reader.ConfigureAwait(false);
                     return await build(reader, token).ConfigureAwait(false);
                 }, rows).ConfigureAwait(false);
         }
@@ -272,7 +274,8 @@ public sealed partial class Database
             var buffered = await RunAsync(run, 0,
                 static async (cmd, _, token) =>
                 {
-                    await using var reader = await cmd.ExecuteReaderAsync(token).ConfigureAwait(false);
+                    var reader = await cmd.ExecuteReaderAsync(token).ConfigureAwait(false);
+                    await using var readerLifetime = reader.ConfigureAwait(false);
                     return await BufferedResultSet.CaptureAsync(reader, token).ConfigureAwait(false);
                 }, static set => set.Rows.Length).ConfigureAwait(false);
             if (buffered.IsFailure) return buffered.Error!;
@@ -283,7 +286,8 @@ public sealed partial class Database
             : new CL.Data.Events.CacheMissEvent(Name, Provider.Name, Options.Time.GetUtcNow(), context.Table)) : null).ConfigureAwait(false);
         if (loaded.IsFailure) return loaded.Error!;
 
-        await using var replay = ((BufferedResultSet)loaded.Value!).CreateReader();
+        var replay = ((BufferedResultSet)loaded.Value!).CreateReader();
+        await using var replayLifetime = replay.ConfigureAwait(false);
         return Result<TResult>.Success(await read(replay, context.CancellationToken).ConfigureAwait(false));
     }
 
@@ -381,7 +385,8 @@ public sealed partial class Database
         };
         return await RunAsync(context, 0, static async (cmd, _, token) =>
         {
-            await using var reader = await cmd.ExecuteReaderAsync(token).ConfigureAwait(false);
+            var reader = await cmd.ExecuteReaderAsync(token).ConfigureAwait(false);
+            await using var readerLifetime = reader.ConfigureAwait(false);
             return await reader.ReadAsync(token).ConfigureAwait(false);
         }).ConfigureAwait(false);
     }
@@ -409,12 +414,14 @@ public sealed partial class Database
                     var c = s.Command;
                     if (c.Check == RowCheck.Empty)
                     {
-                        await using var guard = await cmd.ExecuteReaderAsync(token).ConfigureAwait(false);
+                        var guard = await cmd.ExecuteReaderAsync(token).ConfigureAwait(false);
+                        await using var guardLifetime = guard.ConfigureAwait(false);
                         return await guard.ReadAsync(token).ConfigureAwait(false) ? 1 : 0;
                     }
                     if (c.Returns)
                     {
-                        await using var reader = await cmd.ExecuteReaderAsync(token).ConfigureAwait(false);
+                        var reader = await cmd.ExecuteReaderAsync(token).ConfigureAwait(false);
+                        await using var readerLifetime = reader.ConfigureAwait(false);
                         var row = 0;
                         while (await reader.ReadAsync(token).ConfigureAwait(false))
                         {
@@ -483,7 +490,8 @@ public sealed partial class Database
 
         var opened = await OpenStreamAsync(context, accessor.Map).ConfigureAwait(false);
         if (opened.IsFailure) throw new DataQueryException(opened.Error!);
-        await using var stream = opened.Value!;
+        var stream = opened.Value!;
+        await using var streamLifetime = stream.ConfigureAwait(false);
         while (true)
         {
             T row;

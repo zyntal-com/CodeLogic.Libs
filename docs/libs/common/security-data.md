@@ -8,7 +8,9 @@ See the [Overview](index.md) for loading and the full catalog, and [Utilities](u
 
 ## Security — Encryption
 
-`CL.Common.Security.Encryption` does AES-256-GCM authenticated encryption. The key is derived from your password with PBKDF2 and a random per-call salt; the salt, nonce, authentication tag, and ciphertext are packed into a single Base64 string (or byte array). Because GCM is *authenticated*, any tampering with the ciphertext is detected and decryption fails.
+`CL.Common.Security.Encryption` does AES-256-GCM authenticated encryption. The key is derived from your password with PBKDF2-SHA256 (`Encryption.Iterations` = 600 000) and a random per-call salt; a version byte (`0x01`), the salt, nonce, authentication tag, and ciphertext are packed into a single Base64 string (or byte array). Because GCM is *authenticated*, any tampering with the ciphertext is detected and decryption fails with a `CryptographicException` (as do wrong passwords, truncated data and invalid Base64).
+
+Blobs written before 5.0 had no version byte and used 100 000 iterations (`Encryption.LegacyIterations`); decryption still reads them, so re-encrypt stored values to upgrade them. 4.x cannot read blobs written by 5.0.
 
 ```csharp
 using CL.Common.Security;
@@ -28,7 +30,7 @@ string k64 = Encryption.GenerateKey(length: 64);
 
 | Member | Returns | Purpose |
 |--------|---------|---------|
-| `EncryptAes(plainText, password)` | `string` | AES-GCM encrypt; Base64 (salt + nonce + tag + ciphertext). |
+| `EncryptAes(plainText, password)` | `string` | AES-GCM encrypt; Base64 (version + salt + nonce + tag + ciphertext). |
 | `DecryptAes(cipher, password)` | `string` | Decrypt a value produced by `EncryptAes`. |
 | `EncryptBytes(data, password)` | `byte[]` | Byte-array variant of `EncryptAes`. |
 | `DecryptBytes(data, password)` | `byte[]` | Byte-array variant of `DecryptAes`. |
@@ -105,7 +107,7 @@ string sort  = IdGenerator.Sortable();           // lexicographically sortable
 | `Timestamp()` | `string` | Timestamp-derived id. |
 | `TimestampWithPrefix(prefix)` | `string` | Timestamp id with a leading prefix. |
 | `Random(length = 16)` | `string` | Random alphanumeric. |
-| `RandomHex(length = 32)` | `string` | Random hex string. |
+| `RandomHex(length = 32)` | `string` | Random hex string; `length` must be positive. |
 | `RandomBase64(byteLength = 24)` | `string` | Random Base64 from N bytes. |
 | `UrlSafe(length = 22)` | `string` | URL-safe random id. |
 | `NanoId(length = 21)` | `string` | NanoID — compact, URL-safe, collision-resistant. |

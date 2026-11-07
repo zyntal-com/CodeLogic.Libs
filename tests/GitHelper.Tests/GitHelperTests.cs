@@ -140,7 +140,7 @@ public sealed class GitHelperLocalTests
 
     public GitHelperLocalTests(GitHelperRuntimeFixture fx) => _fx = fx;
 
-    private Task<GitRepository> RepoAsync() => _fx.Library.GetRepositoryAsync("Default");
+    private async Task<GitRepository> RepoAsync() => (await _fx.Library.GetRepositoryAsync("Default")).ValueOrThrow();
 
     [Fact]
     public async Task GetRepositoryInfo_reports_branch_and_head()
@@ -217,7 +217,7 @@ public sealed class GitHelperLocalTests
     [Fact]
     public async Task CloneAsync_with_ssh_url_fails_fast_offline()
     {
-        var repo = await _fx.Library.GetRepositoryAsync("Ssh");
+        var repo = (await _fx.Library.GetRepositoryAsync("Ssh")).ValueOrThrow();
         var result = await repo.CloneAsync();
 
         Assert.False(result.IsSuccess);
@@ -327,7 +327,7 @@ public sealed class GitHelperLocalTests
     [Fact]
     public async Task Operations_on_an_uncloned_repository_return_repository_not_found()
     {
-        var repo = await _fx.Library.GetRepositoryAsync("Ssh");   // configured but never cloned
+        var repo = (await _fx.Library.GetRepositoryAsync("Ssh")).ValueOrThrow();   // configured but never cloned
         var result = await repo.GetRepositoryInfoAsync();
 
         var error = Assert.IsType<NotFoundError>(result.Error);
@@ -353,12 +353,12 @@ public sealed class GitHelperLocalTests
             RepositoryUrl = _fx.LocalRepoPath,
             LocalPath = clonePath,
             DefaultBranch = branch
-        });
+        }).ThrowIfFailure();
 
         var trackedPath = Path.Combine(clonePath, GitHelperRuntimeFixture.TrackedFile);
         File.AppendAllText(trackedPath, "local edit\n");
 
-        var repo = await _fx.Library.GetRepositoryAsync(id);
+        var repo = (await _fx.Library.GetRepositoryAsync(id)).ValueOrThrow();
 
         // Fetch succeeds against the file remote and carries diagnostics as its value.
         var fetch = await repo.FetchAsync();
@@ -375,7 +375,7 @@ public sealed class GitHelperLocalTests
     [Fact]
     public async Task GetAllStatus_returns_a_result_per_repository()
     {
-        var all = await _fx.Library.GetAllStatusAsync();
+        var all = (await _fx.Library.GetAllStatusAsync()).ValueOrThrow();
 
         Assert.True(all["Default"].IsSuccess, all["Default"].Error?.Message);
         Assert.IsType<NotFoundError>(all["Ssh"].Error);
@@ -413,9 +413,9 @@ public sealed class GitHelperLiveTests
             RepositoryUrl = url,
             LocalPath = dest,
             DefaultBranch = "main"
-        });
+        }).ThrowIfFailure();
 
-        var repo = await _fx.Library.GetRepositoryAsync("Live");
+        var repo = (await _fx.Library.GetRepositoryAsync("Live")).ValueOrThrow();
         var result = await repo.EnsureUpToDateAsync();
 
         Assert.True(result.IsSuccess, result.Error?.Message);
@@ -468,7 +468,7 @@ public sealed class GitManagerCacheEvictionTests : IDisposable
 
     private async Task AssertWaitsForRunningOperationAsync(Func<GitRepository, Task> evict)
     {
-        var repository = await _manager.GetRepositoryAsync();
+        var repository = (await _manager.GetRepositoryAsync()).ValueOrThrow();
         var running = OperationLock(repository);
         await running.WaitAsync();
 
@@ -495,7 +495,7 @@ public sealed class GitManagerCacheEvictionTests : IDisposable
         AssertWaitsForRunningOperationAsync(async stale =>
         {
             _clock.Now += TimeSpan.FromMinutes(6);
-            var fresh = await _manager.GetRepositoryAsync();
+            var fresh = (await _manager.GetRepositoryAsync()).ValueOrThrow();
             Assert.NotSame(stale, fresh);
         });
 
@@ -510,7 +510,7 @@ public sealed class GitManagerCacheEvictionTests : IDisposable
     [Fact]
     public async Task An_idle_expired_entry_is_disposed_right_away()
     {
-        var repository = await _manager.GetRepositoryAsync();
+        var repository = (await _manager.GetRepositoryAsync()).ValueOrThrow();
         _clock.Now += TimeSpan.FromMinutes(6);
 
         _manager.CleanupExpiredEntries();
@@ -521,12 +521,12 @@ public sealed class GitManagerCacheEvictionTests : IDisposable
     [Fact]
     public async Task A_recently_used_entry_is_kept()
     {
-        var repository = await _manager.GetRepositoryAsync();
+        var repository = (await _manager.GetRepositoryAsync()).ValueOrThrow();
         _clock.Now += TimeSpan.FromMinutes(4);
 
         _manager.CleanupExpiredEntries();
 
-        Assert.Same(repository, await _manager.GetRepositoryAsync());
+        Assert.Same(repository, (await _manager.GetRepositoryAsync()).ValueOrThrow());
         Assert.False(repository.IsDisposed);
     }
 }

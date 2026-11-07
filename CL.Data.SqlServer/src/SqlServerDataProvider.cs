@@ -411,7 +411,8 @@ public sealed class SqlServerBulkCopier : CL.Data.Bulk.BulkCopier
             EnableStreaming = true,
         };
         foreach (var column in request.Columns) bulk.ColumnMappings.Add(column, column);
-        await using var reader = request.CreateReader();
+        var reader = request.CreateReader();
+        await using var readerLifetime = reader.ConfigureAwait(false);
         await bulk.WriteToServerAsync(reader, ct).ConfigureAwait(false);
         return bulk.RowsCopied64;
     }

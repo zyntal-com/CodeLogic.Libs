@@ -38,7 +38,8 @@ internal sealed class SqliteDataSource : InitializingDataSource
 
     protected override async ValueTask InitializeAsync(DbConnection connection, CancellationToken ct)
     {
-        await using var command = connection.CreateCommand();
+        var command = connection.CreateCommand();
+        await using var commandLifetime = command.ConfigureAwait(false);
         // journal_mode is a property of the database file; set it once per data source.
         command.CommandText = _journalPragma is not null && Interlocked.Exchange(ref _journalApplied, 1) == 0
             ? _journalPragma + " " + _pragmas

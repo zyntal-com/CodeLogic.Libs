@@ -159,7 +159,8 @@ public sealed class ImageDocument : IDisposable
         if (!File.Exists(path)) return ImagingErrors.FileNotFound(path);
         try
         {
-            await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 64 * 1024, useAsync: true);
+            var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 64 * 1024, useAsync: true);
+            await using var streamLifetime = stream.ConfigureAwait(false);
             return await LoadAsync(stream, options, ct).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)

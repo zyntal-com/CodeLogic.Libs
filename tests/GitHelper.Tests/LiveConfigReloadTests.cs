@@ -1,8 +1,10 @@
 using System.Text.Json.Nodes;
 using CL.GitHelper;
+using CL.GitHelper.Errors;
 using CL.GitHelper.Models;
 using CodeLogic.Core.Configuration;
 using CodeLogic.Core.Events;
+using CodeLogic.Core.Results;
 using CodeLogic.Framework.Libraries;
 using Xunit;
 
@@ -66,23 +68,23 @@ public sealed class LiveConfigReloadTests : IAsyncLifetime
     [Fact]
     public async Task Changing_one_repository_keeps_the_other_instance()
     {
-        var app = await _git.GetRepositoryAsync("App");
-        var docs = await _git.GetRepositoryAsync("Docs");
+        var app = (await _git.GetRepositoryAsync("App")).ValueOrThrow();
+        var docs = (await _git.GetRepositoryAsync("Docs")).ValueOrThrow();
 
         var config = Config();
         Find(config, "Docs")["defaultBranch"] = "develop";
         var result = await UpdateAsync(config);
 
         Assert.True(result.Applied, result.ToString());
-        Assert.Same(app, await _git.GetRepositoryAsync("App"));
-        Assert.NotSame(docs, await _git.GetRepositoryAsync("Docs"));
+        Assert.Same(app, (await _git.GetRepositoryAsync("App")).ValueOrThrow());
+        Assert.NotSame(docs, (await _git.GetRepositoryAsync("Docs")).ValueOrThrow());
         Assert.Equal("develop", _git.GetManager().GetConfiguration("Docs")!.DefaultBranch);
     }
 
     [Fact]
     public async Task Repositories_can_be_added_and_removed()
     {
-        var app = await _git.GetRepositoryAsync("App");
+        var app = (await _git.GetRepositoryAsync("App")).ValueOrThrow();
 
         var config = Config();
         var repositories = config["repositories"]!.AsArray();
@@ -91,8 +93,10 @@ public sealed class LiveConfigReloadTests : IAsyncLifetime
         Assert.True((await UpdateAsync(config)).Applied);
 
         Assert.Equal(["App", "Site"], _git.GetManager().GetRepositoryIds().Order());
-        Assert.Same(app, await _git.GetRepositoryAsync("App"));
-        await Assert.ThrowsAsync<ArgumentException>(() => _git.GetRepositoryAsync("Docs"));
+        Assert.Same(app, (await _git.GetRepositoryAsync("App")).ValueOrThrow());
+        var removed = Assert.IsType<NotFoundError>((await _git.GetRepositoryAsync("Docs")).Error);
+        Assert.Equal(GitErrors.RepositoryNotFoundCode, removed.Code);
+        Assert.Equal(GitErrors.NotConfiguredDetails, removed.Details);
     }
 
     [Fact]
@@ -103,7 +107,7 @@ public sealed class LiveConfigReloadTests : IAsyncLifetime
             Id = "Runtime",
             RepositoryUrl = "https://example.invalid/runtime.git",
             LocalPath = "runtime"
-        });
+        }).ThrowIfFailure();
 
         var config = Config();
         config["maxConcurrentOperations"] = 5;
@@ -116,13 +120,13 @@ public sealed class LiveConfigReloadTests : IAsyncLifetime
     [Fact]
     public async Task Base_directory_change_replaces_every_cached_instance()
     {
-        var app = await _git.GetRepositoryAsync("App");
+        var app = (await _git.GetRepositoryAsync("App")).ValueOrThrow();
 
         var config = Config();
         config["baseDirectory"] = Path.Combine(_root, "elsewhere");
         Assert.True((await UpdateAsync(config)).Applied);
 
-        Assert.NotSame(app, await _git.GetRepositoryAsync("App"));
+        Assert.NotSame(app, (await _git.GetRepositoryAsync("App")).ValueOrThrow());
         Assert.True(Directory.Exists(Path.Combine(_root, "elsewhere")));
     }
 
@@ -133,6 +137,10 @@ public sealed class LiveConfigReloadTests : IAsyncLifetime
         config["enabled"] = false;
         Assert.True((await UpdateAsync(config)).Applied);
         Assert.Throws<InvalidOperationException>(() => _git.GetManager());
+        var offline = Assert.IsType<UnavailableError>((await _git.GetRepositoryAsync("App")).Error);
+        Assert.Equal(GitErrors.NotInitializedCode, offline.Code);
+        Assert.Equal(GitErrors.NotInitializedCode, _git.RegisterRepository(new RepositoryConfiguration { Id = "X", RepositoryUrl = "https://example.invalid/x.git", LocalPath = "x" }).Error!.Code);
+        Assert.Equal(GitErrors.NotInitializedCode, (await _git.GetAllStatusAsync()).Error!.Code);
 
         config["enabled"] = true;
         Assert.True((await UpdateAsync(config)).Applied);

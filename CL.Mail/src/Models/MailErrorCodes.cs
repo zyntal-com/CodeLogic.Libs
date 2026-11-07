@@ -82,7 +82,10 @@ public static class MailErrorCodes
     /// <summary>The IMAP server could not be reached (DNS, refused, unreachable). Kind: <see cref="UnavailableError"/>.</summary>
     public const string ImapConnectionFailed = "mail.imap_connection_failed";
 
-    /// <summary>A general IMAP protocol or state error. Kind: <see cref="InternalError"/>.</summary>
+    /// <summary>
+    /// A general IMAP protocol or state error. Kind: <see cref="InternalError"/>. For an unexpected exception the
+    /// message is generic and <see cref="Error.Details"/> is the exception type; the details are in the log.
+    /// </summary>
     public const string ImapError = "mail.imap_error";
 
     /// <summary>
@@ -100,7 +103,10 @@ public static class MailErrorCodes
     /// <summary>The operation was cancelled by the caller. Kind: <see cref="UnavailableError"/>.</summary>
     public const string Cancelled = "mail.cancelled";
 
-    /// <summary>An unexpected error. Kind: <see cref="InternalError"/>.</summary>
+    /// <summary>
+    /// An unexpected error. Kind: <see cref="InternalError"/>. The message is generic and
+    /// <see cref="Error.Details"/> is the exception type; the exception itself is logged, never returned.
+    /// </summary>
     public const string Unknown = "mail.unknown";
 }
 
@@ -121,9 +127,13 @@ internal static class MailErrors
 
     public static Error Cancelled() => Error.Unavailable(MailErrorCodes.Cancelled, "Operation cancelled");
 
-    /// <summary>An <see cref="InternalError"/> describing <paramref name="ex"/>.</summary>
-    public static Error Internal(string code, Exception ex) =>
-        Error.Internal(code, ex.Message, ex.GetType().FullName);
+    /// <summary>
+    /// An <see cref="InternalError"/> for an unexpected <paramref name="ex"/>: the caller-facing message is the
+    /// fixed <paramref name="message"/> and <see cref="Error.Details"/> is only the exception's type name. The
+    /// exception text (which can describe hosts, paths or protocol state) belongs in the log, never in the result.
+    /// </summary>
+    public static Error Internal(string code, string message, Exception ex) =>
+        Error.Internal(code, message, ex.GetType().Name);
 
     /// <summary>An <see cref="InternalError"/> with a fixed message.</summary>
     public static Error Internal(string code, string message) => Error.Internal(code, message);

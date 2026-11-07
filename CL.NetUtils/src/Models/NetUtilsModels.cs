@@ -33,7 +33,10 @@ public enum DnsblCheckStatus
     Indeterminate,
 
     /// <summary>The check could not run at all (invalid address, unexpected failure); see <see cref="DnsblCheckResult.ErrorMessage"/>.</summary>
-    Error
+    Error,
+
+    /// <summary>The caller's cancellation token fired before the check finished; nothing is known about the address.</summary>
+    Cancelled
 }
 
 /// <summary>
@@ -89,6 +92,10 @@ public record DnsblCheckResult
     /// <summary>Creates an error result when the check could not be completed.</summary>
     public static DnsblCheckResult Error(string ip, IpAddressType type, string error) =>
         new() { IpAddress = ip, IsBlacklisted = false, AddressType = type, ErrorMessage = error, Status = DnsblCheckStatus.Error };
+
+    /// <summary>Creates the result of a check the caller cancelled (<see cref="DnsblCheckStatus.Cancelled"/>).</summary>
+    public static DnsblCheckResult Cancelled(string ip, IpAddressType type, string message) =>
+        new() { IpAddress = ip, IsBlacklisted = false, AddressType = type, ErrorMessage = message, Status = DnsblCheckStatus.Cancelled };
 }
 
 /// <summary>
