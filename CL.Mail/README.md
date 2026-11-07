@@ -46,9 +46,9 @@ else
 - **Fluent `MailBuilder`** — `mail.CreateMessage()` composes an immutable `MailMessage`; `Build()` throws if sender, recipients, subject, or a body are missing.
 - **Template engine** — JSON-backed templates with `{{var}}` / `${var}` / `{var}` substitution (HTML-encoded in HTML bodies; `{{{var}}}` for trusted HTML), `{{#if}}…{{#else}}…{{/if}}` conditionals, `{{#each}}…{{/each}}` loops, and `{{#section}}` / layout composition. Values are inserted once: placeholders inside a value are never expanded.
 - **Templated send** — `SendTemplatedAsync` renders a template by id and sends it in one call.
-- **IMAP reading** — list folders, fetch and page messages, fetch by UID with attachments, search, move/copy/delete, and add/remove flags.
+- **IMAP reading** — list folders, fetch and page messages, fetch by UID with attachments (decoded up to `Imap.MaxAttachmentBytes`, 25 MiB by default; a bigger one is returned as `TooLarge` with its size and no content), search, move/copy/delete, and add/remove flags.
 - **IMAP IDLE** — RFC 2177 push notifications via `StartIdleAsync` and the `NewMailReceived` event.
-- **Result-based errors** — operations return CodeLogic `Result` / `Result<T>`; sends return `Result<MailSendReceipt>` (Message-ID + send time). Failures are `Error` kinds (`ValidationError`, `NotFoundError`, `UnauthorizedError`, `TimeoutError`, `UnavailableError`, `InternalError`) with a `MailErrorCodes` code. Upgrading from 4.x: see the [changelog](CHANGELOG.md).
+- **Result-based errors** — operations return CodeLogic `Result` / `Result<T>`; sends return `Result<MailSendReceipt>` (Message-ID + send time). Failures are `Error` kinds (`ValidationError`, `NotFoundError`, `UnauthorizedError`, `TimeoutError`, `UnavailableError`, `InternalError`) with a `MailErrorCodes` code. An unexpected exception gives a generic message (`Details` = exception type); the exception goes to the log. Upgrading from 4.x: see the [changelog](CHANGELOG.md).
 
 ## Configuration
 
@@ -73,7 +73,8 @@ Auto-generated on first run as `config.mail.json`. The `Imap` section is optiona
     "securityMode": "SslTls",
     "timeoutSeconds": 30,
     "enableIdle": false,
-    "idleRefreshMinutes": 25
+    "idleRefreshMinutes": 25,
+    "maxAttachmentBytes": 26214400
   },
   "defaultFromEmail": "noreply@example.com",
   "defaultFromName": "My App",
@@ -93,6 +94,7 @@ Auto-generated on first run as `config.mail.json`. The `Imap` section is optiona
 | `Imap.SecurityMode` | `SslTls` | `None`, `StartTls`, or `SslTls` (implicit TLS, port 993). |
 | `Imap.EnableIdle` | `false` | Allow RFC 2177 IDLE push monitoring (`StartIdleAsync` is refused while `false`). |
 | `Imap.IdleRefreshMinutes` | `25` | IDLE connection refresh interval (1–28; keep under 29). |
+| `Imap.MaxAttachmentBytes` | `26214400` (25 MiB) | Largest attachment `GetMessageAsync` loads into memory; a bigger one is returned with `TooLarge` and no content. |
 | `DefaultFromEmail` / `DefaultFromName` | `null` | Fallback sender when a message from `CreateMessage()` / `SendTemplatedAsync` omits `From`. |
 | `TemplateDirectory` | `templates` | Template folder; relative to the library data dir unless absolute. |
 

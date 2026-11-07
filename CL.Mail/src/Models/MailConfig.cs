@@ -84,6 +84,9 @@ public sealed class MailConfig : ConfigModelBase
 
             if (!Enum.IsDefined(Imap.SecurityMode))
                 errors.Add($"Imap.SecurityMode '{Imap.SecurityMode}' is not a known security mode.");
+
+            if (Imap.MaxAttachmentBytes < 1)
+                errors.Add("Imap.MaxAttachmentBytes must be at least 1.");
         }
 
         return errors.Count > 0
@@ -194,6 +197,21 @@ public sealed class ImapConfig
         Description = "How often to re-send IDLE to keep the connection alive.",
         Group = "IMAP", Order = 37, Collapsed = true)]
     public int IdleRefreshMinutes { get; set; } = 25;
+
+    /// <summary>Default <see cref="MaxAttachmentBytes"/>: 25 MiB.</summary>
+    public const long DefaultMaxAttachmentBytes = 25L * 1024 * 1024;
+
+    /// <summary>
+    /// Largest decoded attachment <c>ImapService.GetMessageAsync</c> loads into memory, in bytes. Default: 25 MiB.
+    /// A larger attachment comes back with <see cref="ReceivedAttachment.TooLarge"/> set, its decoded
+    /// <see cref="ReceivedAttachment.Size"/> and no <see cref="ReceivedAttachment.Content"/>; the decoder never
+    /// buffers more than this limit, whatever a message declares. Must be at least 1.
+    /// </summary>
+    [Range(1, long.MaxValue)]
+    [ConfigField(Label = "Max attachment (bytes)", Min = 1,
+        Description = "Largest attachment loaded into memory by GetMessageAsync; bigger ones are returned without content.",
+        Group = "IMAP", Order = 38, Collapsed = true)]
+    public long MaxAttachmentBytes { get; set; } = DefaultMaxAttachmentBytes;
 }
 
 /// <summary>

@@ -155,6 +155,8 @@ public sealed record MailMessage
 
 `MailPriority` is `Low` / `Normal` / `High`; it maps to the standard `X-Priority` / `Importance` headers.
 
+`Cc`, `Bcc`, `ReplyTo`, `Attachments` and `Headers` coalesce `null` to empty when set (through `init` or `with`), so a message built by hand with a missing collection validates normally; a `null` `To` fails with `mail.invalid_recipient`.
+
 Custom `Headers` cannot set what the service writes itself or what identifies the sender or the message: `From`, `Sender`, `Reply-To` (use `ReplyTo`), `To`, `Cc`, `Bcc`, `Subject`, `Date`, `Message-Id`, `MIME-Version`, `Importance`, `Return-Path`, `Received`, `Content-*` and `Resent-*`. Such a header fails with `MailErrorCodes.InvalidHeader`.
 
 ## Configuration
@@ -261,6 +263,8 @@ Every failure is an `Error` whose `Code` is a `MailErrorCodes` constant, and eac
 | `MessageNotFound` | `mail.message_not_found` | `NotFoundError` |
 | `Cancelled` (new) | `mail.cancelled` | `UnavailableError` |
 | `Unknown` | `mail.unknown` | `InternalError` |
+
+For an unexpected exception (`mail.unknown`, `mail.smtp_error`, `mail.imap_error`, `mail.template_rendering_failed`) the `Message` is a fixed description of what failed and `Details` is the exception's type name; the exception text, which can name files, hosts or protocol state, is written to the log only. Server answers (`mail.smtp_rejected`, `mail.imap_rejected`) keep the server's text.
 
 ## Upgrading from 4.x
 

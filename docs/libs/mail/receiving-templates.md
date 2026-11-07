@@ -54,9 +54,13 @@ var one = await mail.Imap.GetMessageAsync("INBOX", uid);
 if (one.IsSuccess)
 {
     foreach (var att in one.Value!.Attachments)
-        Console.WriteLine($"{att.FileName} ({att.Size} bytes, {att.ContentType})");
+        Console.WriteLine(att.TooLarge
+            ? $"{att.FileName} ({att.Size} bytes): above Imap.MaxAttachmentBytes, content not loaded"
+            : $"{att.FileName} ({att.Size} bytes, {att.ContentType})");
 }
 ```
+
+`GetMessageAsync` decodes each attachment with a memory bound: `Imap.MaxAttachmentBytes` (default 25 MiB). An attachment above the limit comes back with `TooLarge = true`, its full decoded `Size` and `Content = null`; the message and its other attachments are returned normally, and the decoder never buffers more than the limit, whatever a message declares. `FetchMessagesAsync` / `SearchAsync` with `includeBody` list attachments without decoding them (`Size = 0`, `Content = null`, `TooLarge = false`).
 
 ### Search
 
@@ -138,8 +142,9 @@ public sealed record ReceivedAttachment
 {
     public string? FileName { get; init; }
     public string? ContentType { get; init; }
-    public long Size { get; init; }
-    public byte[]? Content { get; init; }   // populated by GetMessageAsync
+    public long Size { get; init; }         // decoded size (GetMessageAsync), also when TooLarge
+    public byte[]? Content { get; init; }   // populated by GetMessageAsync; null when TooLarge
+    public bool TooLarge { get; init; }     // decoded size exceeds Imap.MaxAttachmentBytes
 }
 
 public sealed record MailFolder
@@ -328,7 +333,8 @@ Add the `Imap` section to `config.mail.json` to enable reading. Omit it entirely
     "securityMode": "SslTls",
     "timeoutSeconds": 30,
     "enableIdle": false,
-    "idleRefreshMinutes": 25
+    "idleRefreshMinutes": 25,
+    "maxAttachmentBytes": 26214400
   }
 }
 ```
@@ -343,6 +349,7 @@ Add the `Imap` section to `config.mail.json` to enable reading. Omit it entirely
 | `Imap.TimeoutSeconds` | `int` | `30` | IMAP connect/operation timeout in seconds. |
 | `Imap.EnableIdle` | `bool` | `false` | Allow RFC 2177 IDLE push monitoring; `StartIdleAsync` is refused while `false`. |
 | `Imap.IdleRefreshMinutes` | `int` | `25` | IDLE connection refresh interval (1–28; keep under 29). |
+| `Imap.MaxAttachmentBytes` | `long` | `26214400` (25 MiB, `ImapConfig.DefaultMaxAttachmentBytes`) | Largest attachment `GetMessageAsync` loads into memory; a bigger one is returned with `TooLarge` and no content. Must be at least 1. |
 
 ## See also
 
