@@ -399,7 +399,8 @@ public sealed partial class Database : IAsyncDisposable
             static async (cmd, build, token) =>
             {
                 List<T> rows = [];
-                await using var reader = await cmd.ExecuteReaderAsync(token).ConfigureAwait(false);
+                var reader = await cmd.ExecuteReaderAsync(token).ConfigureAwait(false);
+                await using var readerLifetime = reader.ConfigureAwait(false);
                 while (await reader.ReadAsync(token).ConfigureAwait(false)) rows.Add(build(reader));
                 return rows;
             },
@@ -451,7 +452,8 @@ public sealed partial class Database : IAsyncDisposable
         var result = await RunAsync(context, 0,
             static async (cmd, _, token) =>
             {
-                await using var reader = await cmd.ExecuteReaderAsync(token).ConfigureAwait(false);
+                var reader = await cmd.ExecuteReaderAsync(token).ConfigureAwait(false);
+                await using var readerLifetime = reader.ConfigureAwait(false);
                 return await reader.ReadAsync(token).ConfigureAwait(false) && !reader.IsDBNull(0)
                     ? ValueReader<T>.Read(reader, 0)
                     : default;
@@ -487,7 +489,8 @@ public sealed partial class Database : IAsyncDisposable
         var result = await RunAsync(context, (Accessor: accessor.Value, Policy: NamingPolicy),
             static async (cmd, state, token) =>
             {
-                await using var reader = await cmd.ExecuteReaderAsync(token).ConfigureAwait(false);
+                var reader = await cmd.ExecuteReaderAsync(token).ConfigureAwait(false);
+                await using var readerLifetime = reader.ConfigureAwait(false);
                 return await RowReader.ReadAllAsync(reader, state.Accessor, state.Policy, token).ConfigureAwait(false);
             },
             static list => list.Count).ConfigureAwait(false);

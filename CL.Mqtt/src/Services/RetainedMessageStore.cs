@@ -23,11 +23,13 @@ internal sealed class RetainedMessageStore : IAsyncDisposable
     private readonly Lock _lock = new();
     private List<MqttApplicationMessage>? _pending;
     private Task? _writer;
+    private readonly Func<Task>? _beforeWrite;
 
-    public RetainedMessageStore(string path, ILogger logger)
+    public RetainedMessageStore(string path, ILogger logger, Func<Task>? beforeWrite = null)
     {
         _path = path;
         _logger = logger;
+        _beforeWrite = beforeWrite;
     }
 
     /// <summary>Reads the stored messages; an unreadable file is logged and treated as empty.</summary>
@@ -37,7 +39,8 @@ internal sealed class RetainedMessageStore : IAsyncDisposable
             return [];
         try
         {
-            await using var stream = File.OpenRead(_path);
+            var stream = File.OpenRead(_path);
+            await using var streamLifetime = stream.ConfigureAwait(false);
             var entries = await JsonSerializer.DeserializeAsync(stream, RetainedJsonContext.Default.ListRetainedEntry, cancellationToken).ConfigureAwait(false) ?? [];
             return [.. entries.Where(e => !string.IsNullOrEmpty(e.Topic)).Select(ToMessage)];
         }
@@ -101,9 +104,13 @@ internal sealed class RetainedMessageStore : IAsyncDisposable
         var temp = _path + ".tmp";
         try
         {
+            if (_beforeWrite is not null) await _beforeWrite().ConfigureAwait(false);
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(_path))!);
-            await using (var stream = File.Create(temp))
+            var stream = File.Create(temp);
+            await using (stream.ConfigureAwait(false))
+            {
                 await JsonSerializer.SerializeAsync(stream, [.. snapshot.Select(ToEntry)], RetainedJsonContext.Default.ListRetainedEntry).ConfigureAwait(false);
+            }
             File.Move(temp, _path, overwrite: true);
         }
         catch (Exception ex)

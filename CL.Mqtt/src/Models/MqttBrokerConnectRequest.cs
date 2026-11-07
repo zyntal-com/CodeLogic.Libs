@@ -9,5 +9,5 @@ namespace CL.Mqtt.Models;
 public sealed record MqttBrokerConnectRequest(string ClientId, string? Username, string? Password, string Endpoint, bool IsSecureConnection)
 {
     /// <summary>Keeps the password out of logs and debugger views.</summary>
-    public override string ToString() => $"{ClientId} ({Username ?? "anonymous"}) from {Endpoint}";
+    public override string ToString() => $"{CL.Internal.LogText.Sanitize(ClientId)} ({CL.Internal.LogText.Sanitize(Username ?? "anonymous")}) from {CL.Internal.LogText.Sanitize(Endpoint)}";
 }

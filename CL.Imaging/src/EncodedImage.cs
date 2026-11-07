@@ -113,7 +113,8 @@ public sealed class EncodedImage : IDisposable
         var dir = Path.GetDirectoryName(Path.GetFullPath(path));
         if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
         var memory = Buffer.Memory;
-        await using var file = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None, 64 * 1024, useAsync: true);
+        var file = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None, 64 * 1024, useAsync: true);
+        await using var fileLifetime = file.ConfigureAwait(false);
         await file.WriteAsync(memory, ct).ConfigureAwait(false);
     }
 

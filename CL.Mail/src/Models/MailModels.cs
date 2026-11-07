@@ -114,11 +114,20 @@ public sealed record ReceivedMessage
 
     /// <summary>Attachments found on the message.</summary>
     public IReadOnlyList<ReceivedAttachment> Attachments { get; init; } = [];
+
+    /// <summary>True when a body, attachment or descriptor was omitted because a configured budget was exceeded.</summary>
+    public bool ContentTruncated { get; init; }
 }
 
 /// <summary>An attachment on a received e-mail message.</summary>
 public sealed record ReceivedAttachment
 {
+    /// <summary>IMAP MIME part identifier for on-demand <c>GetAttachmentAsync</c>.</summary>
+    public string? PartSpecifier { get; init; }
+
+    /// <summary>Encoded size reported by the IMAP server; not trusted as a decoded-byte limit.</summary>
+    public long EncodedSize { get; init; }
+
     /// <summary>Attachment file name as declared in the MIME part.</summary>
     public string? FileName { get; init; }
 
@@ -126,7 +135,7 @@ public sealed record ReceivedAttachment
     public string? ContentType { get; init; }
 
     /// <summary>
-    /// Decoded size in bytes. Set by <c>GetMessageAsync</c> even when <see cref="TooLarge"/> is <c>true</c>;
+    /// Decoded size in bytes when decoded; zero when a section is omitted before decoding;
     /// <c>0</c> on the attachment stubs of <c>FetchMessagesAsync</c> / <c>SearchAsync</c>, which do not decode.
     /// </summary>
     public long Size { get; init; }
@@ -139,7 +148,7 @@ public sealed record ReceivedAttachment
 
     /// <summary>
     /// <c>true</c> when the decoded attachment exceeds <see cref="ImapConfig.MaxAttachmentBytes"/>: <see cref="Content"/>
-    /// is <c>null</c>, <see cref="Size"/> is the full decoded size, and the message itself is still returned. The
+    /// is <c>null</c>, and the message itself is still returned. Size can be zero when a wire or aggregate budget prevented decoding. The
     /// decoder never holds more than the limit in memory.
     /// </summary>
     public bool TooLarge { get; init; }

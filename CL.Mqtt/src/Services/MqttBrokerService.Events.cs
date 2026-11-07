@@ -41,40 +41,35 @@ public sealed partial class MqttBrokerService
             return;
         }
         if (string.IsNullOrEmpty(e.ClientId))
-            return;   // MQTTnet assigns an id; there is no session to protect yet.
-
-        // A client id belongs to the user that holds its session: another user may neither take the session over
-        // (and inherit its subscriptions and queued messages) nor kick the client off.
-        var owner = _sessions.GetValueOrDefault(e.ClientId);
-        if (owner is not null && !string.Equals(owner.Username, username, StringComparison.Ordinal))
         {
-            Refuse(e, MqttConnectReasonCode.ClientIdentifierNotValid, request, $"client id held by {(owner.Username is null ? "an anonymous client" : $"user '{owner.Username}'")}");
+            Refuse(e, MqttConnectReasonCode.ClientIdentifierNotValid, request, "empty client id");
             return;
         }
-        var cap = Config.MaxSessionsPerUser;
-        if (owner is null && cap > 0 && _sessions.Count(s => string.Equals(s.Value.Username, username, StringComparison.Ordinal)) >= cap)
+        if (!TryReserveSession(e.ClientId, username, endpoint, DateTimeOffset.UtcNow, out var generation, out var reason))
         {
-            // MQTT 3.1.1 has no quota code; "server unavailable" is the one that tells such a client to retry later.
-            var code = e.ProtocolVersion == MQTTnet.Formatter.MqttProtocolVersion.V500 ? MqttConnectReasonCode.QuotaExceeded : MqttConnectReasonCode.ServerUnavailable;
-            Refuse(e, code, request, $"session limit of {cap} reached");
+            var quota = reason.StartsWith("session limit", StringComparison.Ordinal);
+            var code = quota
+                ? e.ProtocolVersion == MQTTnet.Formatter.MqttProtocolVersion.V500
+                    ? MqttConnectReasonCode.QuotaExceeded : MqttConnectReasonCode.ServerUnavailable
+                : MqttConnectReasonCode.ClientIdentifierNotValid;
+            Refuse(e, code, request, reason);
             return;
         }
-        _sessions[e.ClientId] = new SessionOwner(username, null);
+        e.SessionItems[_sessionKey] = generation;
     }
 
     private void Refuse(ValidatingConnectionEventArgs e, MqttConnectReasonCode code, MqttBrokerConnectRequest request, string reason)
     {
         e.ReasonCode = code;
-        _logger.Warning($"MQTT broker: refused {request} ({reason})");
+        _logger.Warning($"MQTT broker: refused {request} ({CL.Internal.LogText.Sanitize(reason, 256)})");
         _events?.Publish(new MqttBrokerConnectionRejectedEvent(request.ClientId, request.Username, request.Endpoint, reason));
     }
 
     private Task OnClientConnectedAsync(ClientConnectedEventArgs e)
     {
         var username = string.IsNullOrEmpty(e.UserName) ? null : e.UserName;
-        if (!string.IsNullOrEmpty(e.ClientId))
-            _sessions[e.ClientId] = new SessionOwner(username, null);
-        _logger.Debug($"MQTT broker: client '{e.ClientId}' connected ({username ?? "anonymous"}, {e.RemoteEndPoint})");
+        SessionConnected(e.ClientId, e.RemoteEndPoint?.ToString() ?? "", e.SessionItems);
+        _logger.Debug($"MQTT broker: client '{CL.Internal.LogText.Sanitize(e.ClientId)}' connected ({CL.Internal.LogText.Sanitize(username ?? "anonymous")}, {e.RemoteEndPoint})");
         _events?.Publish(new MqttBrokerClientConnectedEvent(e.ClientId, username, e.RemoteEndPoint?.ToString() ?? ""));
         return Task.CompletedTask;
     }
@@ -83,17 +78,15 @@ public sealed partial class MqttBrokerService
     {
         var username = string.IsNullOrEmpty(e.UserName) ? null : e.UserName;
         var clean = e.DisconnectType == MqttClientDisconnectType.Clean;
-        // Mark the session idle; the sweeper deletes it after the expiry, unless the client is back by then.
-        if (_sessions.TryGetValue(e.ClientId, out var owner))
-            _sessions.TryUpdate(e.ClientId, owner with { DisconnectedAt = DateTimeOffset.UtcNow }, owner);
-        _logger.Debug($"MQTT broker: client '{e.ClientId}' disconnected ({(clean ? "clean" : e.DisconnectType.ToString())})");
+        SessionDisconnected(e.ClientId, e.RemoteEndPoint?.ToString() ?? "", e.SessionItems);
+        _logger.Debug($"MQTT broker: client '{CL.Internal.LogText.Sanitize(e.ClientId)}' disconnected ({(clean ? "clean" : e.DisconnectType.ToString())})");
         _events?.Publish(new MqttBrokerClientDisconnectedEvent(e.ClientId, username, clean));
         return Task.CompletedTask;
     }
 
     private Task OnSessionDeletedAsync(SessionDeletedEventArgs e)
     {
-        _sessions.TryRemove(e.Id, out _);
+        SessionDeleted(e.Id, e.SessionItems);
         return Task.CompletedTask;
     }
 
@@ -111,7 +104,7 @@ public sealed partial class MqttBrokerService
             e.ProcessPublish = false;
             // MQTT 5 publishers (QoS 1/2) see this reason code; MQTT 3.1.1 has no way to report it.
             e.Response.ReasonCode = MqttPubAckReasonCode.NotAuthorized;
-            _logger.Debug($"MQTT broker: dropped publish by '{e.ClientId}' to '{topic}' (not allowed)");
+            _logger.Debug($"MQTT broker: dropped publish by '{CL.Internal.LogText.Sanitize(e.ClientId)}' to '{CL.Internal.LogText.Sanitize(topic)}' (not allowed)");
             return;
         }
 
@@ -119,7 +112,7 @@ public sealed partial class MqttBrokerService
         {
             e.ProcessPublish = false;
             e.Response.ReasonCode = MqttPubAckReasonCode.QuotaExceeded;
-            _logger.Warning($"MQTT broker: dropped retained publish by '{e.ClientId}' to '{topic}' ({limit})");
+            _logger.Warning($"MQTT broker: dropped retained publish by '{CL.Internal.LogText.Sanitize(e.ClientId)}' to '{CL.Internal.LogText.Sanitize(topic)}' ({limit})");
             return;
         }
 
@@ -138,7 +131,7 @@ public sealed partial class MqttBrokerService
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                _logger.Error($"MQTT broker: tap for '{tap.Filter}' failed on '{topic}': {ex}");
+                _logger.Error($"MQTT broker: tap for '{CL.Internal.LogText.Sanitize(tap.Filter)}' failed on '{CL.Internal.LogText.Sanitize(topic)}': {ex}");
             }
         }
     }
@@ -151,7 +144,7 @@ public sealed partial class MqttBrokerService
         {
             e.ProcessSubscription = false;
             e.Response.ReasonCode = MqttSubscribeReasonCode.NotAuthorized;
-            _logger.Debug($"MQTT broker: refused subscription of '{e.ClientId}' to '{filter}'");
+            _logger.Debug($"MQTT broker: refused subscription of '{CL.Internal.LogText.Sanitize(e.ClientId)}' to '{CL.Internal.LogText.Sanitize(filter)}'");
         }
         return Task.CompletedTask;
     }
@@ -204,70 +197,4 @@ public sealed partial class MqttBrokerService
         }
     }
 
-    private async Task SweepLoopAsync(CancellationToken token)
-    {
-        using var timer = new PeriodicTimer(SessionSweepInterval);
-        try
-        {
-            while (await timer.WaitForNextTickAsync(token).ConfigureAwait(false))
-            {
-                try
-                {
-                    await SweepSessionsAsync(DateTimeOffset.UtcNow).ConfigureAwait(false);
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    _logger.Error($"MQTT broker: session sweep failed: {ex}");
-                }
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            // Stop.
-        }
-    }
-
-    /// <summary>
-    /// Deletes persistent sessions whose client has been away longer than
-    /// <see cref="MqttBrokerConfig.PersistentSessionExpiryMinutes"/>, and forgets ids whose session is gone.
-    /// </summary>
-    internal async Task SweepSessionsAsync(DateTimeOffset now)
-    {
-        var server = _server;
-        if (server is null)
-            return;
-        var connected = (await server.GetClientsAsync().ConfigureAwait(false)).Select(c => c.Id).ToHashSet(StringComparer.Ordinal);
-        var existing = (await server.GetSessionsAsync().ConfigureAwait(false)).ToDictionary(s => s.Id, StringComparer.Ordinal);
-        var expiry = Config.PersistentSessionExpiryMinutes > 0 ? TimeSpan.FromMinutes(Config.PersistentSessionExpiryMinutes) : (TimeSpan?)null;
-
-        foreach (var (id, owner) in _sessions.ToArray())
-        {
-            if (connected.Contains(id))
-            {
-                if (owner.DisconnectedAt is not null)
-                    _sessions.TryUpdate(id, owner with { DisconnectedAt = null }, owner);
-                continue;
-            }
-            if (!existing.TryGetValue(id, out var session))
-            {
-                _sessions.TryRemove(id, out _);
-                continue;
-            }
-            // MQTTnet records when the client left; our own stamp is the fallback.
-            var since = session.DisconnectedTimestamp is { } stamp
-                ? new DateTimeOffset(DateTime.SpecifyKind(stamp, DateTimeKind.Utc))
-                : owner.DisconnectedAt;
-            if (since is null)
-            {
-                _sessions.TryUpdate(id, owner with { DisconnectedAt = now }, owner);
-                continue;
-            }
-            if (expiry is { } limit && now - since.Value >= limit)
-            {
-                await session.DeleteAsync().ConfigureAwait(false);
-                _sessions.TryRemove(id, out _);
-                _logger.Debug($"MQTT broker: expired the persistent session of '{id}' ({owner.Username ?? "anonymous"})");
-            }
-        }
-    }
 }

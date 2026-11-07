@@ -60,7 +60,8 @@ internal sealed class DataSession : IAsyncDisposable
             static async (cmd, build, token) =>
             {
                 List<T> rows = [];
-                await using var reader = await cmd.ExecuteReaderAsync(token).ConfigureAwait(false);
+                var reader = await cmd.ExecuteReaderAsync(token).ConfigureAwait(false);
+                await using var readerLifetime = reader.ConfigureAwait(false);
                 while (await reader.ReadAsync(token).ConfigureAwait(false)) rows.Add(build(reader));
                 return rows;
             },

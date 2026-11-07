@@ -55,6 +55,30 @@ public sealed class MqttLibraryTests : IAsyncLifetime
         try { Directory.Delete(_root, recursive: true); } catch { /* logger may still hold its file */ }
     }
 
+    [Fact]
+    public async Task Sync_dispose_does_not_wait_for_a_blocked_retained_writer_and_async_dispose_joins_it()
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var store = new CL.Mqtt.Services.RetainedMessageStore(Path.Combine(_root, "blocked-retained.json"),
+            CodeLogic.Core.Logging.NullLogger.Instance, async () => { entered.TrySetResult(); await release.Task; });
+        typeof(CL.Mqtt.Services.MqttBrokerService).GetField("_retained", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .SetValue(_mqtt.Broker, store);
+        store.Schedule([new MQTTnet.MqttApplicationMessageBuilder().WithTopic("test").WithPayload("test").Build()]);
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await Task.Run(_mqtt.Dispose).WaitAsync(TimeSpan.FromSeconds(2));
+            var cleanup = _mqtt.DisposeAsync().AsTask();
+            Assert.False(cleanup.IsCompleted);
+            var stopping = _mqtt.OnStopAsync();
+            Assert.False(stopping.IsCompleted);
+            release.TrySetResult();
+            await Task.WhenAll(cleanup, stopping).WaitAsync(TimeSpan.FromSeconds(10));
+        }
+        finally { release.TrySetResult(); await _mqtt.DisposeAsync(); }
+    }
+
     private JsonObject Connection(string? clientId = null) => new()
     {
         ["host"] = "127.0.0.1",

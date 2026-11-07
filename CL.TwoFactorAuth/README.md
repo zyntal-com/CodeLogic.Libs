@@ -83,3 +83,5 @@ Full guide: **[CL.TwoFactorAuth documentation](https://zyntal-com.github.io/Code
 ## License
 
 MIT — see [LICENSE](https://github.com/zyntal-com/CodeLogic.Libs/blob/main/LICENSE).
+
+Audit completion notes and current limits are in [the guide](../docs/libs/twofactorauth.md).

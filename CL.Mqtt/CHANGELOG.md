@@ -5,6 +5,11 @@ All notable changes to **CodeLogic.Mqtt** are documented here. Versions follow
 
 ## 5.0 (unreleased)
 
+### Audit completion (2026-11-07)
+
+- Make session ownership and quotas atomic, protect pending/replaced sessions during sweeping, warn for every network-visible plain listener, stop retrying refused credentials, and make synchronous Dispose nonblocking. Add concurrency, writer-interleaving and disposal regressions.
+
+
 First release. Targets **.NET 11** (`net11.0`) and **CodeLogic 5.0**; built on MQTTnet 5.2.
 
 ### Added
@@ -55,8 +60,8 @@ First release. Targets **.NET 11** (`net11.0`) and **CodeLogic 5.0**; built on M
 - Persistent sessions and retained messages had no bound; see the caps above.
 - `cleanSession: false` did nothing on MQTT 5 because no session expiry was sent; `sessionExpirySeconds` (1 day) is now
   sent on `V500`.
-- Refused credentials were retried like a network outage; they now wait the longest back-off between attempts, and the
-  CONNACK code is read from MQTTnet's result rather than guessed from two substrings.
+- Refused credentials were retried like a network outage; they now stop automatic retries until an explicit ConnectAsync call.
+  MQTTnet 5.2 exposes failure codes through exception text; the parser matches known enum names.
 - The retained-message store could run two writers on the same temporary file and lose a snapshot; it has one writer.
 - `publishTopics` / `subscribeTopics` set to `null` in JSON no longer throw; user names cannot contain whitespace or start
   with `$`; client ids in the connection config cannot start with `$`.

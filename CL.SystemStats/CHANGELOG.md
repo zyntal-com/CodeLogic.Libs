@@ -5,6 +5,11 @@ All notable changes to **CodeLogic.SystemStats** are documented here. Versions f
 
 ## 5.0 (unreleased)
 
+### Audit completion (2026-11-07)
+
+- Make synchronous disposal nonblocking and serialize Windows counter disposal against sampling.
+
+
 ### Breaking
 
 - Targets **.NET 11** (`net11.0`) and requires **CodeLogic 5.0** (`[5.0.0, 6.0.0)`). On .NET 10, stay on

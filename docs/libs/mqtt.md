@@ -271,7 +271,7 @@ oldest queued message is dropped. A client has 15 seconds to send CONNECT after 
 | `keepAliveSeconds` | `30` | Ping interval. |
 | `timeoutSeconds` | `10` | Connect, publish and subscribe timeout. |
 | `autoConnect` | `true` | Connect at start. |
-| `autoReconnect` | `true` | Retry after failures. Refused credentials are retried at the longest delay only. |
+| `autoReconnect` | `true` | Retry transient failures. Authentication refusal stops retries; correct credentials and call `ConnectAsync` explicitly. |
 | `reconnectMinDelaySeconds`, `reconnectMaxDelaySeconds` | `1`, `60` | Back-off range. |
 | `willTopic`, `willPayload`, `willRetain` | — | Last will, published by the broker when the client vanishes. |
 
@@ -332,3 +332,19 @@ features the wrapper does not cover, such as enhanced authentication or packet i
 subscribe through them: the wrapper would not know.
 
 `MqttLibrary` is `IAsyncDisposable`; a normal `StopAsync` already tears everything down, so `Dispose()` after it returns at once.
+
+## Admission and shutdown guarantees
+
+Client-id ownership checks, quota accounting and handshake reservations are atomic. A pending connection counts against
+its user's session quota. Sweeping preserves pending/replaced sessions and blocks reconnects while an expired session is
+being deleted. Failed handshakes release their reservation after the CONNECT timeout grace period.
+
+Authentication refusal stops automatic reconnect; after correcting credentials call `ConnectAsync` explicitly. Transient
+network failures retain exponential backoff. MQTTnet 5.2 does not expose a result property on its connect-failure exception,
+so the adapter extracts known reason-code names from the exception message.
+
+Enabling TLS does not close the plain port: set `tls.disablePlainPort: true` to require encryption. A reachable plain
+listener emits a warning even when a TLS listener is also enabled.
+
+`Dispose()` starts cleanup without waiting on asynchronous work. Await `DisposeAsync()` or the runtime's normal
+`OnStopAsync()` path when shutdown must be complete (disconnects, retained-message flush and resource release).

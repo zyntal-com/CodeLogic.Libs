@@ -2,6 +2,11 @@
 
 ## 5.0 (unreleased)
 
+### Audit completion (2026-11-07)
+
+- Make synchronous disposal start observed asynchronous cleanup; split large source files and extract transfer inspection/reporting helpers without changing transfer policy.
+
+
 ### Breaking
 
 - Targets **.NET 11** (`net11.0`) and requires **CodeLogic 5.0** (`[5.0.0, 6.0.0)`). On .NET 10, stay on

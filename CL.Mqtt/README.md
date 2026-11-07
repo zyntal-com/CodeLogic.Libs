@@ -101,3 +101,5 @@ Full guide, configuration reference and error codes: [docs/libs/mqtt.md](https:/
 ## License
 
 MIT
+
+Audit completion notes and current limits are in [the guide](../docs/libs/mqtt.md).

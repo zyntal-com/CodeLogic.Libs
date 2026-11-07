@@ -77,18 +77,18 @@ After enrolment, every sign-in re-runs step 3 against the stored secret. Pass th
 protection and attaches the user to the published `TotpValidatedEvent`.
 
 ```csharp
-TotpValidationResult result = tfa.ValidateTotp(userTypedCode, storedSecret, userId: "alice");
+TotpValidationResult result = tfa.LoginGuard.Validate(userTypedCode, storedSecret, userId: "alice");
 if (!result.IsValid)
     return Unauthorized("Invalid authentication code.");   // same answer for a wrong, replayed or unparsable code
 ```
 
 Whitespace in the typed code is ignored, so `"123 456"` (how most apps display it) validates as `"123456"`.
 
-> ### Rate limiting and lockout are the application's job
+> ### Apply login attempt limits
 >
 > A TOTP code has one million values, and a drift window of `WindowSize = 1` accepts three codes at any moment, so
 > an attacker who can try without limit expects to hit one in roughly 350 000 attempts: hours at web speed. The
-> library validates codes; it does **not** count attempts. Before you call `ValidateTotp`:
+> `LoginGuard` counts attempts and rejects locked-out users; low-level `ValidateTotp` does not. In either case:
 >
 > - throttle verification attempts per user (and per source address): a growing delay after a few failures, a
 >   lockout or a step-up after 5–10;
@@ -253,3 +253,23 @@ var status = await tfa.HealthCheckAsync();
 - [Getting Started](../getting-started.md) — load, configure, and use any `CL.*` library.
 - [API Reference](../api/index.md) — generated type/member documentation.
 - [Package on NuGet](https://www.nuget.org/packages/CodeLogic.TwoFactorAuth)
+
+## Login attempt guard
+
+Use `library.LoginGuard.Validate(code, storedSecret, userId)` at sign-in to combine replay checks with attempt limits.
+The default guard permits five attempts per user in a five-minute fixed window, clears the count only after a valid unused
+code, and returns the same generic invalid result for wrong, replayed and locked-out codes. Low-level `ValidateTotp` keeps
+its existing behavior and does not throttle attempts.
+
+For application-owned limits:
+
+```csharp
+var attempts = new InMemoryTotpAttemptStore(maxAttempts: 5, window: TimeSpan.FromMinutes(5), maxEntries: 10_000);
+var guard = new TotpLoginGuard(authenticator, attempts);
+var result = guard.Validate(code, storedSecret, userId);
+```
+
+The bounded local attempt store refuses new users when full; it never evicts active lockouts. For several nodes, implement
+`ITotpAttemptStore` atomically in shared storage, alongside a shared `ITotpUsedStepStore`. Continue rate-limiting by source
+at the request boundary. `InMemoryTotpUsedStepStore` requires retention of at least `MinimumRetention` (105 minutes,
+covering the largest supported drift window) and a positive sweep interval; defaults remain two hours and one minute.

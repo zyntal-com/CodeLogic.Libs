@@ -43,7 +43,8 @@ internal sealed class CommandExecutor(DataProvider provider, int defaultTimeoutS
                 connection = owned;
             }
 
-            await using var command = connection.CreateCommand();
+            var command = connection.CreateCommand();
+            await using var commandLifetime = command.ConfigureAwait(false);
             command.Transaction = transaction;
             Prepare(command, spec);
             return Result<TResult>.Success(await body(command, state, ct).ConfigureAwait(false));

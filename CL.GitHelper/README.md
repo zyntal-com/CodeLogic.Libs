@@ -117,3 +117,5 @@ Full guide: **[CL.GitHelper documentation](https://zyntal-com.github.io/CodeLogi
 ## License
 
 MIT — see [LICENSE](https://github.com/zyntal-com/CodeLogic.Libs/blob/main/LICENSE).
+
+Audit completion notes and current limits are in [the guide](../docs/libs/githelper.md).

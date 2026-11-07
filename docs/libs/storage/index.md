@@ -222,3 +222,7 @@ error codes, adds `ConflictPolicy`, extends `StorageItem` and `StorageConnection
 session pools between registrations with identical settings. See the
 package [`MIGRATION.md`](https://github.com/zyntal-com/CodeLogic.Libs/blob/main/CL.Storage/MIGRATION.md)
 for every mapping.
+
+## Completing shutdown
+
+`Dispose()` starts observed asynchronous cleanup and returns without blocking on network I/O. Await `DisposeAsync()` or `OnStopAsync()` to finish pending transfers and release providers before deleting state or exiting the process.

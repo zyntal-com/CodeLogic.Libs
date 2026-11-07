@@ -33,6 +33,7 @@ public sealed class GitSecurityTests
     [InlineData("GET https://host/x?token=p%40ss failed", "p@ss", "GET https://host/x?token=*** failed")]
     [InlineData("token a+b/c=d", "a+b/c=d", "token ***")]
     [InlineData("token a%2Bb%2Fc%3Dd", "a+b/c=d", "token ***")]
+    [InlineData("token a%2bb%2fc%3dd", "a+b/c=d", "token ***")]
     public void Redact_masks_secrets_with_reserved_characters_and_their_percent_encoding(string input, string secret, string expected) =>
         Assert.Equal(expected, GitSecurity.Redact(input, secret));
 

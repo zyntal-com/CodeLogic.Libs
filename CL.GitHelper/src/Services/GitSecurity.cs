@@ -34,9 +34,9 @@ internal static partial class GitSecurity
             redacted = redacted.Replace(secret, Mask, StringComparison.Ordinal);
             var escaped = Uri.EscapeDataString(secret);
             if (!string.Equals(escaped, secret, StringComparison.Ordinal))
-                redacted = redacted.Replace(escaped, Mask, StringComparison.Ordinal);
+                redacted = redacted.Replace(escaped, Mask, StringComparison.OrdinalIgnoreCase);
         }
-        return UserInfoPattern().Replace(redacted, m => m.Groups["scheme"].Value + Mask + "@");
+        return CL.Internal.LogText.Sanitize(UserInfoPattern().Replace(redacted, m => m.Groups["scheme"].Value + Mask + "@"), 4096);
     }
 
     /// <summary>

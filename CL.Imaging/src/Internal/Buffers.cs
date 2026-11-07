@@ -32,8 +32,14 @@ internal sealed class PooledBuffer : IDisposable
     /// <summary>Takes a reference; the caller must <see cref="Dispose"/> once to release it.</summary>
     public void AddRef()
     {
-        if (_array is null) throw new ObjectDisposedException(nameof(PooledBuffer));
-        Interlocked.Increment(ref _references);
+        var count = Volatile.Read(ref _references);
+        while (count != 0)
+        {
+            var previous = Interlocked.CompareExchange(ref _references, checked(count + 1), count);
+            if (previous == count) return;
+            count = previous;
+        }
+        throw new ObjectDisposedException(nameof(PooledBuffer));
     }
 
     /// <summary>Releases one reference; the array is returned to the pool with the last one.</summary>

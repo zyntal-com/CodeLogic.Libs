@@ -142,3 +142,5 @@ Without the library, set `ImagingDefaults.Current = ImagingSettings.BuiltIn with
   MakerNote are removed); tags such as the EXIF pixel size are not rewritten after resizing. XMP and IPTC are not carried over.
 - An `ImageDocument` is not meant for concurrent mutation; reading the same document from several pipelines at once
   is fine because pipelines never write to their source.
+
+Audit completion notes and current limits are in [the guide](../docs/libs/imaging/metadata.md).

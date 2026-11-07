@@ -413,3 +413,5 @@ Dictionary<string, bool> perRepo = await git.GetManager().HealthCheckAsync();
 - [Getting Started](../getting-started.md) — load, configure, and use any `CL.*` library.
 - [API Reference](../api/index.md) — generated type/member documentation.
 - [Package on NuGet](https://www.nuget.org/packages/CodeLogic.GitHelper)
+
+Git diagnostic fields are credential-redacted and then passed through the shared bounded single-line formatter (4,096 characters), so remote text cannot forge additional log lines.

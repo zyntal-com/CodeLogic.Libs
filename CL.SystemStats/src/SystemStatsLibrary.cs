@@ -170,11 +170,17 @@ public sealed class SystemStatsLibrary : ILibrary, IAsyncDisposable
 
     // ── Disposal ──────────────────────────────────────────────────────────────
 
-    /// <summary>
-    /// Disposes the stats service and its provider. Safe to call more than once and after
-    /// <see cref="OnStopAsync"/> (which already disposed them): then it does nothing.
-    /// </summary>
-    public async ValueTask DisposeAsync()
+    private readonly Lock _disposeLock = new();
+    private Task? _disposeTask;
+
+    /// <summary>Disposes the service once; awaits cleanup already started by <see cref="Dispose"/>.</summary>
+    public ValueTask DisposeAsync()
+    {
+        lock (_disposeLock)
+            return new ValueTask(_disposeTask ??= DisposeServiceAsync());
+    }
+
+    private async Task DisposeServiceAsync()
     {
         var service = Interlocked.Exchange(ref _service, null);
         if (service is not null)
@@ -182,17 +188,12 @@ public sealed class SystemStatsLibrary : ILibrary, IAsyncDisposable
     }
 
     /// <summary>
-    /// Synchronous disposal for <see cref="IDisposable"/>. The providers release their resources
-    /// synchronously, so this does not block; prefer <see cref="DisposeAsync"/> or <see cref="OnStopAsync"/>.
+    /// Starts asynchronous disposal for <see cref="IDisposable"/> without blocking; prefer <see cref="DisposeAsync"/> or <see cref="OnStopAsync"/>.
     /// A no-op after either of them has run.
     /// </summary>
     public void Dispose()
     {
-        var service = Interlocked.Exchange(ref _service, null);
-        if (service is null) return;
-        var pending = service.DisposeAsync();
-        if (!pending.IsCompleted)
-            pending.AsTask().GetAwaiter().GetResult();   // only if a provider ever disposes asynchronously
+        CL.Internal.AsyncCleanup.Observe(DisposeAsync().AsTask(), _context?.Logger);
     }
 
     // ── Provider factory ──────────────────────────────────────────────────────

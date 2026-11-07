@@ -5,6 +5,11 @@ All notable changes to **CodeLogic.Mail** are documented here. Versions follow
 
 ## 5.0 (unreleased)
 
+### Audit completion (2026-11-07)
+
+- Fetch bounded MIME sections instead of whole messages, cap aggregate decoded message bytes/body bytes/attachment counts, and add GetAttachmentAsync for on-demand content. Return ContentTruncated and part identifiers on descriptors.
+
+
 ### Breaking
 
 - Targets **.NET 11** (`net11.0`) and requires **CodeLogic 5.0** (`[5.0.0, 6.0.0)`). On .NET 10, stay on

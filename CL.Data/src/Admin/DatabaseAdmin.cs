@@ -63,7 +63,8 @@ public abstract class ServerDatabaseAdmin : DatabaseAdmin
         var count = await ServerAsync(provider, config, ct, async (connection, token) =>
         {
             var sql = ExistsSql(database);
-            await using var command = connection.CreateCommand();
+            var command = connection.CreateCommand();
+            await using var commandLifetime = command.ConfigureAwait(false);
             command.CommandText = sql.Render(provider.Dialect);
             for (var i = 0; i < sql.Parameters.Count; i++)
                 command.Parameters.Add(sql.Parameters[i].Create(provider.Types, provider.Dialect.ParameterName(i)));
@@ -91,7 +92,8 @@ public abstract class ServerDatabaseAdmin : DatabaseAdmin
         {
             foreach (var statement in statements)
             {
-                await using var command = connection.CreateCommand();
+                var command = connection.CreateCommand();
+                await using var commandLifetime = command.ConfigureAwait(false);
                 command.CommandText = statement;
                 await command.ExecuteNonQueryAsync(token).ConfigureAwait(false);
             }
@@ -108,8 +110,10 @@ public abstract class ServerDatabaseAdmin : DatabaseAdmin
         if (cs.IsFailure) return cs.Error!;
         try
         {
-            await using var source = provider.CreateDataSource(config, node, WithDatabase(cs.Value!, ServerDatabase));
-            await using var connection = await source.OpenConnectionAsync(ct).ConfigureAwait(false);
+            var source = provider.CreateDataSource(config, node, WithDatabase(cs.Value!, ServerDatabase));
+            await using var sourceLifetime = source.ConfigureAwait(false);
+            var connection = await source.OpenConnectionAsync(ct).ConfigureAwait(false);
+            await using var connectionLifetime = connection.ConfigureAwait(false);
             return await work(connection, ct).ConfigureAwait(false);
         }
         catch (Exception ex)

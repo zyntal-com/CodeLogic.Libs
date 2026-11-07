@@ -331,12 +331,10 @@ public class TotpReplayAndNormalisationTests
     [Fact]
     public void In_memory_store_is_monotonic_per_user_and_forgets_after_retention()
     {
-        var store = new InMemoryTotpUsedStepStore(retention: TimeSpan.Zero, sweepInterval: TimeSpan.Zero);
-        Assert.True(store.TryUse("u", 10));
-        // Zero retention: the entry is swept on the next call, so the same step is accepted again.
-        Assert.True(store.TryUse("u", 10));
-
-        var keep = new InMemoryTotpUsedStepStore(retention: TimeSpan.FromHours(1));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new InMemoryTotpUsedStepStore(retention: TimeSpan.Zero));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new InMemoryTotpUsedStepStore(retention: TimeSpan.FromHours(1)));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new InMemoryTotpUsedStepStore(sweepInterval: TimeSpan.Zero));
+        var keep = new InMemoryTotpUsedStepStore();
         Assert.True(keep.TryUse("u", 10));
         Assert.False(keep.TryUse("u", 10));
         Assert.False(keep.TryUse("u", 9));

@@ -322,3 +322,5 @@ var status = await net.HealthCheckAsync();
 - [Getting Started](../getting-started.md) — load, configure, and use any `CL.*` library.
 - [API Reference](../api/index.md) — generated type/member documentation.
 - [Package on NuGet](https://www.nuget.org/packages/CodeLogic.NetUtils)
+
+Archive extraction checks the same cancellation/timeout token as downloading on every decompression read and output chunk. A cancelled extraction cannot install its partially written database.

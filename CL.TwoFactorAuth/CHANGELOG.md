@@ -5,6 +5,11 @@ All notable changes to **CodeLogic.TwoFactorAuth** are documented here. Versions
 
 ## 5.0 (unreleased)
 
+### Audit completion (2026-11-07)
+
+- Reject unsafe replay-store retention/intervals. Add TotpLoginGuard and bounded atomic ITotpAttemptStore / InMemoryTotpAttemptStore for application-controlled login lockout.
+
+
 ### Breaking
 
 - Targets **.NET 11** (`net11.0`) and requires **CodeLogic 5.0** (`[5.0.0, 6.0.0)`). On .NET 10, stay on

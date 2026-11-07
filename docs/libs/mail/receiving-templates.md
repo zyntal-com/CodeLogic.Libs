@@ -60,7 +60,7 @@ if (one.IsSuccess)
 }
 ```
 
-`GetMessageAsync` decodes each attachment with a memory bound: `Imap.MaxAttachmentBytes` (default 25 MiB). An attachment above the limit comes back with `TooLarge = true`, its full decoded `Size` and `Content = null`; the message and its other attachments are returned normally, and the decoder never buffers more than the limit, whatever a message declares. `FetchMessagesAsync` / `SearchAsync` with `includeBody` list attachments without decoding them (`Size = 0`, `Content = null`, `TooLarge = false`).
+`GetMessageAsync` fetches individual MIME sections, never the complete message. `Imap.MaxAttachmentBytes` limits each decoded attachment (25 MiB by default), `MaxBodyBytes` limits each text/HTML body (1 MiB), `MaxMessageBytes` limits their combined decoded bytes (32 MiB), and `MaxAttachments` limits returned descriptors (100). Wire reads are limited independently, even if BODYSTRUCTURE lies about the size. Oversized content is omitted with `TooLarge = true`; `ContentTruncated` on the message also reports omitted bodies/descriptors. `Size` is zero when decoding was skipped and otherwise the decoded size observed; `EncodedSize` is the server's untrusted encoded length. `FetchMessagesAsync` / `SearchAsync` fetch bodies only when requested and return attachment descriptors without fetching their content.
 
 ### Search
 
@@ -144,7 +144,9 @@ public sealed record ReceivedAttachment
     public string? ContentType { get; init; }
     public long Size { get; init; }         // decoded size (GetMessageAsync), also when TooLarge
     public byte[]? Content { get; init; }   // populated by GetMessageAsync; null when TooLarge
-    public bool TooLarge { get; init; }     // decoded size exceeds Imap.MaxAttachmentBytes
+    public bool TooLarge { get; init; }     // omitted due to a wire, attachment or aggregate budget
+    public string? PartSpecifier { get; init; }
+    public long EncodedSize { get; init; }
 }
 
 public sealed record MailFolder
@@ -349,6 +351,9 @@ Add the `Imap` section to `config.mail.json` to enable reading. Omit it entirely
 | `Imap.TimeoutSeconds` | `int` | `30` | IMAP connect/operation timeout in seconds. |
 | `Imap.EnableIdle` | `bool` | `false` | Allow RFC 2177 IDLE push monitoring; `StartIdleAsync` is refused while `false`. |
 | `Imap.IdleRefreshMinutes` | `int` | `25` | IDLE connection refresh interval (1–28; keep under 29). |
+| `Imap.MaxMessageBytes` | `int` | `33554432` (32 MiB) | Combined decoded body/attachment budget; 1 to 134217728. |
+| `Imap.MaxBodyBytes` | `int` | `1048576` (1 MiB) | Per-body decoded budget; 1 to 16777216. |
+| `Imap.MaxAttachments` | `int` | `100` | Maximum returned descriptors; 1 to 1000. |
 | `Imap.MaxAttachmentBytes` | `long` | `26214400` (25 MiB, `ImapConfig.DefaultMaxAttachmentBytes`) | Largest attachment `GetMessageAsync` loads into memory; a bigger one is returned with `TooLarge` and no content. Must be at least 1. |
 
 ## See also
@@ -357,3 +362,18 @@ Add the `Imap` section to `config.mail.json` to enable reading. Omit it entirely
 - [Getting Started](../../getting-started.md) — load, configure, and use any `CL.*` library.
 - [API Reference](../../api/index.md) — generated type/member documentation.
 - [Package on NuGet](https://www.nuget.org/packages/CodeLogic.Mail)
+
+## Fetching an attachment on demand
+
+Use the descriptor's `PartSpecifier` to request just one attachment after listing the message:
+
+```csharp
+var result = await imap.GetAttachmentAsync("INBOX", message.Uid, attachment.PartSpecifier!, cancellationToken);
+if (result.IsFailure) return;
+var downloaded = result.Value!;
+if (!downloaded.TooLarge && downloaded.Content is { } bytes)
+    await destination.WriteAsync(bytes, cancellationToken);
+```
+
+This method applies the smaller of the attachment and message budgets, plus a wire limit. It never fetches sibling attachments.
+The budgets bound retained decoded bytes, not exact process working set: MIME parsing, wire buffers and strings have overhead.

@@ -283,3 +283,7 @@ var status = await sys.HealthCheckAsync();
 - [Getting Started](../getting-started.md) — load, configure, and use any `CL.*` library.
 - [API Reference](../api/index.md) — generated type/member documentation.
 - [Package on NuGet](https://www.nuget.org/packages/CodeLogic.SystemStats)
+
+## Completing shutdown
+
+`Dispose()` starts cleanup without blocking the caller. Await `DisposeAsync()` or normal runtime stop to finish cleanup. Windows counter disposal waits for an in-progress sample before releasing its counters.

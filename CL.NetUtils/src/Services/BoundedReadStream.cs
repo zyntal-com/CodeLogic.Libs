@@ -9,7 +9,7 @@ internal sealed class DownloadTooLargeException(string message) : IOException(me
 /// whose length the server did not state, and on a decompressor's output, so neither a long body nor a small archive
 /// that inflates to gigabytes can fill the disk.
 /// </summary>
-internal sealed class BoundedReadStream(Stream inner, long maxBytes, string what) : Stream
+internal sealed class BoundedReadStream(Stream inner, long maxBytes, string what, CancellationToken cancellationToken = default) : Stream
 {
     private long _read;
 
@@ -21,7 +21,11 @@ internal sealed class BoundedReadStream(Stream inner, long maxBytes, string what
 
     public override int Read(byte[] buffer, int offset, int count) => Read(buffer.AsSpan(offset, count));
 
-    public override int Read(Span<byte> buffer) => Count(inner.Read(buffer));
+    public override int Read(Span<byte> buffer)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Count(inner.Read(buffer));
+    }
 
     public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) =>
         Count(await inner.ReadAsync(buffer, cancellationToken).ConfigureAwait(false));

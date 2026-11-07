@@ -5,6 +5,11 @@ All notable changes to **CodeLogic.GitHelper** are documented here. Versions fol
 
 ## 5.0 (unreleased)
 
+### Audit completion (2026-11-07)
+
+- Apply the shared bounded single-line formatter after credential redaction; split repository operations and manager responsibilities into partial files.
+
+
 ### Breaking
 
 - Targets **.NET 11** (`net11.0`) and requires **CodeLogic 5.0** (`[5.0.0, 6.0.0)`). On .NET 10, stay on

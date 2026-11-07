@@ -148,18 +148,18 @@ public sealed class SteamOpenIdTests
         Assert.True(first.IsSuccess, first.Error?.Message);
         Assert.True(second.IsFailure);
         Assert.Equal("social.steam.openid_replayed", second.Error!.Code);
-        Assert.Single(steam.Bodies);   // Steam was not asked again
+        Assert.Equal(2, steam.Bodies.Count);   // Only authenticated assertions reach the atomic replay check.
     }
 
     [Fact]
-    public async Task Verify_refuses_a_replay_even_when_steam_did_not_confirm_the_first_time()
+    public async Task Verify_does_not_spend_a_nonce_when_steam_rejects_the_assertion()
     {
         var answers = new Queue<string>(["is_valid:false", "is_valid:true"]);
         using var service = Service(new FakeSteam(_ => new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(answers.Dequeue()) }));
         var assertion = Assertion();
 
         Assert.Equal("social.steam.openid_rejected", (await service.VerifyAsync(assertion, ReturnTo)).Error!.Code);
-        Assert.Equal("social.steam.openid_replayed", (await service.VerifyAsync(assertion, ReturnTo)).Error!.Code);
+        Assert.True((await service.VerifyAsync(assertion, ReturnTo)).IsSuccess);
     }
 
     [Fact]
@@ -185,6 +185,26 @@ public sealed class SteamOpenIdTests
         Assert.True(await store.TryUseAsync("old", DateTime.UtcNow.AddMinutes(5)));   // expired: as good as unseen
         Assert.True(await store.TryUseAsync("n2", DateTime.UtcNow.AddMinutes(5)));
         Assert.Equal(3, store.Count);
+    }
+
+    [Fact]
+    public async Task Failed_assertions_never_consume_nonce_capacity()
+    {
+        var store = new InMemoryOpenIdNonceStore(maxEntries: 2);
+        using var service = Service(Answer("is_valid:false"), nonces: store);
+        for (var i = 0; i < 100; i++) Assert.True((await service.VerifyAsync(Assertion(), ReturnTo)).IsFailure);
+        Assert.Equal(0, store.Count);
+    }
+
+    [Fact]
+    public async Task Replay_capacity_is_atomic_and_does_not_evict_unexpired_entries()
+    {
+        var store = new InMemoryOpenIdNonceStore(maxEntries: 1);
+        var results = await Task.WhenAll(Enumerable.Range(0, 32).Select(i => Task.Run(async () =>
+            await store.TryUseAsync("n" + i, DateTime.UtcNow.AddMinutes(5)))));
+        Assert.Single(results, r => r);
+        Assert.Equal(1, store.Count);
+        Assert.False(await store.TryUseAsync("extra", DateTime.UtcNow.AddMinutes(5)));
     }
 
     // ── Hostile input ─────────────────────────────────────────────────────────

@@ -57,7 +57,7 @@ public sealed partial class ImapService
     /// <summary>
     /// Fetches a single message by UID with full body and attachment content. An attachment whose decoded size
     /// exceeds <see cref="ImapConfig.MaxAttachmentBytes"/> comes back with <see cref="ReceivedAttachment.TooLarge"/>
-    /// set, its <see cref="ReceivedAttachment.Size"/> and no <see cref="ReceivedAttachment.Content"/>.
+    /// set and no <see cref="ReceivedAttachment.Content"/>. Wire and aggregate message budgets may omit a section before decoding, in which case its decoded size is unknown (zero).
     /// </summary>
     public async Task<Result<ReceivedMessage>> GetMessageAsync(
         string folder, uint uid, CancellationToken cancellationToken = default)
@@ -70,45 +70,12 @@ public sealed partial class ImapService
             if (imapFolder is null)
                 return MailErrors.NotFound(MailErrorCodes.FolderNotFound, $"Folder '{folder}' not found");
 
-            var uniqueId = new UniqueId(uid);
-            var message = await imapFolder.GetMessageAsync(uniqueId, cancellationToken).ConfigureAwait(false);
-            if (message is null)
-                return MailErrors.NotFound(MailErrorCodes.MessageNotFound, $"Message UID {uid} not found");
-
-            var summaries = await imapFolder.FetchAsync(
-                new[] { uniqueId }, MessageSummaryItems.UniqueId | MessageSummaryItems.Flags,
+            var summaries = await imapFolder.FetchAsync([new UniqueId(uid)],
+                MessageSummaryItems.UniqueId | MessageSummaryItems.Envelope | MessageSummaryItems.Flags | MessageSummaryItems.BodyStructure,
                 cancellationToken).ConfigureAwait(false);
-
-            var flags = ConvertFlags(summaries.FirstOrDefault()?.Flags ?? MkFlags.None);
-
-            var attachments = new List<ReceivedAttachment>();
-            foreach (var attachment in message.Attachments)
-            {
-                if (attachment is MimePart part)
-                {
-                    var received = await ReadAttachmentAsync(part, _config.MaxAttachmentBytes, cancellationToken).ConfigureAwait(false);
-                    if (received.TooLarge)
-                        _logger?.Warning($"Attachment '{received.FileName}' on UID {uid} in '{folder}' is {received.Size} bytes, above Imap.MaxAttachmentBytes ({_config.MaxAttachmentBytes}); content omitted");
-                    attachments.Add(received);
-                }
-            }
-
-            return new ReceivedMessage
-            {
-                MessageId = message.MessageId,
-                Uid = uid,
-                From = message.From.Mailboxes.FirstOrDefault()?.Address,
-                FromName = message.From.Mailboxes.FirstOrDefault()?.Name,
-                To = message.To.Mailboxes.Select(m => m.Address).ToList(),
-                Cc = message.Cc.Mailboxes.Select(m => m.Address).ToList(),
-                Subject = message.Subject,
-                TextBody = message.TextBody,
-                HtmlBody = message.HtmlBody,
-                Date = message.Date,
-                Flags = flags,
-                Folder = folder,
-                Attachments = attachments.AsReadOnly()
-            };
+            var summary = summaries.FirstOrDefault();
+            if (summary is null) return MailErrors.NotFound(MailErrorCodes.MessageNotFound, $"Message UID {uid} not found");
+            return await ReadSummaryAsync(imapFolder, summary, true, true, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -283,50 +250,14 @@ public sealed partial class ImapService
         }
     }
 
-    private async Task<ReceivedMessage> ConvertSummaryAsync(
-        IMailFolder folder, IMessageSummary summary, bool includeBody, CancellationToken ct)
-    {
-        string? textBody = null; string? htmlBody = null;
-        var attachments = new List<ReceivedAttachment>();
+    private Task<ReceivedMessage> ConvertSummaryAsync(IMailFolder folder, IMessageSummary summary, bool includeBody, CancellationToken ct) =>
+        ReadSummaryAsync(folder, summary, includeBody, false, ct);
 
-        if (includeBody && summary.UniqueId.IsValid)
-        {
-            try
-            {
-                var msg = await folder.GetMessageAsync(summary.UniqueId, ct).ConfigureAwait(false);
-                textBody = msg.TextBody;
-                htmlBody = msg.HtmlBody;
-                foreach (var att in msg.Attachments)
-                    if (att is MimePart part)
-                        attachments.Add(new ReceivedAttachment { FileName = part.FileName, ContentType = part.ContentType.MimeType });
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                _logger?.Warning($"Could not fetch body for UID {summary.UniqueId}: {ex.Message}");
-            }
-        }
+    private Task<ReceivedMessage> ReadSummaryAsync(IMailFolder folder, IMessageSummary summary, bool includeBody, bool attachments, CancellationToken ct) =>
+        ImapMessageReader.ReadAsync(summary, folder.FullName, _config, includeBody, attachments,
+            (part, count, token) => folder.GetStreamAsync(summary.UniqueId, part.PartSpecifier, 0, count, token, new ImapTransferLimit(count)), ct);
 
-        var env = summary.Envelope;
-        if (env is null) throw new InvalidOperationException($"Message summary for UID {summary.UniqueId} has no envelope");
-        return new ReceivedMessage
-        {
-            MessageId = env.MessageId,
-            Uid = summary.UniqueId.Id,
-            From = env.From?.Mailboxes.FirstOrDefault()?.Address,
-            FromName = env.From?.Mailboxes.FirstOrDefault()?.Name,
-            To = env.To?.Mailboxes.Select(m => m.Address).ToList() ?? [],
-            Cc = env.Cc?.Mailboxes.Select(m => m.Address).ToList() ?? [],
-            Subject = env.Subject,
-            TextBody = textBody,
-            HtmlBody = htmlBody,
-            Date = env.Date ?? DateTimeOffset.MinValue,
-            Flags = ConvertFlags(summary.Flags ?? MkFlags.None),
-            Folder = folder.FullName,
-            Attachments = attachments.AsReadOnly()
-        };
-    }
-
-    private static ModelMsgFlags ConvertFlags(MkFlags mk)
+    internal static ModelMsgFlags ConvertFlags(MkFlags mk)
     {
         var f = ModelMsgFlags.None;
         if (mk.HasFlag(MkFlags.Seen))     f |= ModelMsgFlags.Seen;

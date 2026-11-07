@@ -6,8 +6,6 @@ namespace CL.NetUtils.Services;
 /// <summary>Helpers for caller-supplied text that reaches logs or DNS names.</summary>
 internal static class InputText
 {
-    private const int MaxLoggedLength = 64;
-
     /// <summary>The default (English) strings, used until the library supplies localized ones.</summary>
     internal static readonly NetUtilsStrings DefaultStrings = new();
 
@@ -15,18 +13,7 @@ internal static class InputText
     /// Makes caller input safe to log: control characters (CR, LF, ...) become <c>?</c>, so a crafted "IP address" cannot
     /// forge log lines, and long input is cut to 64 characters.
     /// </summary>
-    internal static string ForLog(string? value)
-    {
-        if (value is null) return "(null)";
-        var cut = value.Length > MaxLoggedLength;
-        var span = cut ? value.AsSpan(0, MaxLoggedLength) : value.AsSpan();
-        var chars = new char[span.Length];
-        for (var i = 0; i < span.Length; i++)
-            chars[i] = char.IsControl(span[i]) || char.GetUnicodeCategory(span[i]) is UnicodeCategory.LineSeparator or UnicodeCategory.ParagraphSeparator
-                ? '?'
-                : span[i];
-        return cut ? new string(chars) + "..." : new string(chars);
-    }
+    internal static string ForLog(string? value) => CL.Internal.LogText.Sanitize(value);
 
     /// <summary>Formats a localized template with the current culture.</summary>
     internal static string Format(string template, params object?[] args) =>

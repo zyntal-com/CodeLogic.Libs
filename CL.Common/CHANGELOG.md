@@ -5,6 +5,11 @@ All notable changes to **CodeLogic.Common** are documented here. Versions follow
 
 ## 5.0 (unreleased)
 
+### Audit completion (2026-11-07)
+
+- Share log formatting/async-cleanup source helpers across libraries and split oversized source files by operation without new package dependencies.
+
+
 ### Security
 
 - **`HttpHeaderHelper.GetEffectiveClientIp` no longer trusts spoofable headers.** It returned the first

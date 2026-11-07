@@ -86,8 +86,11 @@ public sealed class DataBackup
         }
 
         var manifest = new BackupManifest(FormatVersion, _db.Provider.Name, _db.Options.Time.GetUtcNow(), entries);
-        await using (var stream = File.Create(Path.Combine(directory, ManifestFile)))
+        var stream = File.Create(Path.Combine(directory, ManifestFile));
+        await using (stream.ConfigureAwait(false))
+        {
             await JsonSerializer.SerializeAsync(stream, manifest, BackupJsonContext.Default.BackupManifest, ct).ConfigureAwait(false);
+        }
         return manifest;
     }
 
@@ -103,8 +106,11 @@ public sealed class DataBackup
         var manifestPath = Path.Combine(directory, ManifestFile);
         if (!File.Exists(manifestPath)) return DataErrors.NotFound($"No backup manifest in '{directory}'.");
         BackupManifest? manifest;
-        await using (var stream = File.OpenRead(manifestPath))
+        var stream = File.OpenRead(manifestPath);
+        await using (stream.ConfigureAwait(false))
+        {
             manifest = await JsonSerializer.DeserializeAsync(stream, BackupJsonContext.Default.BackupManifest, ct).ConfigureAwait(false);
+        }
         if (manifest is null || manifest.FormatVersion != FormatVersion)
             return DataErrors.Validation($"'{manifestPath}' is not a CL.Data backup (format {FormatVersion}).");
         if (!string.Equals(manifest.Provider, _db.Provider.Name, StringComparison.OrdinalIgnoreCase))
@@ -152,9 +158,12 @@ public sealed class DataBackup
         var spec = new CommandSpec($"SELECT {columns} FROM {dialect.QuoteTable(table.Name, table.Schema)}{order}", [], TimeSpan.FromHours(1));
         return _db.Executor.ExecuteAsync(_db.Primary, spec, path, static async (cmd, file, token) =>
         {
-            await using var reader = await cmd.ExecuteReaderAsync(CommandBehavior.SequentialAccess, token).ConfigureAwait(false);
-            await using var stream = File.Create(file);
-            await using var json = new Utf8JsonWriter(stream, new JsonWriterOptions { SkipValidation = true });
+            var reader = await cmd.ExecuteReaderAsync(CommandBehavior.SequentialAccess, token).ConfigureAwait(false);
+            await using var readerLifetime = reader.ConfigureAwait(false);
+            var stream = File.Create(file);
+            await using var streamLifetime = stream.ConfigureAwait(false);
+            var json = new Utf8JsonWriter(stream, new JsonWriterOptions { SkipValidation = true });
+            await using var jsonLifetime = json.ConfigureAwait(false);
             var newline = "\n"u8.ToArray();
 
             json.WriteStartObject();
@@ -276,7 +285,8 @@ public sealed class DataBackup
 
         var begun = await _db.BeginTransactionAsync(null, ct).ConfigureAwait(false);
         if (begun.IsFailure) return begun.Error!;
-        await using var tx = begun.Value!;
+        var tx = begun.Value!;
+        await using var txLifetime = tx.ConfigureAwait(false);
         var hasIdentity = entry.Definition.Columns.Any(c => c.Identity);
         if (hasIdentity)
             foreach (var statement in ddl.IdentityInsertSetup(entry.Definition))

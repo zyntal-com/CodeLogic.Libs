@@ -2,6 +2,11 @@
 
 ## 5.0 (unreleased)
 
+### Audit completion (2026-11-07)
+
+- Prevent pooled-buffer reference resurrection during concurrent final release and acquisition; cover it with a race regression.
+
+
 ### Breaking
 
 - **New package, moved from CodeLogic.Common.** Imaging lived in CL.Common as `CL.Common.Imaging.CLU_Imaging`

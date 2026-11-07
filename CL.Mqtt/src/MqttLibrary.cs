@@ -108,7 +108,7 @@ public sealed class MqttLibrary : ILibrary, IConfigReloadable, IAsyncDisposable
     {
         _context?.Logger.Info($"Stopping {Manifest.Name}");
         _started = false;
-        await TearDownAsync().ConfigureAwait(false);
+        await DisposeAsync().ConfigureAwait(false);
         _context?.Logger.Info($"{Manifest.Name} stopped");
     }
 
@@ -232,21 +232,18 @@ public sealed class MqttLibrary : ILibrary, IConfigReloadable, IAsyncDisposable
     // ── IDisposable ───────────────────────────────────────────────────────────
 
     /// <summary>Disconnects every client and stops the broker. <see cref="OnStopAsync"/> already did this in a normal shutdown.</summary>
-    public ValueTask DisposeAsync() => new(TearDownAsync());
+    public ValueTask DisposeAsync()
+    {
+        lock (_lock)
+            return new ValueTask(_disposeTask ??= TearDownAsync());
+    }
 
-    /// <summary>
-    /// Synchronous dispose for hosts that cannot await. Prefer <see cref="DisposeAsync"/>; after <see cref="OnStopAsync"/>
-    /// there is nothing left to do and this returns at once.
-    /// </summary>
+    private Task? _disposeTask;
+
+    /// <summary>Starts cleanup without blocking; await <see cref="DisposeAsync"/> or <see cref="OnStopAsync"/> to finish it.</summary>
     public void Dispose()
     {
-        bool idle;
-        lock (_lock)
-            idle = _clients.Count == 0 && _broker is null;
-        if (idle)
-            return;
-        // Off the caller's context, so a synchronization context cannot deadlock the awaits inside.
-        Task.Run(TearDownAsync).GetAwaiter().GetResult();
+        CL.Internal.AsyncCleanup.Observe(DisposeAsync().AsTask(), _context?.Logger);
     }
 
     // ── Internals ─────────────────────────────────────────────────────────────

@@ -56,6 +56,7 @@ public sealed partial class SteamOpenIdService : IDisposable
     private readonly TimeSpan? _maxNonceAge;
     private readonly Uri? _configuredRealm;
     private readonly IOpenIdNonceStore _nonces;
+    private readonly SemaphoreSlim _verificationSlots = new(32, 32);
 
     /// <summary>
     /// Initializes a new instance of <see cref="SteamOpenIdService"/>.
@@ -163,9 +164,9 @@ public sealed partial class SteamOpenIdService : IDisposable
     /// a well-formed SteamID64, the required fields signed, no repeated <c>openid.*</c> parameters, a well-formed
     /// <c>response_nonce</c> no older than <c>OpenIdNonceMaxAgeSeconds</c> (<c>social.steam.openid_expired</c>)
     /// and not dated more than a minute ahead), then the nonce is recorded in the <see cref="IOpenIdNonceStore"/>
-    /// (a nonce seen before is <c>social.steam.openid_replayed</c>), and finally Steam must answer
-    /// <c>is_valid:true</c> to <c>check_authentication</c>. The nonce is recorded before Steam is asked, so an
-    /// assertion whose confirmation failed (Steam unreachable, timed out) cannot be presented again: the user signs in again.
+    /// (a nonce seen before is <c>social.steam.openid_replayed</c>), after Steam answers
+    /// <c>is_valid:true</c> to <c>check_authentication</c>. Failed confirmations consume no replay entries. At most 32 verifications run concurrently;
+    /// excess requests fail closed with <c>social.steam.openid_busy</c>.
     /// </para>
     /// </summary>
     /// <param name="parameters">The callback's query parameters (decoded). Non-<c>openid.*</c> parameters are ignored.</param>
@@ -219,17 +220,10 @@ public sealed partial class SteamOpenIdService : IDisposable
 
         var steamId = match.Groups[1].Value;
 
-        // Record the nonce before asking Steam, so two concurrent verifications of one assertion cannot both pass.
-        var forgetAt = _maxNonceAge is { } retain ? issuedAt + retain + MaxFutureSkew : verifiedAt + NonceRetentionWithoutAgeCheck;
-        try
-        {
-            if (!await _nonces.TryUseAsync(nonce, forgetAt, cancellationToken).ConfigureAwait(false))
-                return Refuse("social.steam.openid_replayed", "The assertion has already been used", verifiedAt, steamId);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            return Cancelled(verifiedAt);
-        }
+        // Bound remote verification work, without reserving attacker-supplied nonces before authentication.
+        if (cancellationToken.IsCancellationRequested) return Cancelled(verifiedAt);
+        if (!_verificationSlots.Wait(0))
+            return Result<SteamOpenIdResult>.Failure(Error.Unavailable("social.steam.openid_busy", "Steam sign-in is busy; try again later."));
 
         // Ask Steam whether it really issued this assertion.
         var verify = fields.Select(f => new KeyValuePair<string, string>(f.Key, f.Key == "openid.mode" ? "check_authentication" : f.Value)).ToList();
@@ -263,6 +257,24 @@ public sealed partial class SteamOpenIdService : IDisposable
             _logger?.Warning(errMsg);
             _events?.Publish(new SteamOpenIdVerifiedEvent(string.Empty, false, verifiedAt, errMsg));
             return Result<SteamOpenIdResult>.Failure(Error.Unavailable("social.steam.openid_unavailable", errMsg));
+        }
+
+        finally
+        {
+            _verificationSlots.Release();
+        }
+
+        // Only authenticated assertions consume replay-store capacity. The atomic insert lets just one
+        // of several concurrent successful verifications sign in; a full store refuses without evicting valid nonces.
+        var forgetAt = _maxNonceAge is { } retain ? issuedAt + retain + MaxFutureSkew : verifiedAt + NonceRetentionWithoutAgeCheck;
+        try
+        {
+            if (!await _nonces.TryUseAsync(nonce, forgetAt, cancellationToken).ConfigureAwait(false))
+                return Refuse("social.steam.openid_replayed", "The assertion was already used or replay protection is at capacity", verifiedAt, steamId);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return Cancelled(verifiedAt);
         }
 
         _logger?.Info($"Steam OpenID sign-in verified for {steamId}");

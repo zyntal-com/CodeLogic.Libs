@@ -48,8 +48,11 @@ public readonly struct PostgresFeatures(Database db)
         try
         {
             connection = (NpgsqlConnection)await db.Primary.DataSource.OpenConnectionAsync(ct).ConfigureAwait(false);
-            await using (var command = new NpgsqlCommand($"LISTEN {db.Provider.Dialect.QuoteIdentifier(channel)}", connection))
+            var command = new NpgsqlCommand($"LISTEN {db.Provider.Dialect.QuoteIdentifier(channel)}", connection);
+            await using (command.ConfigureAwait(false))
+            {
                 await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+            }
             return new Listener(connection, handler);
         }
         catch (Exception ex)
