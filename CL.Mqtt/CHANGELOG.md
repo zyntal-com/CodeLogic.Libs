@@ -7,6 +7,8 @@ All notable changes to **CodeLogic.Mqtt** are documented here. Versions follow
 
 ### Audit completion (2026-11-07)
 
+- Capture the sweeper's cancellation token before scheduling so an immediate stop cannot clear its source first. Broker listeners and cancellation sources are released even if a sweeper fails during shutdown; deferred-start and faulted-sweep regressions cover both paths.
+
 - Make session ownership and quotas atomic, protect pending/replaced sessions during sweeping, warn for every network-visible plain listener, stop retrying refused credentials, and make synchronous Dispose nonblocking. Add concurrency, writer-interleaving and disposal regressions.
 
 

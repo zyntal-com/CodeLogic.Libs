@@ -75,7 +75,7 @@ public sealed partial class MqttBrokerService
         {
             // Expected.
         }
-        cancel.Dispose();
+        finally { cancel.Dispose(); }
     }
 
     private async Task DisposeRetainedAsync()

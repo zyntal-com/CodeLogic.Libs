@@ -108,7 +108,8 @@ public sealed partial class MqttBrokerService
             _server = server;
             _certificate = certificate;
             _sweepCancel = new CancellationTokenSource();
-            _sweeper = Task.Run(() => SweepLoopAsync(_sweepCancel.Token), CancellationToken.None);
+            var sweepToken = _sweepCancel.Token;
+            _sweeper = SweepScheduler(() => SweepLoopAsync(sweepToken));
             _logger.Info($"MQTT broker listening on {Endpoint} (anonymous {(Config.AllowAnonymous ? "allowed" : "refused")}, {Config.Users.Count} user(s))");
             if (HasNetworkPlainListener(Config))
                 _logger.Warning($"MQTT broker: {Endpoint} is reachable from the network without TLS; passwords and payloads travel in clear. Configure broker.tls.");
@@ -131,9 +132,9 @@ public sealed partial class MqttBrokerService
             _server = null;
             if (server is null)
                 return;
-            await StopSweeperAsync().ConfigureAwait(false);
             try
             {
+                await StopSweeperAsync().ConfigureAwait(false);
                 await server.StopAsync(new MqttServerStopOptionsBuilder().Build()).ConfigureAwait(false);
             }
             finally

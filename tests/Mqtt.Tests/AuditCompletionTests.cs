@@ -9,6 +9,42 @@ namespace Mqtt.Tests;
 public sealed class AuditCompletionTests
 {
     [Fact]
+    public async Task A_queued_sweeper_can_start_after_stop_has_cleared_its_source()
+    {
+        Func<Task>? queued = null;
+        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var broker = new MqttBrokerService(new MqttBrokerConfig { Port = TestBroker.FreePort() }, NullLogger.Instance)
+        {
+            SweepScheduler = work => { queued = work; return completion.Task; }
+        };
+        (await broker.StartAsync()).ThrowIfFailure();
+        var stopping = broker.StopAsync();
+        try
+        {
+            Assert.NotNull(queued);
+            Assert.False(stopping.IsCompleted);
+            try { await queued(); completion.TrySetResult(); }
+            catch (Exception ex) { completion.TrySetException(ex); }
+            await stopping.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        finally { completion.TrySetResult(); await stopping; }
+    }
+
+    [Fact]
+    public async Task A_faulted_sweeper_does_not_leak_the_broker_listener()
+    {
+        var port = TestBroker.FreePort();
+        await using var broker = new MqttBrokerService(new MqttBrokerConfig { Port = port }, NullLogger.Instance)
+        {
+            SweepScheduler = _ => Task.FromException(new InvalidOperationException("sweep failed"))
+        };
+        (await broker.StartAsync()).ThrowIfFailure();
+        await Assert.ThrowsAsync<InvalidOperationException>(broker.StopAsync);
+        using var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, port);
+        listener.Start();
+    }
+
+    [Fact]
     public async Task Concurrent_network_connections_share_one_atomic_quota()
     {
         await using var broker = await TestBroker.StartAsync(c => c.MaxSessionsPerUser = 1);

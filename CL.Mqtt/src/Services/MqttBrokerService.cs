@@ -67,6 +67,9 @@ public sealed partial class MqttBrokerService : IAsyncDisposable
     private Task? _sweeper;
     private IMqttBrokerAuthorizer _authorizer;
 
+    /// <summary>Queues the sweeper; tests can defer execution until after shutdown starts.</summary>
+    internal Func<Func<Task>, Task> SweepScheduler { get; init; } = static work => Task.Run(work, CancellationToken.None);
+
     /// <summary>Creates the broker. It does not listen until <see cref="StartAsync"/>.</summary>
     /// <param name="config">Broker settings; validate them first (<see cref="MqttBrokerConfig.Validate"/>).</param>
     /// <param name="logger">Logger for start/stop, refused clients and tap failures.</param>

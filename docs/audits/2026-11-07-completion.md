@@ -29,7 +29,7 @@ before integration or publication; subsequent PR and release actions are recorde
 
 ## Validation
 
-**3,301 tests passed, 16 skipped, zero failures.** MySQL 8.4, PostgreSQL 18 and SQL Server 2019 ran in
+**3,303 tests passed, 16 skipped, zero failures.** MySQL 8.4, PostgreSQL 18 and SQL Server 2019 ran in
 isolated local test containers; SQLite ran directly. The live storage suite exercised FTP, FTPS, SFTP, SSH jumping,
 WebDAV (Basic/Digest/TLS/mTLS), S3/MinIO, Azure/Azurite, GCS, Swift and proxies.
 
@@ -46,16 +46,16 @@ WebDAV (Basic/Digest/TLS/mTLS), S3/MinIO, Azure/Azurite, GCS, Swift and proxies.
 | GitHelper.Tests | 115 | 1 |
 | Imaging.Tests | 127 | 0 |
 | Mail.Tests | 120 | 1 |
-| Mqtt.Tests | 102 | 0 |
+| Mqtt.Tests | 104 | 0 |
 | NetUtils.Tests | 151 | 2 |
 | SocialConnect.Tests | 173 | 1 |
 | Storage.Tests | 986 | 0 |
 | SystemStats.Tests | 37 | 0 |
 | TwoFactorAuth.Tests | 61 | 0 |
 | Storage.Integration.Tests | 165 | 0 |
-| **Total** | **3301** | **16** |
+| **Total** | **3303** | **16** |
 
-MQTT's total combines its full 100-test run and two additional targeted lifecycle/sweep regressions, both passing.
+The MQTT suite was rerun with all 104 tests after CI exposed a queued-sweeper shutdown race. A Linux path-case conversion issue was also corrected; the complete Storage suite then passed on Linux (983 passed, three Windows-only skips) as well as Windows (986 passed).
 Skipped tests retain their existing environmental/provider/replica conditions; replica-pair and reflection-only
 release variants were not enabled. No release signing or publishing was attempted.
 
