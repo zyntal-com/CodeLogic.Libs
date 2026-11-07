@@ -43,6 +43,9 @@ public class NetUtilsStrings : LocalizationModelBase
     [LocalizedString(Description = "Error message of a DNSBL check while DNSBL checking is disabled")]
     public string DnsblDisabled { get; set; } = "DNSBL checking is disabled";
 
+    [LocalizedString(Description = "Error message of a DNSBL check that the caller cancelled before it finished")]
+    public string DnsblCancelled { get; set; } = "The DNSBL check was cancelled";
+
     [LocalizedString(Description = "Error message of a GeoIP lookup before a database is open")]
     public string GeoIpNotInitialized { get; set; } = "GeoIP service not initialized";
 

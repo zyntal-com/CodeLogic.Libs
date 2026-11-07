@@ -354,8 +354,9 @@ public sealed class PostgreSqlBulkCopier : CL.Data.Bulk.BulkCopier
         for (var c = 0; c < typeNames.Length; c++) typeNames[c] = types.GetValueOrDefault(request.Columns[c]);
 
         var columns = string.Join(", ", request.Columns.Select(dialect.QuoteIdentifier));
-        await using var writer = await connection.BeginBinaryImportAsync($"COPY {request.QuotedTable} ({columns}) FROM STDIN (FORMAT BINARY)", ct)
+        var writer = await connection.BeginBinaryImportAsync($"COPY {request.QuotedTable} ({columns}) FROM STDIN (FORMAT BINARY)", ct)
             .ConfigureAwait(false);
+        await using var writerLifetime = writer.ConfigureAwait(false);
         for (var row = 0; row < request.Rows.Count; row++)
         {
             await writer.StartRowAsync(ct).ConfigureAwait(false);
@@ -372,12 +373,14 @@ public sealed class PostgreSqlBulkCopier : CL.Data.Bulk.BulkCopier
 
     private static async Task<Dictionary<string, string>> ColumnTypesAsync(NpgsqlConnection connection, string quotedTable, CancellationToken ct)
     {
-        await using var command = new NpgsqlCommand(
+        var command = new NpgsqlCommand(
             "SELECT attname, format_type(atttypid, NULL) FROM pg_attribute WHERE attrelid = to_regclass($1) AND attnum > 0 AND NOT attisdropped",
             connection);
+        await using var commandLifetime = command.ConfigureAwait(false);
         command.Parameters.Add(new NpgsqlParameter<string> { TypedValue = quotedTable });
         Dictionary<string, string> types = new(StringComparer.Ordinal);
-        await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
+        var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
+        await using var readerLifetime = reader.ConfigureAwait(false);
         while (await reader.ReadAsync(ct).ConfigureAwait(false)) types[reader.GetString(0)] = reader.GetString(1);
         return types;
     }

@@ -16,9 +16,11 @@ internal static partial class GitSecurity
     private static partial Regex UserInfoPattern();
 
     /// <summary>
-    /// Removes credentials from <paramref name="text"/>: the user-info part of every URL
-    /// (<c>https://user:token@host/…</c> becomes <c>https://***@host/…</c>) and every literal
-    /// occurrence of <paramref name="secret"/>.
+    /// Removes credentials from <paramref name="text"/>: every literal and percent-encoded
+    /// (<see cref="Uri.EscapeDataString(string)"/>) occurrence of <paramref name="secret"/>, then the
+    /// user-info part of every URL (<c>https://user:token@host/…</c> becomes <c>https://***@host/…</c>).
+    /// The secret goes first so that one containing <c>@</c> cannot split the user-info match and
+    /// leave part of itself behind.
     /// </summary>
     /// <param name="text">A URL, log line or exception message. Null becomes an empty string.</param>
     /// <param name="secret">A configured password or token to mask wherever it appears. Optional.</param>
@@ -26,10 +28,15 @@ internal static partial class GitSecurity
     {
         if (string.IsNullOrEmpty(text)) return "";
 
-        var redacted = UserInfoPattern().Replace(text, m => m.Groups["scheme"].Value + Mask + "@");
+        var redacted = text;
         if (!string.IsNullOrEmpty(secret))
+        {
             redacted = redacted.Replace(secret, Mask, StringComparison.Ordinal);
-        return redacted;
+            var escaped = Uri.EscapeDataString(secret);
+            if (!string.Equals(escaped, secret, StringComparison.Ordinal))
+                redacted = redacted.Replace(escaped, Mask, StringComparison.OrdinalIgnoreCase);
+        }
+        return CL.Internal.LogText.Sanitize(UserInfoPattern().Replace(redacted, m => m.Groups["scheme"].Value + Mask + "@"), 4096);
     }
 
     /// <summary>

@@ -45,8 +45,8 @@ public static class HttpClientHelper
         try
         {
             using var request = BuildRequest(HttpMethod.Get, url, null, headers);
-            using var response = await client.SendAsync(request);
-            var body = await response.Content.ReadAsStringAsync();
+            using var response = await client.SendAsync(request).ConfigureAwait(false);
+            var body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
                 return HttpFailure(response, body);
             return body;
@@ -60,7 +60,7 @@ public static class HttpClientHelper
     public static async Task<Result<T>> GetJsonAsync<T>(HttpClient client, string url,
         Dictionary<string, string>? headers = null)
     {
-        var result = await GetStringAsync(client, url, headers);
+        var result = await GetStringAsync(client, url, headers).ConfigureAwait(false);
         if (!result.IsSuccess) return result.Error!;
         try
         {
@@ -83,8 +83,8 @@ public static class HttpClientHelper
             var json    = JsonSerializer.Serialize(body, _json);
             var content = new StringContent(json, Encoding.UTF8, "application/json");
             using var request = BuildRequest(HttpMethod.Post, url, content, headers);
-            using var response = await client.SendAsync(request);
-            var responseBody = await response.Content.ReadAsStringAsync();
+            using var response = await client.SendAsync(request).ConfigureAwait(false);
+            var responseBody = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
                 return HttpFailure(response, responseBody);
             return responseBody;
@@ -98,7 +98,7 @@ public static class HttpClientHelper
     public static async Task<Result<TResponse>> PostJsonAsync<TBody, TResponse>(HttpClient client,
         string url, TBody body, Dictionary<string, string>? headers = null)
     {
-        var result = await PostJsonAsync(client, url, body, headers);
+        var result = await PostJsonAsync(client, url, body, headers).ConfigureAwait(false);
         if (!result.IsSuccess) return result.Error!;
         try
         {
@@ -121,8 +121,8 @@ public static class HttpClientHelper
             var json    = JsonSerializer.Serialize(body, _json);
             var content = new StringContent(json, Encoding.UTF8, "application/json");
             using var request = BuildRequest(HttpMethod.Put, url, content, headers);
-            using var response = await client.SendAsync(request);
-            var responseBody = await response.Content.ReadAsStringAsync();
+            using var response = await client.SendAsync(request).ConfigureAwait(false);
+            var responseBody = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
                 return HttpFailure(response, responseBody);
             return responseBody;
@@ -139,10 +139,10 @@ public static class HttpClientHelper
         try
         {
             using var request = BuildRequest(HttpMethod.Delete, url, null, headers);
-            using var response = await client.SendAsync(request);
+            using var response = await client.SendAsync(request).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
             {
-                var body = await response.Content.ReadAsStringAsync();
+                var body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
                 return HttpFailure(response, body);
             }
             return Result.Success();
@@ -243,13 +243,45 @@ public static class HttpClientHelper
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
+    // Headers that belong to the body (HttpContent.Headers); adding them to the request headers throws.
+    private static readonly HashSet<string> ContentHeaders =
+    [
+        with(StringComparer.OrdinalIgnoreCase),
+        "Content-Type", "Content-Length", "Content-Encoding", "Content-Language", "Content-Location",
+        "Content-MD5", "Content-Range", "Content-Disposition", "Expires", "Last-Modified", "Allow"
+    ];
+
+    // Headers whose real-world values often fail .NET's strict parser (product tokens with free text,
+    // opaque tokens, non-URI referers); they are added without validation, as before.
+    private static readonly HashSet<string> LenientHeaders =
+    [
+        with(StringComparer.OrdinalIgnoreCase),
+        "User-Agent", "Authorization", "Proxy-Authorization", "Cookie", "Referer"
+    ];
+
+    /// <summary>
+    /// Builds the request. Headers are added with validation (a malformed name or value, or one with a
+    /// line break, is rejected and the call returns a failure) except the <see cref="LenientHeaders"/>;
+    /// <see cref="ContentHeaders"/> go on the content when there is one.
+    /// </summary>
     private static HttpRequestMessage BuildRequest(HttpMethod method, string url,
         HttpContent? content, Dictionary<string, string>? headers)
     {
         var request = new HttpRequestMessage(method, url) { Content = content };
-        if (headers != null)
-            foreach (var (key, value) in headers)
+        if (headers is null) return request;
+
+        foreach (var (key, value) in headers)
+        {
+            if (ContentHeaders.Contains(key))
+            {
+                if (content is not null) content.Headers.TryAddWithoutValidation(key, value);
+                else request.Headers.TryAddWithoutValidation(key, value);
+            }
+            else if (LenientHeaders.Contains(key))
                 request.Headers.TryAddWithoutValidation(key, value);
+            else
+                request.Headers.Add(key, value);
+        }
         return request;
     }
 }

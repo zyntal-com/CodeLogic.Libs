@@ -1,0 +1,15 @@
+# Repository-wide analyzer settings. See AGENTS.md (Conventions).
+root = true
+
+# Library code must not capture the caller's synchronization context: every await needs ConfigureAwait(false).
+# Tests, samples and benchmarks are exempt.
+[CL.*/{src,generator}/**.cs]
+dotnet_diagnostic.CA2007.severity = error
+
+[*.cs]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4

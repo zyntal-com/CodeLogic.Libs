@@ -53,6 +53,8 @@
     with the package version — no hand-edited string in *Library.cs to drift.
   -->
   <ItemGroup Condition="'$(CLIsRoslynComponent)' != 'true'">
+    <Compile Include="$(MSBuildThisFileDirectory)Shared/LogText.cs" Link="Shared/LogText.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Shared/AsyncCleanup.cs" Link="Shared/AsyncCleanup.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Shared/InternalLibraryVersion.cs"
              Link="Shared/InternalLibraryVersion.cs" />
   </ItemGroup>

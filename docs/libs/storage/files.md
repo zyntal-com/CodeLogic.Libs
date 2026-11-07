@@ -1,5 +1,7 @@
 # Files & Attributes
 
+Local path containment and conversion back to storage paths both follow the volume's probed case rules. A mounted filesystem can differ from its host OS; a case-equivalent root still maps to the same relative path and preserves descendant spelling.
+
 > Everything about a file beyond its bytes: permissions, ownership, timestamps, links, checksums,
 > metadata, tags, versions, and signed URLs — plus raw server commands and free space.
 
@@ -43,6 +45,13 @@ var link = await files.ReadLinkAsync("current");
 
 Link targets must stay inside the mounted root. On Windows, creating local links needs Developer Mode
 or the symbolic-link privilege.
+
+A local connection reports a link's target (`StorageItem.LinkTarget` in listings, `RawTarget` and `StoragePath` from
+`ReadLinkAsync`) only when the target lies inside the root. Otherwise the item is still a link, but `LinkTarget` is
+null, `RawTarget` empty and `StoragePath` null: a link may not disclose where on the machine it points. This does not
+depend on `FollowLinks`, which decides whether a path may pass *through* a link; reading a link does not follow it.
+Links are reported in listings but never descended into; following one is the caller's choice (`LinkHandling` on
+transfers and syncs), and a link whose target lies outside the root cannot be followed.
 
 ## Server-side checksums
 

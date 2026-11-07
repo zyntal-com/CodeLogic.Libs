@@ -348,3 +348,66 @@ public sealed class SystemStatsServiceSwitchTests
         Assert.Equal(3, after.PerCoreUsagePercent.Count);
     }
 }
+
+// ── Provider CPU sampling is never concurrent (snapshots bypass the cache's dedup) ────
+
+public sealed class CpuSamplingSerialisationTests
+{
+    /// <summary>Counts overlapping <see cref="GetCpuStatsAsync"/> calls, as overlapping PerformanceCounter reads would corrupt each other.</summary>
+    private sealed class OverlapDetectingProvider : ISystemStatsProvider
+    {
+        private int _inFlight;
+        private int _maxInFlight;
+        private int _calls;
+        public int MaxInFlight => Volatile.Read(ref _maxInFlight);
+        public int Calls => Volatile.Read(ref _calls);
+
+        public async Task<Result<CpuStats>> GetCpuStatsAsync()
+        {
+            var now = Interlocked.Increment(ref _inFlight);
+            int seen;
+            do { seen = Volatile.Read(ref _maxInFlight); }
+            while (now > seen && Interlocked.CompareExchange(ref _maxInFlight, now, seen) != seen);
+            Interlocked.Increment(ref _calls);
+            await Task.Delay(15);   // the sampling interval
+            Interlocked.Decrement(ref _inFlight);
+            return Result<CpuStats>.Success(new CpuStats(10, [10], DateTime.UtcNow));
+        }
+
+        public Task<Result<CpuInfo>> GetCpuInfoAsync() => Task.FromResult(Result<CpuInfo>.Success(new CpuInfo("m", 1, 1, "v", 0, "X64")));
+        public Task<Result<MemoryInfo>> GetMemoryInfoAsync() => Task.FromResult(Result<MemoryInfo>.Success(new MemoryInfo(100)));
+        public Task<Result<MemoryStats>> GetMemoryStatsAsync() =>
+            Task.FromResult(Result<MemoryStats>.Success(new MemoryStats(100, 50, 50, 0, 0, 50, DateTime.UtcNow)));
+        public Task<Result<TimeSpan>> GetSystemUptimeAsync() => Task.FromResult(Result<TimeSpan>.Success(TimeSpan.FromHours(1)));
+        public Task<Result<ProcessStats>> GetProcessStatsAsync(int processId) => throw new NotSupportedException();
+        public Task<Result<IReadOnlyList<ProcessStats>>> GetAllProcessesAsync() => throw new NotSupportedException();
+        public Task<Result<IReadOnlyList<ProcessStats>>> GetTopProcessesByCpuAsync(int topCount) =>
+            Task.FromResult(Result<IReadOnlyList<ProcessStats>>.Success([]));
+        public Task<Result<IReadOnlyList<ProcessStats>>> GetTopProcessesByMemoryAsync(int topCount) =>
+            Task.FromResult(Result<IReadOnlyList<ProcessStats>>.Success([]));
+        public Task<Result<SystemSnapshot>> GetSystemSnapshotAsync() => throw new NotSupportedException();
+        public Task InitializeAsync() => Task.CompletedTask;
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Snapshots_and_cpu_reads_never_sample_the_provider_concurrently(bool caching)
+    {
+        var provider = new OverlapDetectingProvider();
+        await using var service = new SystemStatsService(provider,
+            new SystemStatsConfig { EnableCaching = caching, CacheDurationSeconds = 60, CpuSamplesForAverage = 1 });
+
+        var calls = new List<Task>();
+        for (var i = 0; i < 8; i++)
+        {
+            calls.Add(Task.Run(async () => (await service.GetSystemSnapshotAsync()).ValueOrThrow()));
+            calls.Add(Task.Run(async () => (await service.GetCpuStatsAsync()).ValueOrThrow()));
+        }
+        await Task.WhenAll(calls);
+
+        Assert.True(provider.Calls >= 8, $"expected at least the 8 snapshot samplings, got {provider.Calls}");
+        Assert.Equal(1, provider.MaxInFlight);   // was up to 9 before: 8 snapshots plus the shared cache refresh
+    }
+}

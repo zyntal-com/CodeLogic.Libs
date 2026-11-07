@@ -12,8 +12,22 @@ namespace CL.GitHelper.Errors;
 /// </summary>
 public static class GitErrors
 {
-    /// <summary>The local repository does not exist (not cloned yet) — <see cref="NotFoundError"/>.</summary>
+    /// <summary>
+    /// The repository is not configured (unknown id passed to <c>GetRepositoryAsync</c>), or its local
+    /// clone does not exist yet — <see cref="NotFoundError"/>. <see cref="Error.Details"/> is
+    /// <see cref="NotConfiguredDetails"/> in the first case and the exception type name in the second.
+    /// </summary>
     public const string RepositoryNotFoundCode = "git.repository_not_found";
+    /// <summary><see cref="Error.Details"/> of a <see cref="RepositoryNotFoundCode"/> error for an id that is not configured.</summary>
+    public const string NotConfiguredDetails = "not_configured";
+    /// <summary>A repository with that id is already registered — <see cref="ConflictError"/>.</summary>
+    public const string RepositoryExistsCode = "git.repository_exists";
+    /// <summary>A repository configuration is incomplete or its local path leaves the base directory — <see cref="ValidationError"/>.</summary>
+    public const string InvalidConfigurationCode = "git.invalid_configuration";
+    /// <summary>The library is not initialized, is disabled, or has been stopped — <see cref="UnavailableError"/>.</summary>
+    public const string NotInitializedCode = "git.not_initialized";
+    /// <summary>The <c>GitRepository</c> instance was disposed (evicted from the cache, replaced by a config change, or the library stopped); call <c>GetRepositoryAsync</c> again — <see cref="UnavailableError"/>.</summary>
+    public const string RepositoryDisposedCode = "git.repository_disposed";
     /// <summary>The named remote is not configured in the repository — <see cref="NotFoundError"/>.</summary>
     public const string RemoteNotFoundCode = "git.remote_not_found";
     /// <summary>The named branch, or the reset target, could not be resolved — <see cref="NotFoundError"/>.</summary>
@@ -38,7 +52,10 @@ public static class GitErrors
     public const string NonFastForwardCode = "git.non_fast_forward";
     /// <summary>The operation was cancelled by the caller — <see cref="UnavailableError"/>.</summary>
     public const string CancelledCode = "git.cancelled";
-    /// <summary>A network operation ran longer than the repository's timeout — <see cref="TimeoutError"/>.</summary>
+    /// <summary>
+    /// A network operation ran longer than the repository's timeout, or an earlier transfer on the
+    /// repository has stalled (libgit2 has not returned since its timeout) — <see cref="TimeoutError"/>.
+    /// </summary>
     public const string TimeoutCode = "git.timeout";
     /// <summary>A pull's merge or rebase stopped on conflicting changes — <see cref="ConflictError"/>.</summary>
     public const string MergeConflictCode = "git.merge_conflict";
@@ -95,6 +112,7 @@ public static class GitErrors
             CheckoutConflictException => Error.Conflict(CheckoutConflictCode, message, details),
             NonFastForwardException => Error.Conflict(NonFastForwardCode, message, details),
             OperationCanceledException or UserCancelledException => Error.Unavailable(CancelledCode, message, details),
+            ObjectDisposedException => Error.Unavailable(RepositoryDisposedCode, message, details),
             LibGit2SharpException when IsAuthenticationFailure(ex.Message) =>
                 Error.Unauthorized(AuthenticationFailedCode, message, details),
             _ => Error.Internal(fallbackCode, message, details)

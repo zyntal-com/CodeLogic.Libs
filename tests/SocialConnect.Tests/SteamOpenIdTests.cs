@@ -27,11 +27,16 @@ public sealed class SteamOpenIdTests
     private static FakeSteam Answer(string body, HttpStatusCode status = HttpStatusCode.OK) =>
         new(_ => new HttpResponseMessage(status) { Content = new StringContent(body) });
 
-    private static SteamOpenIdService Service(HttpMessageHandler handler, int maxNonceAgeSeconds = 300) =>
-        new(new SteamConfig { TimeoutSeconds = 5, OpenIdNonceMaxAgeSeconds = maxNonceAgeSeconds }, handler);
+    private static SteamOpenIdService Service(HttpMessageHandler handler, int maxNonceAgeSeconds = 300, string realm = "",
+        IOpenIdNonceStore? nonces = null, TestLogger? logger = null, CodeLogic.Core.Events.IEventBus? events = null) =>
+        new(new SteamConfig { TimeoutSeconds = 5, OpenIdNonceMaxAgeSeconds = maxNonceAgeSeconds, OpenIdRealm = realm }, handler, logger, events, nonces);
 
-    private static string Nonce(TimeSpan age, string unique = "abc") =>
-        (DateTime.UtcNow - age).ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", System.Globalization.CultureInfo.InvariantCulture) + unique;
+    private static int _nonceCounter;
+
+    // Every assertion gets its own nonce: the service refuses one it has verified before.
+    private static string Nonce(TimeSpan age, string? unique = null) =>
+        (DateTime.UtcNow - age).ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", System.Globalization.CultureInfo.InvariantCulture)
+        + (unique ?? "n" + Interlocked.Increment(ref _nonceCounter));
 
     private static Dictionary<string, string> Assertion(string? claimedId = null, string? nonce = null) => new()
     {
@@ -68,10 +73,175 @@ public sealed class SteamOpenIdTests
     [InlineData("javascript:alert(1)", null)]
     [InlineData("https://example.com/cb#frag", null)]
     [InlineData("https://evil.example/cb", "https://example.com")]
+    [InlineData("https://example.com/apple/cb", "https://example.com/app")]    // same prefix, other directory
+    [InlineData("https://example.com:8443/cb", "https://example.com")]
+    [InlineData("http://example.com/cb", "https://example.com")]
     public void BuildLoginUrl_rejects_bad_urls(string returnTo, string? realm)
     {
         using var service = Service(Answer(""));
         Assert.Throws<ArgumentException>(() => service.BuildLoginUrl(returnTo, realm));
+    }
+
+    [Theory]
+    [InlineData("https://evil.example/cb")]
+    [InlineData("https://example.com.evil.example/cb")]
+    [InlineData("http://example.com/cb")]
+    [InlineData("https://example.com/other/cb")]
+    public void Configured_realm_refuses_a_return_url_outside_it(string returnTo)
+    {
+        using var service = Service(Answer(""), realm: "https://example.com/auth");
+        Assert.Throws<ArgumentException>(() => service.BuildLoginUrl(returnTo));
+        // A realm argument cannot widen the configured one.
+        Assert.Throws<ArgumentException>(() => service.BuildLoginUrl(returnTo, "https://evil.example"));
+    }
+
+    [Fact]
+    public void Configured_realm_is_sent_to_steam_and_contains_the_return_url()
+    {
+        using var service = Service(Answer(""), realm: "https://example.com/auth");
+        var query = Uri.UnescapeDataString(new Uri(service.BuildLoginUrl("https://example.com/auth/steam/cb?state=x")).Query);
+        Assert.Contains("openid.realm=https://example.com/auth", query);
+        Assert.Contains("openid.return_to=https://example.com/auth/steam/cb?state=x", query);
+    }
+
+    [Fact]
+    public void Without_a_realm_the_return_url_decides_the_site()
+    {
+        // Documented behaviour: no OpenIdRealm and no realm argument means any absolute URL is accepted.
+        using var service = Service(Answer(""));
+        Assert.Contains("openid.realm=https%3A%2F%2Fanything.example%2F", service.BuildLoginUrl("https://anything.example/cb"));
+    }
+
+    [Fact]
+    public void Invalid_configured_realm_is_a_config_error_and_refused_by_the_service()
+    {
+        var config = new SocialConnectConfig { Steam = { Enabled = true, OpenIdRealm = "example.com" } };
+        Assert.False(config.Validate().IsValid);
+        Assert.Throws<ArgumentException>(() => new SteamOpenIdService(config.Steam));
+    }
+
+    [Fact]
+    public void CreateState_is_random_and_url_safe()
+    {
+        var states = Enumerable.Range(0, 50).Select(_ => SteamOpenIdService.CreateState()).ToList();
+        Assert.Equal(50, states.Distinct(StringComparer.Ordinal).Count());
+        foreach (var state in states)
+        {
+            Assert.Equal(43, state.Length);   // 32 bytes = 256 bits, base64url without padding
+            Assert.All(state, c => Assert.True(char.IsAsciiLetterOrDigit(c) || c is '-' or '_', $"unexpected '{c}'"));
+            Assert.Equal(state, Uri.EscapeDataString(state));
+        }
+    }
+
+    // ── Replay ────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task Verify_refuses_the_same_assertion_a_second_time()
+    {
+        var steam = Answer("is_valid:true");
+        using var service = Service(steam);
+        var assertion = Assertion();
+
+        var first = await service.VerifyAsync(assertion, ReturnTo);
+        var second = await service.VerifyAsync(assertion, ReturnTo);
+
+        Assert.True(first.IsSuccess, first.Error?.Message);
+        Assert.True(second.IsFailure);
+        Assert.Equal("social.steam.openid_replayed", second.Error!.Code);
+        Assert.Equal(2, steam.Bodies.Count);   // Only authenticated assertions reach the atomic replay check.
+    }
+
+    [Fact]
+    public async Task Verify_does_not_spend_a_nonce_when_steam_rejects_the_assertion()
+    {
+        var answers = new Queue<string>(["is_valid:false", "is_valid:true"]);
+        using var service = Service(new FakeSteam(_ => new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(answers.Dequeue()) }));
+        var assertion = Assertion();
+
+        Assert.Equal("social.steam.openid_rejected", (await service.VerifyAsync(assertion, ReturnTo)).Error!.Code);
+        Assert.True((await service.VerifyAsync(assertion, ReturnTo)).IsSuccess);
+    }
+
+    [Fact]
+    public async Task Nonce_store_is_shared_between_services_when_given()
+    {
+        var nonces = new InMemoryOpenIdNonceStore();
+        using var a = Service(Answer("is_valid:true"), nonces: nonces);
+        using var b = Service(Answer("is_valid:true"), nonces: nonces);
+        var assertion = Assertion();
+
+        Assert.True((await a.VerifyAsync(assertion, ReturnTo)).IsSuccess);
+        Assert.Equal("social.steam.openid_replayed", (await b.VerifyAsync(assertion, ReturnTo)).Error!.Code);
+        Assert.Equal(1, nonces.Count);
+    }
+
+    [Fact]
+    public async Task In_memory_nonce_store_forgets_expired_nonces()
+    {
+        var store = new InMemoryOpenIdNonceStore(sweepInterval: TimeSpan.Zero);
+        Assert.True(await store.TryUseAsync("n1", DateTime.UtcNow.AddMinutes(5)));
+        Assert.False(await store.TryUseAsync("n1", DateTime.UtcNow.AddMinutes(5)));
+        Assert.True(await store.TryUseAsync("old", DateTime.UtcNow.AddMinutes(-1)));
+        Assert.True(await store.TryUseAsync("old", DateTime.UtcNow.AddMinutes(5)));   // expired: as good as unseen
+        Assert.True(await store.TryUseAsync("n2", DateTime.UtcNow.AddMinutes(5)));
+        Assert.Equal(3, store.Count);
+    }
+
+    [Fact]
+    public async Task Failed_assertions_never_consume_nonce_capacity()
+    {
+        var store = new InMemoryOpenIdNonceStore(maxEntries: 2);
+        using var service = Service(Answer("is_valid:false"), nonces: store);
+        for (var i = 0; i < 100; i++) Assert.True((await service.VerifyAsync(Assertion(), ReturnTo)).IsFailure);
+        Assert.Equal(0, store.Count);
+    }
+
+    [Fact]
+    public async Task Replay_capacity_is_atomic_and_does_not_evict_unexpired_entries()
+    {
+        var store = new InMemoryOpenIdNonceStore(maxEntries: 1);
+        var results = await Task.WhenAll(Enumerable.Range(0, 32).Select(i => Task.Run(async () =>
+            await store.TryUseAsync("n" + i, DateTime.UtcNow.AddMinutes(5)))));
+        Assert.Single(results, r => r);
+        Assert.Equal(1, store.Count);
+        Assert.False(await store.TryUseAsync("extra", DateTime.UtcNow.AddMinutes(5)));
+    }
+
+    // ── Hostile input ─────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task Repeated_parameter_name_is_sanitised_before_it_reaches_logs_events_or_the_error()
+    {
+        var logger = new TestLogger();
+        var bus = new CodeLogic.Core.Events.EventBus();
+        var events = new List<CL.SocialConnect.Events.SteamOpenIdVerifiedEvent>();
+        bus.Subscribe<CL.SocialConnect.Events.SteamOpenIdVerifiedEvent>(events.Add);
+        using var service = Service(Answer("is_valid:true"), logger: logger, events: bus);
+        var hostile = "openid.x\r\nERROR forged line" + new string('A', 200);
+        var query = "openid.mode=id_res&" + Uri.EscapeDataString(hostile) + "=1&" + Uri.EscapeDataString(hostile) + "=2";
+
+        var result = await service.VerifyAsync(query, ReturnTo);
+
+        Assert.Equal("social.steam.openid_invalid", result.Error!.Code);
+        foreach (var text in new[] { result.Error.Message, logger.All, Assert.Single(events).ErrorMessage! })
+        {
+            Assert.DoesNotContain("\n", text);
+            Assert.DoesNotContain("\r", text);
+            Assert.DoesNotContain(new string('A', 100), text);
+            Assert.Contains("openid.x??ERROR forged line", text);
+        }
+    }
+
+    [Fact]
+    public async Task Cancelled_verification_is_unavailable_with_the_cancelled_code()
+    {
+        using var cts = new CancellationTokenSource();
+        using var service = Service(new FakeSteam(_ => { cts.Cancel(); throw new OperationCanceledException(cts.Token); }));
+
+        var result = await service.VerifyAsync(Assertion(), ReturnTo, cts.Token);
+
+        Assert.IsType<CodeLogic.Core.Results.UnavailableError>(result.Error);
+        Assert.Equal("social.steam.cancelled", result.Error!.Code);
     }
 
     // ── VerifyAsync ───────────────────────────────────────────────────────────

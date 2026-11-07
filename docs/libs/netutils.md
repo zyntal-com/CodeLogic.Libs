@@ -88,7 +88,9 @@ A zone counts as answered "not listed" on NXDOMAIN or no A record, or when it on
 
 ### Per-call overrides with `DnsblCheckRequest`
 
-Apps that store their own DNSBL zones or IP allowlists (e.g. in a database) can bypass the static config with the request overload. Supply per-call service lists, a timeout, and an optional async allowlist predicate — returning `true` from `IsAllowedAsync` skips all DNSBL queries for that IP and returns **not blacklisted**.
+Apps that store their own DNSBL zones or IP allowlists (e.g. in a database) can bypass the static config with the request overload. Supply per-call service lists, a timeout, and an optional async allowlist predicate — returning `true` from `IsAllowedAsync` skips all DNSBL queries for that IP and returns **not blacklisted**. The predicate receives the address in canonical form (`1.2.3.4` for the inputs `1.2.3.4`, `::ffff:1.2.3.4` and `0x01.0x02.0x03.0x04`), so an allowlist compares one spelling; `DnsblCheckResult.IpAddress` still echoes the caller's text.
+
+A check whose cancellation token fires returns `Status = DnsblCheckStatus.Cancelled` (`IsBlacklisted` false, no zones reported): the caller's own abort, distinguishable from `Error` (the check could not run) and `Indeterminate` (zones failed).
 
 ```csharp
 var request = new DnsblCheckRequest
@@ -113,7 +115,7 @@ DnsblCheckResult result = await net.Dnsbl.CheckIpAsync("203.0.113.1", request);
 | `Ipv4FallbackServices` | `IReadOnlyList<string>` | empty | IPv4 fallback zones. |
 | `Ipv6Services` | `IReadOnlyList<string>` | empty | Primary IPv6 zones. |
 | `Ipv6FallbackServices` | `IReadOnlyList<string>` | empty | IPv6 fallback zones. |
-| `IsAllowedAsync` | `Func<string, CancellationToken, Task<bool>>?` | `null` | Allowlist predicate; `true` skips all queries. |
+| `IsAllowedAsync` | `Func<string, CancellationToken, Task<bool>>?` | `null` | Allowlist predicate, called with the canonical address; `true` skips all queries. |
 | `Timeout` | `TimeSpan` | `5s` | Per-zone DNS timeout. |
 | `ParallelQueries` | `bool` | `true` | Query the zones of a list concurrently; `false` queries them one at a time and stops at the first listing. |
 | `DetailedLogging` | `bool` | `false` | Log each zone query. |
@@ -239,10 +241,20 @@ The library writes `config.netutils.json` (section `netutils`) with defaults on 
     "downloadUrl": "https://download.maxmind.com/geoip/databases/{DatabaseType}/download?suffix=tar.gz",
     "trustedDownloadHosts": ["download.maxmind.com"],
     "databaseType": "GeoLite2-City",
-    "timeoutSeconds": 30
+    "timeoutSeconds": 120,
+    "maxDownloadBytes": 536870912,
+    "verifyChecksum": true
   }
 }
 ```
+
+The library implements `IConfigReloadable`: a change to this section (admin UI, `LibraryManager.UpdateConfigAsync`,
+reload, the file watcher) is applied without a restart. DNSBL settings replace `Dnsbl` at once (zones, timeout,
+parallelism, on/off). GeoIP settings build a new `GeoIpService` (downloading a database when the new settings need
+one) and swap it in; the replaced service closes after a grace period so lookups already running on it finish. A GeoIP
+configuration that fails to initialize is logged, the previous database keeps serving, and health reports Degraded.
+A configuration that fails validation is logged and ignored. Read `net.Dnsbl` and `net.GeoIp` per use rather than
+caching them.
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
@@ -263,7 +275,25 @@ The library writes `config.netutils.json` (section `netutils`) with defaults on 
 | `GeoIp.DownloadUrl` | `string` | MaxMind, `{DatabaseType}` edition | Download endpoint returning a `tar.gz` or `zip`; `{DatabaseType}` is replaced with `DatabaseType`. Must be `https` on a host in `TrustedDownloadHosts`. |
 | `GeoIp.TrustedDownloadHosts` | `string[]` | `["download.maxmind.com"]` | Hosts `DownloadUrl` may use (exact, case-insensitive). |
 | `GeoIp.DatabaseType` | `string` | `GeoLite2-City` | MaxMind edition id (City, Country, Enterprise, ASN or ISP); the default file name, the `{DatabaseType}` in `DownloadUrl`, and the kind a download must have. |
-| `GeoIp.TimeoutSeconds` | `int` | `30` | Download timeout in seconds. |
+| `GeoIp.TimeoutSeconds` | `int` | `120` | Time allowed for one whole download: the checksum fetch, the request and reading the entire archive body (GeoLite2-City is about 70 MB, so allow for your link). A download that runs longer fails with `netutils.download_timeout` and the existing database stays in use. |
+| `GeoIp.MaxDownloadBytes` | `long` | `536870912` (512 MB) | The most bytes a download may have, applied to the archive body as it arrives (`Content-Length` first, then while streaming) and again to the database as it is unpacked, so a small archive cannot inflate past it. Over it, `netutils.download_too_large`. |
+| `GeoIp.VerifyChecksum` | `bool` | `true` | Fetch the SHA-256 the server publishes next to the archive (MaxMind: the download URL with `.sha256` appended to `suffix`, `…download?suffix=tar.gz.sha256`; otherwise `.sha256` appended to the path) before the download and refuse one that does not match (`netutils.checksum_mismatch`; an unreadable or missing checksum file is `netutils.checksum_unavailable`). Turn it off only for a mirror in `TrustedDownloadHosts` that publishes no checksum. |
+
+### Download errors
+
+`GeoIpService.DownloadDatabaseAsync` returns a `Result`. On any failure the existing database and the open reader
+stay as they were; the codes are in `NetUtilsErrors`:
+
+| Code | When |
+|------|------|
+| `netutils.download_refused` | No MaxMind credentials, an untrusted `DownloadUrl`, or an invalid limit: nothing was sent. |
+| `netutils.download_failed` | A network error or an HTTP error status (404 usually means wrong credentials). |
+| `netutils.download_timeout` | `TimeoutSeconds` ran out before the body was read. |
+| `netutils.download_too_large` | The body or the unpacked database exceeds `MaxDownloadBytes`. |
+| `netutils.checksum_unavailable` | The published `.sha256` could not be fetched or is not a hex digest. |
+| `netutils.checksum_mismatch` | The archive does not match the published checksum. |
+| `netutils.invalid_database` | The archive holds no `.mmdb`, or not a usable database of the configured kind. |
+| `netutils.cancelled` | The caller's cancellation token fired. |
 
 ## Localization
 
@@ -292,3 +322,5 @@ var status = await net.HealthCheckAsync();
 - [Getting Started](../getting-started.md) — load, configure, and use any `CL.*` library.
 - [API Reference](../api/index.md) — generated type/member documentation.
 - [Package on NuGet](https://www.nuget.org/packages/CodeLogic.NetUtils)
+
+Archive extraction checks the same cancellation/timeout token as downloading on every decompression read and output chunk. A cancelled extraction cannot install its partially written database.

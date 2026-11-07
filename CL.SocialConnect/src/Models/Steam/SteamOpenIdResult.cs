@@ -12,10 +12,10 @@ public sealed class SteamOpenIdResult
     public required string ClaimedId { get; init; }
 
     /// <summary>
-    /// The assertion's <c>openid.response_nonce</c>, unique per assertion Steam issues. Steam does not document that
-    /// it refuses to confirm the same assertion twice, so to stop replays record the nonce (with
-    /// <see cref="NonceIssuedAtUtc"/>) and refuse one you have already seen; entries older than <c>SteamConfig.OpenIdNonceMaxAgeSeconds</c> can be dropped,
-    /// because <c>VerifyAsync</c> refuses those assertions anyway.
+    /// The assertion's <c>openid.response_nonce</c>, unique per assertion Steam issues. <c>VerifyAsync</c> records it
+    /// in its <see cref="Services.Steam.IOpenIdNonceStore"/> and refuses a nonce it has verified before
+    /// (<c>social.steam.openid_replayed</c>), so an application needs its own tracking only when it runs several
+    /// servers without a shared store.
     /// </summary>
     public required string ResponseNonce { get; init; }
 

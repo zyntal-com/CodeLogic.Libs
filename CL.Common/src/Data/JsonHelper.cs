@@ -88,7 +88,7 @@ public static class JsonHelper
             var json = JsonSerializer.Serialize(obj, indented ? _indented : _compact);
             var dir = Path.GetDirectoryName(filePath);
             if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
-            await File.WriteAllTextAsync(filePath, json);
+            await File.WriteAllTextAsync(filePath, json).ConfigureAwait(false);
             return Result.Success();
         }
         catch (Exception ex)
@@ -110,7 +110,7 @@ public static class JsonHelper
             if (!File.Exists(filePath))
                 return Result<T>.Failure(Error.NotFound(ErrorCode.FileNotFound, $"JSON file not found: {filePath}"));
 
-            var json = await File.ReadAllTextAsync(filePath);
+            var json = await File.ReadAllTextAsync(filePath).ConfigureAwait(false);
             return Deserialize<T>(json);
         }
         catch (Exception ex)
@@ -190,8 +190,9 @@ public static class JsonHelper
         {
             var dir = Path.GetDirectoryName(filePath);
             if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
-            await using var stream = File.Create(filePath);
-            await JsonSerializer.SerializeAsync(stream, obj, typeInfo, cancellationToken).ConfigureAwait(false);
+            var stream = File.Create(filePath);
+            await using (stream.ConfigureAwait(false))
+                await JsonSerializer.SerializeAsync(stream, obj, typeInfo, cancellationToken).ConfigureAwait(false);
             return Result.Success();
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -217,8 +218,10 @@ public static class JsonHelper
         {
             if (!File.Exists(filePath))
                 return Error.NotFound(ErrorCode.FileNotFound, $"JSON file not found: {filePath}");
-            await using var stream = File.OpenRead(filePath);
-            var value = await JsonSerializer.DeserializeAsync(stream, typeInfo, cancellationToken).ConfigureAwait(false);
+            var stream = File.OpenRead(filePath);
+            T? value;
+            await using (stream.ConfigureAwait(false))
+                value = await JsonSerializer.DeserializeAsync(stream, typeInfo, cancellationToken).ConfigureAwait(false);
             return value is null ? Error.Internal(ErrorCode.Internal, "Deserialization returned null.") : value;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)

@@ -142,4 +142,39 @@ public sealed class SteamAuthenticationTests
         Assert.IsType<TimeoutError>(r.Error);
         Assert.Equal("social.steam.timeout", r.Error!.Code);
     }
+
+    [Fact]
+    public async Task Cancellation_is_unavailable_with_the_cancelled_code()
+    {
+        using var cts = new CancellationTokenSource();
+        using var service = Service(new FakeSteam(_ => { cts.Cancel(); throw new OperationCanceledException(cts.Token); }));
+        var r = await service.AuthenticateAsync("ab12", cancellationToken: cts.Token);
+        Assert.IsType<UnavailableError>(r.Error);
+        Assert.Equal("social.steam.cancelled", r.Error!.Code);
+    }
+
+    [Theory]
+    [InlineData("12345", "76561197960000001")]                      // steamid not a SteamID64
+    [InlineData("76561197960435530", "")]                           // owner missing
+    [InlineData("76561197960435530\r\nforged", "76561197960000001")]
+    [InlineData("76561197960435530", "owner&key=evil")]
+    public async Task Answer_without_valid_steam_ids_is_a_parse_error_and_publishes_no_identity(string steamId, string owner)
+    {
+        var events = new CodeLogic.Core.Events.EventBus();
+        var published = new List<CL.SocialConnect.Events.SteamAuthenticatedEvent>();
+        events.Subscribe<CL.SocialConnect.Events.SteamAuthenticatedEvent>(published.Add);
+        var json = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            response = new { @params = new { result = "OK", steamid = steamId, ownersteamid = owner } }
+        });
+        using var service = new SteamAuthenticationService(new SteamConfig { ApiKey = "KEY", AppId = "480" }, Answer(json), null, events);
+
+        var r = await service.AuthenticateAsync("ab12");
+
+        Assert.IsType<InternalError>(r.Error);
+        Assert.Equal("social.steam.parse_error", r.Error!.Code);
+        var e = Assert.Single(published);
+        Assert.False(e.Success);
+        Assert.Equal(string.Empty, e.SteamId);
+    }
 }

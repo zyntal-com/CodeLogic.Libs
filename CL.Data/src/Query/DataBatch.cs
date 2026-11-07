@@ -150,7 +150,8 @@ public sealed class DataBatch
                 var connection = cmd.Connection!;
                 if (connection.CanCreateBatch && state.Db.Provider.Capabilities.DbBatch)
                 {
-                    await using var batch = connection.CreateBatch();
+                    var batch = connection.CreateBatch();
+                    await using var batchLifetime = batch.ConfigureAwait(false);
                     batch.Transaction = cmd.Transaction;
                     batch.Timeout = cmd.CommandTimeout;
                     foreach (var rendered in state.Separate)
@@ -161,12 +162,14 @@ public sealed class DataBatch
                             command.Parameters.Add(rendered.Parameters[i].Create(state.Db.Provider.Types, state.Db.Provider.Dialect.ParameterName(i)));
                         batch.BatchCommands.Add(command);
                     }
-                    await using var reader = await batch.ExecuteReaderAsync(token).ConfigureAwait(false);
+                    var reader = await batch.ExecuteReaderAsync(token).ConfigureAwait(false);
+                    await using var readerLifetime = reader.ConfigureAwait(false);
                     await ReadAllAsync(reader, state.Items, token).ConfigureAwait(false);
                 }
                 else
                 {
-                    await using var reader = await cmd.ExecuteReaderAsync(token).ConfigureAwait(false);
+                    var reader = await cmd.ExecuteReaderAsync(token).ConfigureAwait(false);
+                    await using var readerLifetime = reader.ConfigureAwait(false);
                     await ReadAllAsync(reader, state.Items, token).ConfigureAwait(false);
                 }
                 return true;

@@ -765,6 +765,182 @@ public sealed class MailErrorTests
         Assert.True(FileMailTemplateProvider.IsValidTemplateId(id));
 }
 
+// ── Null-tolerant message model ──────────────────────────────────────────────────
+
+public sealed class MailMessageNullToleranceTests
+{
+    private static MailMessage Message() => new()
+    {
+        From = "sender@example.com",
+        To = ["to@example.com"],
+        Subject = "Hi",
+        TextBody = "Body"
+    };
+
+    [Fact]
+    public void Null_collections_set_through_init_become_empty()
+    {
+        var message = new MailMessage
+        {
+            From = "sender@example.com",
+            To = ["to@example.com"],
+            Subject = "Hi",
+            TextBody = "Body",
+            Cc = null!,
+            Bcc = null!,
+            ReplyTo = null!,
+            Attachments = null!,
+            Headers = null!
+        };
+
+        Assert.Empty(message.Cc);
+        Assert.Empty(message.Bcc);
+        Assert.Empty(message.ReplyTo);
+        Assert.Empty(message.Attachments);
+        Assert.Empty(message.Headers);
+    }
+
+    [Fact]
+    public void Null_collections_set_through_with_become_empty()
+    {
+        var message = Message() with { Cc = null!, Bcc = null!, ReplyTo = null!, Attachments = null!, Headers = null! };
+
+        Assert.Empty(message.Cc);
+        Assert.Empty(message.Bcc);
+        Assert.Empty(message.ReplyTo);
+        Assert.Empty(message.Attachments);
+        Assert.Empty(message.Headers);
+    }
+
+    [Fact]
+    public async Task Send_validates_a_message_with_null_collections_instead_of_throwing()
+    {
+        var smtp = new SmtpService(new SmtpConfig { Host = "127.0.0.1", Port = 1, SecurityMode = MailSecurityMode.None, TimeoutSeconds = 5 });
+        var message = Message() with { Cc = null!, Bcc = null!, ReplyTo = null!, Attachments = null!, Headers = null! };
+
+        var result = await smtp.SendAsync(message, CancellationToken.None);
+
+        // Validation passed; the send fails only at the connection.
+        Assert.Equal(MailErrorCodes.SmtpConnectionFailed, result.Error?.Code);
+    }
+
+    [Fact]
+    public async Task Null_To_is_a_validation_error_not_an_exception()
+    {
+        var smtp = new SmtpService(new SmtpConfig { Host = "127.0.0.1", Port = 1, SecurityMode = MailSecurityMode.None, TimeoutSeconds = 5 });
+        var result = await smtp.SendAsync(Message() with { To = null! }, CancellationToken.None);
+
+        Assert.IsType<ValidationError>(result.Error);
+        Assert.Equal(MailErrorCodes.InvalidRecipient, result.Error!.Code);
+    }
+}
+
+// ── Generic messages for unexpected errors ───────────────────────────────────────
+
+public sealed class UnexpectedErrorMessageTests
+{
+    [Fact]
+    public void Internal_error_from_an_exception_carries_a_fixed_message_and_only_the_type_name()
+    {
+        var error = MailErrors.Internal(MailErrorCodes.Unknown, "The message could not be sent", new IOException("C:\\secret\\path.txt is locked by PID 1234"));
+
+        Assert.IsType<InternalError>(error);
+        Assert.Equal(MailErrorCodes.Unknown, error.Code);
+        Assert.Equal("The message could not be sent", error.Message);
+        Assert.Equal(nameof(IOException), error.Details);
+        Assert.DoesNotContain("secret", error.ToString());
+    }
+
+    [Fact]
+    public async Task Unexpected_send_failure_does_not_echo_the_exception_text()
+    {
+        // A locked attachment file makes MimeKit throw while the message is built, after validation passed.
+        // Exclusive locks only exist on Windows; elsewhere the file opens fine and the send fails at the connection.
+        var path = Path.Combine(Path.GetTempPath(), "cl_mail_locked_" + Guid.NewGuid().ToString("N") + ".bin");
+        await File.WriteAllBytesAsync(path, [1, 2, 3]);
+        try
+        {
+            using var hold = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+            var smtp = new SmtpService(new SmtpConfig { Host = "127.0.0.1", Port = 1, SecurityMode = MailSecurityMode.None, TimeoutSeconds = 5 });
+            var message = new MailMessage { From = "s@example.com", To = ["t@example.com"], Subject = "s", TextBody = "b", Attachments = [path] };
+
+            var result = await smtp.SendAsync(message, CancellationToken.None);
+
+            Assert.True(result.IsFailure);
+            if (!OperatingSystem.IsWindows()) return;
+            Assert.Equal(MailErrorCodes.Unknown, result.Error!.Code);
+            Assert.DoesNotContain(path, result.Error.Message);
+            Assert.DoesNotContain("process", result.Error.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(nameof(IOException), result.Error.Details);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+}
+
+// ── IMAP attachments: bounded decoding ────────────────────────────────────────────
+
+public sealed class ImapAttachmentTests
+{
+    private static MimeKit.MimePart Attachment(byte[] bytes, string name = "file.bin")
+    {
+        var builder = new MimeKit.BodyBuilder { TextBody = "see attachment" };
+        builder.Attachments.Add(name, bytes, MimeKit.ContentType.Parse("application/octet-stream"));
+        var message = new MimeKit.MimeMessage { Body = builder.ToMessageBody() };
+        return Assert.IsAssignableFrom<MimeKit.MimePart>(Assert.Single(message.Attachments));
+    }
+
+    [Fact]
+    public async Task Attachment_within_the_limit_is_decoded_in_full()
+    {
+        var bytes = Enumerable.Range(0, 10_000).Select(i => (byte)(i * 7)).ToArray();
+        var part = Attachment(bytes, "data.bin");
+
+        var received = await ImapService.ReadAttachmentAsync(part, maxBytes: 10_000, CancellationToken.None);
+
+        Assert.False(received.TooLarge);
+        Assert.Equal("data.bin", received.FileName);
+        Assert.Equal("application/octet-stream", received.ContentType);
+        Assert.Equal(10_000, received.Size);
+        Assert.Equal(bytes, received.Content);
+    }
+
+    [Fact]
+    public async Task Oversized_attachment_reports_its_size_and_flag_without_content()
+    {
+        var bytes = new byte[100_000];
+        Random.Shared.NextBytes(bytes);
+        var part = Attachment(bytes, "big.bin");
+
+        var received = await ImapService.ReadAttachmentAsync(part, maxBytes: 4096, CancellationToken.None);
+
+        Assert.True(received.TooLarge);
+        Assert.Null(received.Content);
+        Assert.Equal(100_000, received.Size);
+        Assert.Equal("big.bin", received.FileName);
+    }
+
+    [Fact]
+    public async Task Default_limit_is_25_mebibytes_and_configurable()
+    {
+        Assert.Equal(25L * 1024 * 1024, ImapConfig.DefaultMaxAttachmentBytes);
+        Assert.Equal(ImapConfig.DefaultMaxAttachmentBytes, new ImapConfig().MaxAttachmentBytes);
+
+        var config = new MailConfig { Imap = new ImapConfig { MaxAttachmentBytes = 0 } };
+        Assert.False(config.Validate().IsValid);
+        config.Imap.MaxAttachmentBytes = 1;
+        Assert.True(config.Validate().IsValid);
+
+        var received = await ImapService.ReadAttachmentAsync(Attachment([1, 2]), maxBytes: 2, CancellationToken.None);
+        Assert.False(received.TooLarge);
+        received = await ImapService.ReadAttachmentAsync(Attachment([1, 2, 3]), maxBytes: 2, CancellationToken.None);
+        Assert.True(received.TooLarge);
+        Assert.Equal(3, received.Size);
+    }
+}
+
 // ── IMAP (offline: refused before or at the connection) ──────────────────────────
 
 public sealed class ImapServiceTests

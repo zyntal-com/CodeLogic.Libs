@@ -56,7 +56,8 @@ public sealed class DataTransaction : IAsyncDisposable
             connection = await owner.Primary.DataSource.OpenConnectionAsync(ct).ConfigureAwait(false);
             foreach (var statement in setup ?? [])
             {
-                await using var command = connection.CreateCommand();
+                var command = connection.CreateCommand();
+                await using var commandLifetime = command.ConfigureAwait(false);
                 command.CommandText = statement;
                 await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
             }
@@ -140,7 +141,8 @@ public sealed class DataTransaction : IAsyncDisposable
             catch (NotSupportedException) when (fallbackSql is not null)
             {
                 // The driver has no savepoint API; use the standard statements.
-                await using var command = _connection.CreateCommand();
+                var command = _connection.CreateCommand();
+                await using var commandLifetime = command.ConfigureAwait(false);
                 command.Transaction = _transaction;
                 command.CommandText = fallbackSql + _owner.Provider.Dialect.QuoteIdentifier(name);
                 await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
@@ -179,7 +181,8 @@ public sealed class DataTransaction : IAsyncDisposable
         {
             try
             {
-                await using var command = _connection.CreateCommand();
+                var command = _connection.CreateCommand();
+                await using var commandLifetime = command.ConfigureAwait(false);
                 command.CommandText = statement;
                 await command.ExecuteNonQueryAsync(CancellationToken.None).ConfigureAwait(false);
             }

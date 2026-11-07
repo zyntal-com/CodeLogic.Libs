@@ -4,10 +4,16 @@ using CodeLogic.Core.Results;
 
 namespace CL.Imaging.Internal;
 
-/// <summary>A rented array and the number of bytes used in it. Dispose returns the array to the pool.</summary>
+/// <summary>
+/// A rented array and the number of bytes used in it, shared by reference count: the creator holds the first
+/// reference, <see cref="AddRef"/> takes another (a stream handed out over the bytes), and each <see cref="Dispose"/>
+/// releases one. The array goes back to the pool when the last reference is released, so a holder that outlives the
+/// others never reads an array the pool has since handed to someone else.
+/// </summary>
 internal sealed class PooledBuffer : IDisposable
 {
     private byte[]? _array;
+    private int _references = 1;
 
     public PooledBuffer(byte[] array, int length)
     {
@@ -23,10 +29,54 @@ internal sealed class PooledBuffer : IDisposable
 
     public ReadOnlyMemory<byte> Memory => Array.AsMemory(0, Length);
 
+    /// <summary>Takes a reference; the caller must <see cref="Dispose"/> once to release it.</summary>
+    public void AddRef()
+    {
+        var count = Volatile.Read(ref _references);
+        while (count != 0)
+        {
+            var previous = Interlocked.CompareExchange(ref _references, checked(count + 1), count);
+            if (previous == count) return;
+            count = previous;
+        }
+        throw new ObjectDisposedException(nameof(PooledBuffer));
+    }
+
+    /// <summary>Releases one reference; the array is returned to the pool with the last one.</summary>
     public void Dispose()
     {
+        if (Interlocked.Decrement(ref _references) != 0) return;
         var array = Interlocked.Exchange(ref _array, null);
         if (array is not null) ArrayPool<byte>.Shared.Return(array);
+    }
+}
+
+/// <summary>A read-only stream over a <see cref="PooledBuffer"/> that holds its own reference to it for as long as it lives.</summary>
+internal sealed class PooledBufferStream : MemoryStream
+{
+    private PooledBuffer? _buffer;
+
+    private PooledBufferStream(PooledBuffer buffer) : base(buffer.Array, 0, buffer.Length, writable: false, publiclyVisible: false) => _buffer = buffer;
+
+    /// <summary>Opens a stream over <paramref name="buffer"/>, taking a reference that the stream's disposal releases.</summary>
+    public static PooledBufferStream Open(PooledBuffer buffer)
+    {
+        buffer.AddRef();
+        try
+        {
+            return new PooledBufferStream(buffer);
+        }
+        catch
+        {
+            buffer.Dispose();
+            throw;
+        }
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        base.Dispose(disposing);
+        Interlocked.Exchange(ref _buffer, null)?.Dispose();
     }
 }
 

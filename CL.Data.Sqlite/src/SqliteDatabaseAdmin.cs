@@ -30,7 +30,8 @@ public sealed class SqliteDatabaseAdmin : DatabaseAdmin
         {
             if (Path.GetDirectoryName(Path.GetFullPath(database)) is { Length: > 0 } directory) Directory.CreateDirectory(directory);
             var cs = new SqliteConnectionStringBuilder { DataSource = database, Mode = SqliteOpenMode.ReadWriteCreate, Pooling = false }.ConnectionString;
-            await using var connection = new SqliteConnection(cs);
+            var connection = new SqliteConnection(cs);
+            await using var connectionLifetime = connection.ConfigureAwait(false);
             await connection.OpenAsync(ct).ConfigureAwait(false);
             return Result.Success();
         }

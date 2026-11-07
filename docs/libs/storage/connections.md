@@ -45,6 +45,15 @@ See the [overview](index.md) for the configuration sections and the mount model.
 - **`JumpHost`** tunnels through an SSH bastion. The target's key is still verified against the
   target's settings, and a configured `Proxy` applies to the bastion connection.
 
+> **Jump-host tunnels are reachable by other local processes.** The tunnel is an SSH local port forward: the
+> library binds a listener on `127.0.0.1` (a free port chosen by the OS) and connects the SFTP session through it.
+> The listener is not reachable from the network, but while the session is open any process on the same machine
+> can connect to that port and reach the target's SSH port through the bastion. SSH.NET keeps accepting on a started
+> forward, and stopping it closes the channels already running through it, which would drop the SFTP session, so
+> the forward lives as long as the session. What such a client reaches is the target's SSH server, which still
+> authenticates it with its own credentials; it does not get the library's session or keys. On a host shared with
+> untrusted local users, connect to the target directly (a VPN, or `Proxy`) rather than through `JumpHost`.
+
 ## FTP and FTPS
 
 ```json

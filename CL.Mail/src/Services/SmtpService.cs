@@ -75,7 +75,7 @@ public sealed class SmtpService : IDisposable
         catch (SmtpProtocolException ex)
         {
             _logger?.Error("SMTP protocol error", ex);
-            return MailErrors.Internal(MailErrorCodes.SmtpError, ex);
+            return MailErrors.Internal(MailErrorCodes.SmtpError, "The SMTP conversation failed", ex);
         }
         catch (AuthenticationException ex)
         {
@@ -100,8 +100,9 @@ public sealed class SmtpService : IDisposable
         }
         catch (Exception ex)
         {
+            // The exception text can name files, hosts or internal state: it goes to the log, not to the caller.
             _logger?.Error("Unexpected error sending email", ex);
-            return MailErrors.Internal(MailErrorCodes.Unknown, ex);
+            return MailErrors.Internal(MailErrorCodes.Unknown, "The message could not be sent because of an unexpected error", ex);
         }
     }
 
@@ -133,6 +134,8 @@ public sealed class SmtpService : IDisposable
         if (!IsValidAddress(message.From))
             return MailErrors.Validation(MailErrorCodes.InvalidSender, $"Sender address is malformed: '{message.From}'");
 
+        // To is `required` and the other collections coalesce null to empty in the record, but a caller can still
+        // pass `null!` to To; refuse it here rather than fail later.
         if (message.To is null || message.To.Count == 0)
             return MailErrors.Validation(MailErrorCodes.InvalidRecipient, "No recipients specified");
 

@@ -18,6 +18,7 @@ For task-oriented guides and examples, start with the [Libraries](../libs/index.
 | CL.Data.Sqlite | `CL.Data.Sqlite` | `CodeLogic.Data.Sqlite` |
 | CL.Imaging | `CL.Imaging` | `CodeLogic.Imaging` |
 | CL.Mail | `CL.Mail` | `CodeLogic.Mail` |
+| CL.Mqtt | `CL.Mqtt` | `CodeLogic.Mqtt` |
 | CL.NetUtils | `CL.NetUtils` | `CodeLogic.NetUtils` |
 | CL.SocialConnect | `CL.SocialConnect` | `CodeLogic.SocialConnect` |
 | CL.Storage | `CL.Storage` | `CodeLogic.Storage` |

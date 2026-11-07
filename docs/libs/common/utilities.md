@@ -113,7 +113,7 @@ string clip = HtmlHelper.TruncateText(longHtml, 120);
 
 `Sanitize` is an allowlist: basic formatting elements without attributes, and links with http(s),
 mailto or relative `href`s (`SanitizeAllowedTags` lists the elements). Images, styles, tables and embeds
-are removed; use a full HTML sanitizer for rich text.
+are removed; use a full HTML sanitizer for rich text. `Sanitize` and `StripTags` run in linear time, so large or malformed input (`<a <a <a …`, unbalanced quotes) cannot stall them.
 | `TruncateText(html, maxLength, suffix = "...")` | `string` | Length-limit HTML text. |
 
 ### HttpClientHelper
@@ -142,6 +142,8 @@ Result         del  = await HttpClientHelper.DeleteAsync(http, url);
 | `DeleteAsync(client, url, headers?)` | `Task<Result>` | DELETE. |
 | `GetJsonAsync<T>(client, url, typeInfo, headers?)`, `PostJsonAsync(…, bodyTypeInfo[, responseTypeInfo], …)`, `PutJsonAsync(…, bodyTypeInfo, …)` | as above | Trim/Native-AOT-safe overloads taking source-generated `JsonTypeInfo<T>`. The overloads without it use reflection and are marked `[RequiresUnreferencedCode]` / `[RequiresDynamicCode]`. |
 
+Headers are validated: a malformed name or value (for example one containing a line break) makes the call return a failure instead of sending it. `User-Agent`, `Authorization`, `Proxy-Authorization`, `Cookie` and `Referer` are passed through unvalidated, since real-world values often fail .NET's strict parser; content headers (`Content-Type`, `Content-Language`, …) are set on the body.
+
 ### HttpHeaderHelper
 
 Pulls request-context facts out of raw header values.
@@ -149,7 +151,7 @@ Pulls request-context facts out of raw header values.
 ```csharp
 using CL.Common.Web;
 
-string locale = HttpHeaderHelper.GetPrimaryLocale(acceptLanguageHeader);   // e.g. "en"
+string locale = HttpHeaderHelper.GetPrimaryLocale(acceptLanguageHeader);   // e.g. "da-DK"; "en-US" if none is well-formed
 string ip     = HttpHeaderHelper.GetEffectiveClientIp(remoteIp, xForwardedFor, proxies); // see below
 bool   bot    = HttpHeaderHelper.IsBot(userAgent);
 bool   mobile = HttpHeaderHelper.IsMobile(userAgent);
@@ -158,7 +160,7 @@ bool   json   = HttpHeaderHelper.AcceptsJson(acceptHeader);
 
 | Member | Returns | Purpose |
 |--------|---------|---------|
-| `GetPrimaryLocale(acceptLanguage?)` | `string` | Best language from `Accept-Language`. |
+| `GetPrimaryLocale(acceptLanguage?)` | `string` | Highest-`q` well-formed BCP 47 tag from `Accept-Language` (`^[A-Za-z]{1,8}(-[A-Za-z0-9]{1,8})*$`); `DefaultLocale` (`"en-US"`) when there is none. |
 | `GetEffectiveClientIp(remoteIp?, xForwardedFor?, trustedProxies)` | `string` | Client IP behind the given trusted proxies (see below). |
 | `GetEffectiveClientIp(remoteIp?, xForwardedFor?)` | `string` | Same, trusting only non-public peers (`TrustedProxies.PrivateNetworks`). |
 | `GetEffectiveClientIpAddress(remoteIp?, xForwardedFor?, trustedProxies)` | `IPAddress?` | Same, as a parsed address (`null` if the remote is unparsable). |
@@ -214,9 +216,9 @@ bool   secure = UrlHelper.IsHttps(url);
 |--------|---------|---------|
 | `Encode(value)` / `Decode(value)` | `string` | URL encode/decode. |
 | `IsValid(url)` | `bool` | Whether the string is a valid URL. |
-| `Combine(baseUrl, relativePath)` | `string` | Join base + path. |
+| `Combine(baseUrl, relativePath)` | `string` | Join base + path (null counts as empty). |
 | `AppendQuery(url, params)` | `string` | Append query parameters. |
-| `ParseQuery(url)` | `Dictionary<string, string>` | Parse the query string. |
+| `ParseQuery(url)` | `Dictionary<string, string>` | Parse the query string (`+` decodes to a space, the fragment is ignored). |
 | `GetDomain(url)` / `GetPath(url)` | `string` | Extract parts. |
 | `IsHttps(url)` | `bool` | Whether the scheme is HTTPS. |
 
@@ -282,7 +284,7 @@ Result<DateTimeOffset> local = CronParser.GetNextOccurrence("0 9 * * 1-5", DateT
 |--------|---------|---------|
 | `Parse(expression)` | `Result<CronExpression>` | Parse into fields. |
 | `IsValid(expression)` | `bool` | Quick validity check. |
-| `GetNextOccurrence(expression, from? = null)` | `Result<DateTime>` | Next UTC fire time at/after `from`. |
+| `GetNextOccurrence(expression, from? = null)` | `Result<DateTime>` | Next UTC fire time at/after `from`. A field that can never match (`0 24 * * *`) fails at once with a validation error. |
 | `GetNextOccurrence(expression, from, timeZone)` | `Result<DateTimeOffset>` | Next fire time strictly after `from`, with the fields read in `timeZone` (null = UTC). Used by `JobScheduler`. |
 
 ```csharp
@@ -455,7 +457,7 @@ plans.Set(FastHash.XxHash128(sql.AsSpan()), plan);
 |---|---|
 | `TryGet<T>(key, out value)` | Read a live entry; an entry of another type is a miss. |
 | `GetOrCreateAsync<T>(key, factory, options?, ct)` | Read or create; one factory run per key at a time. A throwing factory caches nothing. |
-| `Set<T>(key, value, options?)` | Store or replace. An entry larger than `SizeLimit` is not stored. |
+| `Set<T>(key, value, options?)` | Store or replace; returns `true` when stored. An entry larger than `SizeLimit` is not stored (`false`), and any previous entry under the key is removed. |
 | `Remove(key)` / `RemoveByTag(tag)` / `Clear()` | Explicit removal (tags use a reverse index). |
 | `RemoveByPrefix(prefix)`, `TryGet<T>(ReadOnlySpan<char>, …)` | `ICache` (string keys) only. |
 | `RemoveExpired()` | Sweep now (the periodic timer calls it). |

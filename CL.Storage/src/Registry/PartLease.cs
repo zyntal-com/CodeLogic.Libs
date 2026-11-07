@@ -179,7 +179,8 @@ internal sealed class PartLease
             return Result<string>.Failure(download.Error!);
         try
         {
-            await using var stream = download.Value!;
+            var stream = download.Value!;
+            await using var streamLifetime = stream.ConfigureAwait(false);
             using var reader = new StreamReader(stream, Encoding.UTF8);
             var buffer = new char[4096];
             var read = await reader.ReadBlockAsync(buffer, cancellationToken).ConfigureAwait(false);

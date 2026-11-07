@@ -68,7 +68,8 @@ string dataUri = ImageTools.ToDataUri(doc, ImageFormat.Png).Value!;
   JPEG, PNG and WebP (lossy, or lossless with `ImageEncodeOptions.Lossless`). JPEG output flattens transparency onto
   `ImageEncodeOptions.Background` (white).
 - **Probe without decoding.** `ImageInfo.Probe(stream)` reads format, size, orientation, alpha and frame count from
-  the header; `ImageFormatExtensions.Detect` sniffs the signature.
+  the header (a header claiming a side over 32 767 pixels is `imaging.too_large`, without allocating);
+  `ImageFormatExtensions.Detect` sniffs the signature.
 - **Editing pipeline.** `doc.Edit()` records steps; `Apply()` returns a new `ImageDocument`, `Encode(...)` returns an
   `EncodedImage`. Steps:
   - Geometry: `AutoOrient`, `Resize` (`Fit`, `Fill` (cover, with anchor), `Stretch`, `Pad`, `Max`), `Crop`,
@@ -141,3 +142,5 @@ Without the library, set `ImagingDefaults.Current = ImagingSettings.BuiltIn with
   MakerNote are removed); tags such as the EXIF pixel size are not rewritten after resizing. XMP and IPTC are not carried over.
 - An `ImageDocument` is not meant for concurrent mutation; reading the same document from several pipelines at once
   is fine because pipelines never write to their source.
+
+Audit completion notes and current limits are in [the guide](../docs/libs/imaging/metadata.md).

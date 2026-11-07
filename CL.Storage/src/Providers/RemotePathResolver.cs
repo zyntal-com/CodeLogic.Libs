@@ -83,3 +83,33 @@ internal sealed class RemotePathResolver
 }
 
 internal sealed record ResolvedRemotePath(string StoragePath, string RemotePath);
+
+/// <summary>
+/// Maps object-store keys (S3, Azure Blob, Google Cloud Storage, Swift) under a mounted prefix to storage paths. One
+/// normaliser for every listing mapper, so a key the library could never address back is skipped the same way by
+/// each provider instead of leaking into a listing as a path (and from there into a local download path).
+/// </summary>
+internal static class ObjectKeyPaths
+{
+    /// <summary>
+    /// The storage path for <paramref name="key"/>, or null when the key is not under <paramref name="prefix"/> or is
+    /// unaddressable: a segment of <c>.</c> or <c>..</c>, an empty segment (<c>a//b</c>), a control character, or
+    /// anything else <see cref="StoragePath.Normalize"/> would rewrite, since the rewritten path names a different
+    /// key. A trailing <c>/</c> (a folder marker) is kept so callers can tell markers from files; the key equal to the
+    /// prefix maps to the empty path.
+    /// </summary>
+    public static string? FromKey(string prefix, string key)
+    {
+        if (prefix.Length > 0 && !key.StartsWith(prefix, StringComparison.Ordinal))
+            return null;
+        var relative = key[prefix.Length..];
+        var marker = relative.EndsWith('/');
+        var body = marker ? relative[..^1] : relative;
+        if (body.Length == 0)
+            return string.Empty;
+        var normalized = StoragePath.Normalize(body);
+        return normalized.IsSuccess && string.Equals(normalized.Value, body, StringComparison.Ordinal)
+            ? relative
+            : null;
+    }
+}

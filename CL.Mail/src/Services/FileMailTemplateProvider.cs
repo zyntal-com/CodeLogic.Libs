@@ -68,7 +68,7 @@ public sealed class FileMailTemplateProvider : IMailTemplateProvider
         catch (Exception ex)
         {
             _logger?.Error($"Error loading template '{templateId}'", ex);
-            return MailErrors.Internal(MailErrorCodes.TemplateRenderingFailed, ex);
+            return MailErrors.Internal(MailErrorCodes.TemplateRenderingFailed, $"Template '{templateId}' could not be loaded", ex);
         }
     }
 
@@ -89,7 +89,7 @@ public sealed class FileMailTemplateProvider : IMailTemplateProvider
         catch (Exception ex)
         {
             _logger?.Error("Error listing templates", ex);
-            return Task.FromResult(Result<IReadOnlyList<string>>.Failure(MailErrors.Internal(MailErrorCodes.Unknown, ex)));
+            return Task.FromResult(Result<IReadOnlyList<string>>.Failure(MailErrors.Internal(MailErrorCodes.Unknown, "Templates could not be listed", ex)));
         }
     }
 
@@ -114,7 +114,7 @@ public sealed class FileMailTemplateProvider : IMailTemplateProvider
         catch (Exception ex)
         {
             _logger?.Error($"Error saving template '{template.Id}'", ex);
-            return MailErrors.Internal(MailErrorCodes.Unknown, ex);
+            return MailErrors.Internal(MailErrorCodes.Unknown, $"Template '{template.Id}' could not be saved", ex);
         }
     }
 

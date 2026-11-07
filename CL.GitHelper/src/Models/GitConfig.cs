@@ -100,11 +100,36 @@ public sealed class RepositoryConfiguration
     public int TimeoutSeconds { get; set; } = 300;
 
     /// <summary>
-    /// Validates that at minimum a URL and local path are set.
+    /// Validates that a URL and a local path are set, and that a relative local path stays inside
+    /// <see cref="GitHelperConfig.BaseDirectory"/> (see <see cref="LocalPathEscapesBaseDirectory"/>).
     /// </summary>
     public bool IsValid() =>
         !string.IsNullOrWhiteSpace(RepositoryUrl) &&
-        !string.IsNullOrWhiteSpace(LocalPath);
+        !string.IsNullOrWhiteSpace(LocalPath) &&
+        !LocalPathEscapesBaseDirectory(LocalPath);
+
+    /// <summary>
+    /// True when a relative <paramref name="localPath"/> climbs out of the base directory it is resolved
+    /// against (<c>../../etc</c>, <c>sub/../../x</c>). A rooted path (<c>/srv/repo</c>, <c>C:\repos\x</c>)
+    /// is explicit and never counts as escaping; <c>sub/../x</c> stays inside and is fine.
+    /// </summary>
+    public static bool LocalPathEscapesBaseDirectory(string? localPath)
+    {
+        if (string.IsNullOrWhiteSpace(localPath) || Path.IsPathRooted(localPath)) return false;
+
+        var depth = 0;
+        foreach (var segment in localPath.Split(['/', '\\'], StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (segment == ".") continue;
+            if (segment == "..")
+            {
+                if (--depth < 0) return true;
+                continue;
+            }
+            depth++;
+        }
+        return false;
+    }
 }
 
 /// <summary>
@@ -196,6 +221,8 @@ public sealed class GitHelperConfig : ConfigModelBase
                     errors.Add("Every repository needs an Id.");
                 else if (!ids.Add(repository.Id))
                     errors.Add($"Repository Id '{repository.Id}' is used more than once.");
+                if (RepositoryConfiguration.LocalPathEscapesBaseDirectory(repository.LocalPath))
+                    errors.Add($"Repository '{repository.Id}': LocalPath '{repository.LocalPath}' leaves the base directory; use a path inside it or an absolute path.");
                 if (repository.TimeoutSeconds is < 0 or > 3600)
                     errors.Add($"Repository '{repository.Id}': TimeoutSeconds must be between 0 and 3600.");
                 if (repository.AutoFetchIntervalMinutes < 0)

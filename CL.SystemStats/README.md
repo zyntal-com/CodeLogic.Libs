@@ -91,3 +91,5 @@ Full guide: **[CL.SystemStats documentation](https://zyntal-com.github.io/CodeLo
 ## License
 
 MIT — see [LICENSE](https://github.com/zyntal-com/CodeLogic.Libs/blob/main/LICENSE).
+
+Audit completion notes and current limits are in [the guide](../docs/libs/systemstats.md).

@@ -5,6 +5,11 @@ All notable changes to **CodeLogic.Mail** are documented here. Versions follow
 
 ## 5.0 (unreleased)
 
+### Audit completion (2026-11-07)
+
+- Fetch bounded MIME sections instead of whole messages, cap aggregate decoded message bytes/body bytes/attachment counts, and add GetAttachmentAsync for on-demand content. Return ContentTruncated and part identifiers on descriptors.
+
+
 ### Breaking
 
 - Targets **.NET 11** (`net11.0`) and requires **CodeLogic 5.0** (`[5.0.0, 6.0.0)`). On .NET 10, stay on
@@ -132,6 +137,19 @@ All notable changes to **CodeLogic.Mail** are documented here. Versions follow
 
 ### Fixed
 
+- **Unexpected errors no longer echo exception text to callers.** `mail.unknown` (SMTP catch-all, template
+  listing and saving), `mail.smtp_error`, `mail.imap_error` (unexpected IMAP exceptions) and
+  `mail.template_rendering_failed` (load and render failures) returned `ex.Message` as the error message and the
+  exception type as `Details`. They now carry a fixed message; `Details` is the exception's type name and the
+  exception itself is logged. IMAP server answers (`mail.imap_rejected`, missing folder or message names) are
+  unchanged.
+- **`MailMessage` tolerates `null` collections.** `Cc`, `Bcc`, `ReplyTo`, `Attachments` and `Headers` set to
+  `null` (through `init` or `with`) made `SendAsync` throw `NullReferenceException` during validation; they now
+  coalesce to empty, and a `null` `To` is the validation error `mail.invalid_recipient`.
+- **IMAP attachments are decoded with a memory bound.** `GetMessageAsync` decoded every attachment into memory
+  whatever its size. The new `Imap.MaxAttachmentBytes` (default 25 MiB) caps what is buffered: an attachment above
+  it comes back with `ReceivedAttachment.TooLarge = true`, its full decoded `Size`, and `Content = null`; the
+  message itself is still returned and the decoder never holds more than the limit.
 - **`DefaultFromEmail` / `DefaultFromName` are used.** They were documented as the fallback sender but never
   read, so `Build()` threw without `From()`. `MailLibrary.CreateMessage()` and `SendTemplatedAsync` now return
   builders that fall back to them; the new `MailBuilder(defaultFromEmail, defaultFromName)` constructor does the
@@ -151,6 +169,8 @@ All notable changes to **CodeLogic.Mail** are documented here. Versions follow
 - `MailBuilder(string? defaultFromEmail, string? defaultFromName = null)`.
 - `SmtpConfig.AttachmentBaseDirectory`.
 - `MailErrorCodes.InvalidAttachment` (`mail.invalid_attachment`) and `MailErrorCodes.ImapRejected` (`mail.imap_rejected`).
+- `ImapConfig.MaxAttachmentBytes` (default `ImapConfig.DefaultMaxAttachmentBytes`, 25 MiB; must be at least 1) and
+  `ReceivedAttachment.TooLarge`.
 
 ### Documentation
 
@@ -163,6 +183,8 @@ All notable changes to **CodeLogic.Mail** are documented here. Versions follow
 - `SimpleTemplateEngine` uses source-generated regexes (`[GeneratedRegex]`) for its block, section and
   placeholder patterns instead of parsing them through the static `Regex` cache on each render. Output is
   unchanged.
+- `ImapService` is split into partial files by concern (connection and error mapping, folders, messages, search,
+  IDLE). No behaviour change.
 
 ## 2026-10-27
 

@@ -76,6 +76,9 @@ public sealed class MailConfig : ConfigModelBase
 
         if (Imap is not null)
         {
+            if (Imap.MaxMessageBytes is < 1 or > 134_217_728) errors.Add("Imap.MaxMessageBytes must be between 1 and 134217728.");
+            if (Imap.MaxBodyBytes is < 1 or > 16_777_216) errors.Add("Imap.MaxBodyBytes must be between 1 and 16777216.");
+            if (Imap.MaxAttachments is < 1 or > 1000) errors.Add("Imap.MaxAttachments must be between 1 and 1000.");
             if (string.IsNullOrWhiteSpace(Imap.Host))
                 errors.Add("Imap.Host is required.");
 
@@ -84,6 +87,9 @@ public sealed class MailConfig : ConfigModelBase
 
             if (!Enum.IsDefined(Imap.SecurityMode))
                 errors.Add($"Imap.SecurityMode '{Imap.SecurityMode}' is not a known security mode.");
+
+            if (Imap.MaxAttachmentBytes < 1)
+                errors.Add("Imap.MaxAttachmentBytes must be at least 1.");
         }
 
         return errors.Count > 0
@@ -194,6 +200,36 @@ public sealed class ImapConfig
         Description = "How often to re-send IDLE to keep the connection alive.",
         Group = "IMAP", Order = 37, Collapsed = true)]
     public int IdleRefreshMinutes { get; set; } = 25;
+
+    /// <summary>Default <see cref="MaxAttachmentBytes"/>: 25 MiB.</summary>
+    public const long DefaultMaxAttachmentBytes = 25L * 1024 * 1024;
+
+    /// <summary>
+    /// Largest decoded attachment <c>ImapService.GetMessageAsync</c> loads into memory, in bytes. Default: 25 MiB.
+    /// A larger attachment comes back with <see cref="ReceivedAttachment.TooLarge"/> set, its decoded
+    /// <see cref="ReceivedAttachment.Size"/> and no <see cref="ReceivedAttachment.Content"/>; the decoder never
+    /// buffers more than this limit, whatever a message declares. Must be at least 1.
+    /// </summary>
+    [Range(1, long.MaxValue)]
+    [ConfigField(Label = "Max attachment (bytes)", Min = 1,
+        Description = "Largest attachment loaded into memory by GetMessageAsync; bigger ones are returned without content.",
+        Group = "IMAP", Order = 38, Collapsed = true)]
+    public long MaxAttachmentBytes { get; set; } = DefaultMaxAttachmentBytes;
+
+    /// <summary>Maximum combined decoded body and attachment bytes returned by one message fetch (default 32 MiB).</summary>
+    [Range(1, 134_217_728)]
+    [ConfigField(Label = "Max message bytes", Min = 1, Max = 134_217_728, Group = "IMAP", Order = 39)]
+    public int MaxMessageBytes { get; set; } = 32 * 1024 * 1024;
+
+    /// <summary>Maximum decoded bytes of a single text/HTML body (default 1 MiB).</summary>
+    [Range(1, 16_777_216)]
+    [ConfigField(Label = "Max body bytes", Min = 1, Max = 16_777_216, Group = "IMAP", Order = 40)]
+    public int MaxBodyBytes { get; set; } = 1024 * 1024;
+
+    /// <summary>Maximum attachment descriptors returned for a message (default 100).</summary>
+    [Range(1, 1000)]
+    [ConfigField(Label = "Max attachments", Min = 1, Max = 1000, Group = "IMAP", Order = 41)]
+    public int MaxAttachments { get; set; } = 100;
 }
 
 /// <summary>

@@ -6,32 +6,28 @@ namespace CL.Common.Strings;
 /// <summary>
 /// Provides common string validation methods. All methods are stateless and thread-safe.
 /// </summary>
-public static class StringValidator
+public static partial class StringValidator
 {
-    // Pre-compiled regexes for performance
-    private static readonly Regex EmailRegex = new(
-        @"^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}$",
-        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    // Source-generated: no per-call cache lookup, and the patterns are bounded (no nested unbounded quantifiers).
+    [GeneratedRegex(@"^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}$",
+        RegexOptions.IgnoreCase)]
+    private static partial Regex EmailRegex();
 
-    private static readonly Regex PhoneRegex = new(
-        @"^\+?[\d\s\-().]{7,20}$",
-        RegexOptions.Compiled);
+    [GeneratedRegex(@"^\+?[\d\s\-().]{7,20}$")]
+    private static partial Regex PhoneRegex();
 
-    private static readonly Regex AlphanumericRegex = new(
-        @"^[a-zA-Z0-9]+$",
-        RegexOptions.Compiled);
+    [GeneratedRegex(@"^[a-zA-Z0-9]+$")]
+    private static partial Regex AlphanumericRegex();
 
-    private static readonly Regex NumericRegex = new(
-        @"^-?\d+(\.\d+)?$",
-        RegexOptions.Compiled);
+    [GeneratedRegex(@"^-?\d+(\.\d+)?$")]
+    private static partial Regex NumericRegex();
 
-    private static readonly Regex GuidRegex = new(
-        @"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
-        RegexOptions.Compiled);
+    [GeneratedRegex(@"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")]
+    private static partial Regex GuidRegex();
 
     /// <summary>Returns true if the string is a valid email address.</summary>
     public static bool IsEmail(string email) =>
-        !string.IsNullOrWhiteSpace(email) && EmailRegex.IsMatch(email.Trim());
+        !string.IsNullOrWhiteSpace(email) && EmailRegex().IsMatch(email.Trim());
 
     /// <summary>
     /// Returns true if the string is a valid absolute URL (http or https).
@@ -43,15 +39,15 @@ public static class StringValidator
 
     /// <summary>Returns true if the string looks like a phone number (7–20 digits, optional +, spaces, dashes, parens).</summary>
     public static bool IsPhoneNumber(string phone) =>
-        !string.IsNullOrWhiteSpace(phone) && PhoneRegex.IsMatch(phone.Trim());
+        !string.IsNullOrWhiteSpace(phone) && PhoneRegex().IsMatch(phone.Trim());
 
     /// <summary>Returns true if the string contains only digits and an optional leading minus/decimal point.</summary>
     public static bool IsNumeric(string value) =>
-        !string.IsNullOrWhiteSpace(value) && NumericRegex.IsMatch(value.Trim());
+        !string.IsNullOrWhiteSpace(value) && NumericRegex().IsMatch(value.Trim());
 
     /// <summary>Returns true if the string contains only letters and digits (a-z, A-Z, 0-9).</summary>
     public static bool IsAlphanumeric(string value) =>
-        !string.IsNullOrWhiteSpace(value) && AlphanumericRegex.IsMatch(value);
+        !string.IsNullOrWhiteSpace(value) && AlphanumericRegex().IsMatch(value);
 
     /// <summary>Returns true if the string is a valid IPv4 address (e.g. "192.168.1.1").</summary>
     public static bool IsIPv4(string ip)
@@ -71,7 +67,7 @@ public static class StringValidator
 
     /// <summary>Returns true if the string is a valid GUID in standard format.</summary>
     public static bool IsGuid(string value) =>
-        !string.IsNullOrWhiteSpace(value) && GuidRegex.IsMatch(value.Trim());
+        !string.IsNullOrWhiteSpace(value) && GuidRegex().IsMatch(value.Trim());
 
     /// <summary>Returns true if the string length is at least <paramref name="min"/> characters.</summary>
     public static bool HasMinLength(string value, int min) =>

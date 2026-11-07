@@ -2,52 +2,6 @@ using CodeLogic.Core.Results;
 
 namespace CL.Common.Resilience;
 
-/// <summary>The state of a <see cref="CircuitBreaker"/>.</summary>
-public enum CircuitState
-{
-    /// <summary>Calls flow; failures are counted.</summary>
-    Closed,
-
-    /// <summary>Calls are refused until the break duration has passed (or until <see cref="CircuitBreaker.Reset"/> after <see cref="CircuitBreaker.Isolate"/>).</summary>
-    Open,
-
-    /// <summary>A limited number of trial calls flow; the first outcome closes or re-opens the circuit.</summary>
-    HalfOpen
-}
-
-/// <summary>Settings for <see cref="CircuitBreaker"/>.</summary>
-public sealed record CircuitBreakerOptions
-{
-    /// <summary>Consecutive failures that open the circuit (used when <see cref="FailureRatio"/> is null). Default 5.</summary>
-    public int FailureThreshold { get; init; } = 5;
-
-    /// <summary>
-    /// Alternative trigger: open when, within <see cref="SamplingWindow"/>, at least <see cref="MinimumThroughput"/>
-    /// calls were made and this fraction (0 &lt; ratio ≤ 1) of them failed. When set, it replaces
-    /// <see cref="FailureThreshold"/>.
-    /// </summary>
-    public double? FailureRatio { get; init; }
-
-    /// <summary>Calls needed within the window before <see cref="FailureRatio"/> is evaluated. Default 10.</summary>
-    public int MinimumThroughput { get; init; } = 10;
-
-    /// <summary>The sliding window <see cref="FailureRatio"/> is measured over (10 buckets). Default 30 s.</summary>
-    public TimeSpan SamplingWindow { get; init; } = TimeSpan.FromSeconds(30);
-
-    /// <summary>How long the circuit stays open before it lets trial calls through. Default 30 s.</summary>
-    public TimeSpan BreakDuration { get; init; } = TimeSpan.FromSeconds(30);
-
-    /// <summary>Trial calls allowed at once while half-open. Default 1.</summary>
-    public int HalfOpenMaxCalls { get; init; } = 1;
-}
-
-/// <summary>A state transition of a <see cref="CircuitBreaker"/>.</summary>
-/// <param name="Name">The breaker's name.</param>
-/// <param name="From">The previous state.</param>
-/// <param name="To">The new state.</param>
-/// <param name="At">When it happened (from the breaker's <see cref="TimeProvider"/>).</param>
-public readonly record struct CircuitStateChange(string Name, CircuitState From, CircuitState To, DateTimeOffset At);
-
 /// <summary>
 /// Stops calling a failing dependency for a while so it can recover, then probes it with a few trial calls.
 /// <list type="bullet">
@@ -384,33 +338,4 @@ public sealed class CircuitBreaker
         Failure,
         Ignore
     }
-}
-
-/// <summary>
-/// Permission from <see cref="CircuitBreaker.TryAcquire"/> to make one call. Report the outcome exactly once.
-/// Reporting on a <c>default</c> lease does nothing.
-/// </summary>
-public readonly struct CircuitLease
-{
-    private readonly CircuitBreaker? _breaker;
-
-    internal CircuitLease(CircuitBreaker breaker, long generation, bool halfOpen)
-    {
-        _breaker = breaker;
-        Generation = generation;
-        HalfOpen = halfOpen;
-    }
-
-    internal long Generation { get; }
-
-    internal bool HalfOpen { get; }
-
-    /// <summary>The call succeeded (or failed in a way that says nothing about the dependency's health).</summary>
-    public void Success() => _breaker?.Report(this, CircuitBreaker.Outcome.Success);
-
-    /// <summary>The call failed in a way that counts against the dependency.</summary>
-    public void Failure() => _breaker?.Report(this, CircuitBreaker.Outcome.Failure);
-
-    /// <summary>The call ended without a verdict (e.g. cancelled by the caller); frees a half-open trial slot.</summary>
-    public void Ignore() => _breaker?.Report(this, CircuitBreaker.Outcome.Ignore);
 }

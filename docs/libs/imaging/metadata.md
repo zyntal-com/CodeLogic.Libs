@@ -2,7 +2,7 @@
 
 ## Probing
 
-`ImageInfo.Probe` reads the header only — nothing is decoded — so it is cheap even for huge files:
+`ImageInfo.Probe` reads the header only — nothing is decoded — so it is cheap even for huge files. A header that claims a side over 32 767 pixels (more than the decoder can hold) is `imaging.too_large`, decided without allocating for pixels:
 
 ```csharp
 Result<ImageInfo> info = ImageInfo.Probe(stream);   // also Probe(bytes), ProbeFile(path)
@@ -55,3 +55,5 @@ Encoding writes only pixels unless asked otherwise:
 - `StripMetadata()` in the pipeline overrides both options.
 
 `ImageTools.ProcessUpload` always strips, which removes GPS positions from user uploads.
+
+Pooled encoded-image streams acquire references atomically: concurrent final disposal cannot resurrect a buffer already returned to the pool. An acquisition that loses that race throws `ObjectDisposedException`.

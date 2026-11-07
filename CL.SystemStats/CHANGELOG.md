@@ -5,6 +5,11 @@ All notable changes to **CodeLogic.SystemStats** are documented here. Versions f
 
 ## 5.0 (unreleased)
 
+### Audit completion (2026-11-07)
+
+- Make synchronous disposal nonblocking and serialize Windows counter disposal against sampling.
+
+
 ### Breaking
 
 - Targets **.NET 11** (`net11.0`) and requires **CodeLogic 5.0** (`[5.0.0, 6.0.0)`). On .NET 10, stay on
@@ -49,6 +54,14 @@ All notable changes to **CodeLogic.SystemStats** are documented here. Versions f
   `(physical id, core id)` pairs of `/proc/cpuinfo`. `MaxSpeedMHz` prefers `cpufreq/cpuinfo_max_freq` over the
   current `cpu MHz`, and ARM model/vendor lines are recognised.
 - The Linux `GetProcessStatsAsync` disposes the `Process` it opens.
+- **CPU samplings never overlap** (audit 2026-11). `GetSystemSnapshotAsync` samples CPU directly (bypassing the
+  cache refresh that `GetCpuStatsAsync` shares), so a snapshot and a CPU read, or several snapshots, ran
+  `PerformanceCounter.NextValue()` concurrently and corrupted each other's readings. `SystemStatsService` and the
+  Windows provider now serialise CPU sampling; overlapping calls take their samples one after the other.
+- **`SystemStatsLibrary` implements `IAsyncDisposable`.** `Dispose()` blocked on the async dispose
+  (sync-over-async); `DisposeAsync()` is the async path (`OnStopAsync` uses it), and both are no-ops once the
+  library was stopped or disposed.
+- `ConfigureAwait(false)` on every library await.
 
 ### Documentation
 

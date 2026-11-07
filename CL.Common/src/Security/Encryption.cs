@@ -9,11 +9,16 @@ namespace CL.Common.Security;
 /// confidentiality and integrity. Unlike AES-CBC, it detects tampering and rejects modified ciphertext.
 /// </summary>
 /// <remarks>
-/// <para><b>Wire format:</b> all output is structured as
-/// <c>salt (16 bytes) + nonce (12 bytes) + tag (16 bytes) + ciphertext</c>.</para>
-/// <para><b>Breaking change from earlier versions:</b> this class previously used AES-CBC which
-/// provides no authentication and is vulnerable to padding-oracle attacks. Any data encrypted with
-/// the previous (AES-CBC) implementation cannot be decrypted with this version.</para>
+/// <para><b>Wire format (version 1):</b> <c>version (1 byte, 0x01) + salt (16 bytes) + nonce (12 bytes) +
+/// tag (16 bytes) + ciphertext</c>, with the key derived by PBKDF2-SHA256 over <see cref="Iterations"/>
+/// (600 000) iterations.</para>
+/// <para><b>Legacy format:</b> blobs written before 5.0 have no version byte
+/// (<c>salt + nonce + tag + ciphertext</c>) and used <see cref="LegacyIterations"/> (100 000) iterations.
+/// Decryption tries the versioned layout first and falls back to the legacy one, so stored data keeps
+/// decrypting; re-encrypt it to move it to the new format. Encryption always writes version 1.</para>
+/// <para><b>Breaking change from 4.x and earlier (pre-GCM):</b> this class previously used AES-CBC which
+/// provides no authentication and is vulnerable to padding-oracle attacks. Data encrypted with that
+/// implementation cannot be decrypted with this version.</para>
 /// </remarks>
 public static class Encryption
 {
@@ -21,16 +26,23 @@ public static class Encryption
     private const int NonceSize = 12;  // GCM standard nonce
     private const int TagSize   = 16;  // GCM authentication tag
     private const int SaltSize  = 16;
-    private const int Iterations = 100_000;
+    private const byte FormatVersion = 1;
+    private const int HeaderSize = SaltSize + NonceSize + TagSize;
+
+    /// <summary>PBKDF2-SHA256 iterations for new blobs (OWASP guidance; was 100 000 before 5.0).</summary>
+    public const int Iterations = 600_000;
+
+    /// <summary>PBKDF2-SHA256 iterations of the unversioned blobs written before 5.0.</summary>
+    public const int LegacyIterations = 100_000;
 
     /// <summary>
     /// Encrypts a plaintext string using AES-256-GCM with a PBKDF2-derived key.
-    /// The output is a Base64-encoded string containing the salt, nonce, authentication tag, and ciphertext.
+    /// The output is a Base64-encoded string containing the version byte, salt, nonce, authentication tag, and ciphertext.
     /// </summary>
     /// <param name="plainText">The plaintext to encrypt. Must not be null.</param>
     /// <param name="password">The password used to derive the encryption key. Must not be null.</param>
     /// <returns>
-    /// A Base64-encoded string containing salt (16 bytes) + nonce (12 bytes) + tag (16 bytes) + ciphertext.
+    /// A Base64-encoded string containing version (1 byte) + salt (16 bytes) + nonce (12 bytes) + tag (16 bytes) + ciphertext.
     /// </returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="plainText"/> or <paramref name="password"/> is null.</exception>
     public static string EncryptAes(string plainText, string password)
@@ -41,18 +53,31 @@ public static class Encryption
     }
 
     /// <summary>
-    /// Decrypts a Base64-encoded ciphertext string produced by <see cref="EncryptAes"/>.
+    /// Decrypts a Base64-encoded ciphertext string produced by <see cref="EncryptAes"/> (either format).
     /// </summary>
-    /// <param name="cipherText">The Base64-encoded ciphertext (salt + nonce + tag + ciphertext). Must not be null.</param>
+    /// <param name="cipherText">The Base64-encoded ciphertext. Must not be null.</param>
     /// <param name="password">The password used during encryption. Must not be null.</param>
     /// <returns>The original plaintext string.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="cipherText"/> or <paramref name="password"/> is null.</exception>
-    /// <exception cref="CryptographicException">Thrown when decryption or authentication fails (wrong password, corrupted data, or tampered ciphertext).</exception>
+    /// <exception cref="CryptographicException">
+    /// Thrown when the input is not valid Base64, is too short, or fails authentication (wrong password,
+    /// corrupted data, or tampered ciphertext).
+    /// </exception>
     public static string DecryptAes(string cipherText, string password)
     {
         ArgumentNullException.ThrowIfNull(cipherText);
         ArgumentNullException.ThrowIfNull(password);
-        return Encoding.UTF8.GetString(DecryptBytes(Convert.FromBase64String(cipherText), password));
+
+        byte[] bytes;
+        try
+        {
+            bytes = Convert.FromBase64String(cipherText);
+        }
+        catch (FormatException ex)
+        {
+            throw new CryptographicException("The ciphertext is not valid Base64.", ex);
+        }
+        return Encoding.UTF8.GetString(DecryptBytes(bytes, password));
     }
 
     /// <summary>
@@ -61,7 +86,7 @@ public static class Encryption
     /// <param name="data">The data to encrypt. Must not be null.</param>
     /// <param name="password">The password used to derive the encryption key. Must not be null.</param>
     /// <returns>
-    /// A byte array containing salt (16 bytes) + nonce (12 bytes) + tag (16 bytes) + ciphertext.
+    /// A byte array containing version (1 byte) + salt (16 bytes) + nonce (12 bytes) + tag (16 bytes) + ciphertext.
     /// </returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="data"/> or <paramref name="password"/> is null.</exception>
     public static byte[] EncryptBytes(byte[] data, string password)
@@ -71,7 +96,7 @@ public static class Encryption
 
         var salt  = RandomNumberGenerator.GetBytes(SaltSize);
         var nonce = RandomNumberGenerator.GetBytes(NonceSize);
-        var key   = DeriveKey(password, salt);
+        var key   = DeriveKey(password, salt, Iterations);
 
         var ciphertext = new byte[data.Length];
         var tag        = new byte[TagSize];
@@ -79,44 +104,60 @@ public static class Encryption
         using var aesGcm = new AesGcm(key, TagSize);
         aesGcm.Encrypt(nonce, data, ciphertext, tag);
 
-        var result = new byte[SaltSize + NonceSize + TagSize + ciphertext.Length];
-        Buffer.BlockCopy(salt,       0, result, 0,                              SaltSize);
-        Buffer.BlockCopy(nonce,      0, result, SaltSize,                       NonceSize);
-        Buffer.BlockCopy(tag,        0, result, SaltSize + NonceSize,           TagSize);
-        Buffer.BlockCopy(ciphertext, 0, result, SaltSize + NonceSize + TagSize, ciphertext.Length);
+        var result = new byte[1 + HeaderSize + ciphertext.Length];
+        result[0] = FormatVersion;
+        Buffer.BlockCopy(salt,       0, result, 1,                                  SaltSize);
+        Buffer.BlockCopy(nonce,      0, result, 1 + SaltSize,                       NonceSize);
+        Buffer.BlockCopy(tag,        0, result, 1 + SaltSize + NonceSize,           TagSize);
+        Buffer.BlockCopy(ciphertext, 0, result, 1 + HeaderSize,                     ciphertext.Length);
         return result;
     }
 
     /// <summary>
-    /// Decrypts a byte array produced by <see cref="EncryptBytes"/>.
+    /// Decrypts a byte array produced by <see cref="EncryptBytes"/>, in the versioned or the legacy format.
     /// AES-GCM verifies the authentication tag before returning plaintext —
     /// any modification to the encrypted data causes a <see cref="CryptographicException"/>.
     /// </summary>
-    /// <param name="encryptedData">
-    /// The encrypted data containing salt (16 bytes) + nonce (12 bytes) + tag (16 bytes) + ciphertext.
-    /// Must not be null.
-    /// </param>
+    /// <param name="encryptedData">The encrypted data. Must not be null.</param>
     /// <param name="password">The password used during encryption. Must not be null.</param>
     /// <returns>The decrypted plaintext bytes.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="encryptedData"/> or <paramref name="password"/> is null.</exception>
     /// <exception cref="CryptographicException">
-    /// Thrown when authentication fails (wrong password, corrupted data, or tampered ciphertext).
+    /// Thrown when the data is too short or authentication fails (wrong password, corrupted data, or tampered ciphertext).
     /// </exception>
     public static byte[] DecryptBytes(byte[] encryptedData, string password)
     {
         ArgumentNullException.ThrowIfNull(encryptedData);
         ArgumentNullException.ThrowIfNull(password);
 
-        int minLength = SaltSize + NonceSize + TagSize;
-        if (encryptedData.Length < minLength)
+        if (encryptedData.Length < HeaderSize)
             throw new CryptographicException(
-                $"Encrypted data is too short. Expected at least {minLength} bytes.");
+                $"Encrypted data is too short. Expected at least {HeaderSize} bytes.");
 
-        var salt       = encryptedData[..SaltSize];
-        var nonce      = encryptedData[SaltSize..(SaltSize + NonceSize)];
-        var tag        = encryptedData[(SaltSize + NonceSize)..(SaltSize + NonceSize + TagSize)];
-        var ciphertext = encryptedData[(SaltSize + NonceSize + TagSize)..];
-        var key        = DeriveKey(password, salt);
+        // A legacy blob starts with a random salt byte, which can equal the version byte (1 in 256):
+        // a versioned parse that fails authentication falls back to the legacy layout.
+        if (encryptedData[0] == FormatVersion && encryptedData.Length > HeaderSize)
+        {
+            try
+            {
+                return Decrypt(encryptedData.AsSpan(1), password, Iterations);
+            }
+            catch (CryptographicException) when (encryptedData.Length - 1 >= HeaderSize)
+            {
+                // fall through to the legacy layout
+            }
+        }
+
+        return Decrypt(encryptedData, password, LegacyIterations);
+    }
+
+    private static byte[] Decrypt(ReadOnlySpan<byte> blob, string password, int iterations)
+    {
+        var salt       = blob[..SaltSize];
+        var nonce      = blob[SaltSize..(SaltSize + NonceSize)];
+        var tag        = blob[(SaltSize + NonceSize)..HeaderSize];
+        var ciphertext = blob[HeaderSize..];
+        var key        = DeriveKey(password, salt, iterations);
 
         var plaintext = new byte[ciphertext.Length];
         using var aesGcm = new AesGcm(key, TagSize);
@@ -132,11 +173,11 @@ public static class Encryption
     public static string GenerateKey(int length = 32)
         => Convert.ToBase64String(RandomNumberGenerator.GetBytes(length));
 
-    private static byte[] DeriveKey(string password, byte[] salt)
+    private static byte[] DeriveKey(string password, ReadOnlySpan<byte> salt, int iterations)
         => Rfc2898DeriveBytes.Pbkdf2(
             Encoding.UTF8.GetBytes(password),
             salt,
-            Iterations,
+            iterations,
             HashAlgorithmName.SHA256,
             KeySize);
 }
