@@ -25,34 +25,34 @@ public sealed class CommonLibrary : ILibrary
     private LibraryContext? _context;
 
     /// <inheritdoc/>
-    public async Task OnConfigureAsync(LibraryContext context)
+    public Task OnConfigureAsync(LibraryContext context)
     {
         _context = context;
         context.Logger.Info($"{Manifest.Name} v{Manifest.Version} configured");
-        await Task.CompletedTask;
+        return Task.CompletedTask;
     }
 
     /// <inheritdoc/>
-    public async Task OnInitializeAsync(LibraryContext context)
+    public Task OnInitializeAsync(LibraryContext context)
     {
         _context = context;
         context.Logger.Info($"{Manifest.Name} initialized");
-        await Task.CompletedTask;
+        return Task.CompletedTask;
     }
 
     /// <inheritdoc/>
-    public async Task OnStartAsync(LibraryContext context)
+    public Task OnStartAsync(LibraryContext context)
     {
         _context = context;
         context.Logger.Info($"{Manifest.Name} started and ready");
-        await Task.CompletedTask;
+        return Task.CompletedTask;
     }
 
     /// <inheritdoc/>
-    public async Task OnStopAsync()
+    public Task OnStopAsync()
     {
         _context?.Logger.Info($"{Manifest.Name} stopped");
-        await Task.CompletedTask;
+        return Task.CompletedTask;
     }
 
     /// <inheritdoc/>

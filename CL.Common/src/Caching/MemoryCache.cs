@@ -109,7 +109,7 @@ public class MemoryCache<TKey> : ICache<TKey>, IDisposable where TKey : notnull
     }
 
     /// <inheritdoc/>
-    public void Set<T>(TKey key, T value, CacheEntryOptions? options = null)
+    public bool Set<T>(TKey key, T value, CacheEntryOptions? options = null)
     {
         var size = options?.Size ?? 1;
         ValidateEntryOptions(options);
@@ -130,7 +130,7 @@ public class MemoryCache<TKey> : ICache<TKey>, IDisposable where TKey : notnull
             if (Entries.Remove(key, out var previous))
                 Unlink(key, previous);
             if (_options.SizeLimit is { } limit && size > limit)
-                return;
+                return false;   // larger than the whole cache: it could never stay
 
             entry.LastUsed = ++_clock;
             Entries.Add(key, entry);
@@ -147,6 +147,7 @@ public class MemoryCache<TKey> : ICache<TKey>, IDisposable where TKey : notnull
 
             if (IsOverLimit())
                 Compact(key);
+            return true;
         }
     }
 

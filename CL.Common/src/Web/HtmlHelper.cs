@@ -1,14 +1,21 @@
+using System.Text;
 using System.Text.RegularExpressions;
 
 namespace CL.Common.Web;
 
 /// <summary>
-/// Provides HTML sanitization and trimming utilities.
+/// Provides HTML sanitization and trimming utilities. Every method runs in time linear in the input
+/// length, so untrusted input of any size (malformed tags, unbalanced quotes, runs of <c>&lt;</c>) cannot
+/// stall the caller.
 /// </summary>
-public static class HtmlHelper
+public static partial class HtmlHelper
 {
-    private static readonly Regex TagRegex          = new(@"<[^>]+>",    RegexOptions.Compiled);
-    private static readonly Regex WhitespaceRegex   = new(@"\s{2,}",    RegexOptions.Compiled);
+    // NonBacktracking: a run of '<' without '>' made the backtracking engine rescan to the end from every one.
+    [GeneratedRegex(@"<[^>]+>", RegexOptions.NonBacktracking)]
+    private static partial Regex TagRegex();
+
+    [GeneratedRegex(@"\s{2,}")]
+    private static partial Regex WhitespaceRegex();
 
     /// <summary>
     /// Strips all HTML tags, returning plain text.
@@ -17,15 +24,19 @@ public static class HtmlHelper
     public static string StripTags(string html)
     {
         if (string.IsNullOrEmpty(html)) return string.Empty;
-        return TagRegex.Replace(html, string.Empty);
+        return TagRegex().Replace(html, string.Empty);
     }
 
-    /// <summary>Formatting elements <see cref="Sanitize"/> keeps (without attributes).</summary>
-    public static IReadOnlySet<string> SanitizeAllowedTags { get; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-    {
+    // Declared before SanitizeAllowedTags: static initializers run in textual order.
+    private static readonly HashSet<string> AllowedTags =
+    [
+        with(StringComparer.OrdinalIgnoreCase),
         "p", "br", "hr", "b", "strong", "i", "em", "u", "s", "del", "ins", "mark", "small", "sub", "sup",
         "blockquote", "pre", "code", "ul", "ol", "li", "h1", "h2", "h3", "h4", "h5", "h6", "span", "div", "a"
-    };
+    ];
+
+    /// <summary>Formatting elements <see cref="Sanitize"/> keeps (without attributes).</summary>
+    public static IReadOnlySet<string> SanitizeAllowedTags { get; } = AllowedTags;
 
     private static readonly HashSet<string> DroppedWithContent =
     [
@@ -34,11 +45,14 @@ public static class HtmlHelper
         "svg", "math", "select", "xmp", "noembed", "noframes"
     ];
 
-    private static readonly Regex SanitizeTagRegex = new(
-        @"<!--.*?(-->|$)|<(?<close>/?)(?<name>[a-zA-Z][a-zA-Z0-9]*)(?<attrs>(?:[^>""']|""[^""]*""|'[^']*')*)>|<",
-        RegexOptions.Compiled | RegexOptions.Singleline);
-    private static readonly Regex HrefRegex = new(
-        @"(?<![\w-])href\s*=\s*(?:""(?<v>[^""]*)""|'(?<v>[^']*)'|(?<v>[^\s>]+))", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly HashSet<string>.AlternateLookup<ReadOnlySpan<char>> AllowedLookup =
+        AllowedTags.GetAlternateLookup<ReadOnlySpan<char>>();
+    private static readonly HashSet<string>.AlternateLookup<ReadOnlySpan<char>> DroppedLookup =
+        DroppedWithContent.GetAlternateLookup<ReadOnlySpan<char>>();
+
+    // Runs on one tag's attribute text only, which the scanner has already bounded.
+    [GeneratedRegex(@"(?<![\w-])href\s*=\s*(?:""(?<v>[^""]*)""|'(?<v>[^']*)'|(?<v>[^\s>]+))", RegexOptions.IgnoreCase)]
+    private static partial Regex HrefRegex();
 
     /// <summary>
     /// Allowlist sanitizer for simple user HTML: keeps the formatting elements in
@@ -50,59 +64,125 @@ public static class HtmlHelper
     /// malformed tags) cannot survive. For rich text with styles, tables or embeds, use a full HTML
     /// sanitizer such as CL.WebLogic's <c>WebHtmlSanitizer</c>.
     /// </summary>
+    /// <remarks>
+    /// Tags are found by a single linear scan (no regular expression), so pathological input such as
+    /// <c>&lt;a &lt;a &lt;a …</c> or thousands of unbalanced quotes costs O(n) time and O(n) memory.
+    /// A tag runs from <c>&lt;</c> through the first <c>&gt;</c> outside quotes; a <c>&lt;</c> with no such
+    /// <c>&gt;</c> is text.
+    /// </remarks>
     public static string Sanitize(string html)
     {
         if (string.IsNullOrEmpty(html)) return string.Empty;
 
-        var output = new System.Text.StringBuilder(html.Length);
+        var tagEnd = BuildTagEndTable(html);
+        var output = new StringBuilder(html.Length);
         string? dropping = null;
-        var position = 0;
-        foreach (Match match in SanitizeTagRegex.Matches(html))
+        var position = 0;   // start of the text not yet copied
+        var i = html.IndexOf('<');
+        while (i >= 0)
         {
             if (dropping is null)
-                AppendText(output, html.AsSpan(position, match.Index - position));
-            position = match.Index + match.Length;
+                AppendText(output, html.AsSpan(position, i - position));
 
-            var name = match.Groups["name"].Value;
-            if (name.Length == 0)
+            if (html.AsSpan(i).StartsWith("<!--", StringComparison.Ordinal))
             {
-                if (dropping is null && match.Value == "<") output.Append("&lt;");
-                continue; // comment, or a lone '<'
+                // A comment ends at the first "-->", or at the end of the input.
+                var close = html.IndexOf("-->", i + 4, StringComparison.Ordinal);
+                position = close < 0 ? html.Length : close + 3;
+            }
+            else
+            {
+                var p = i + 1;
+                var closing = p < html.Length && html[p] == '/';
+                if (closing) p++;
+                var nameStart = p;
+                if (p < html.Length && char.IsAsciiLetter(html[p]))
+                {
+                    p++;
+                    while (p < html.Length && char.IsAsciiLetterOrDigit(html[p])) p++;
+                }
+                var end = p > nameStart ? tagEnd[p] : -1;
+
+                if (end < 0)
+                {
+                    // Not a tag: a lone '<' is text, and scanning resumes right after it.
+                    if (dropping is null) output.Append("&lt;");
+                    position = i + 1;
+                }
+                else
+                {
+                    position = end + 1;
+                    var name = html.AsSpan(nameStart, p - nameStart);
+                    var selfClosing = html[end - 1] == '/';
+                    EmitTag(output, html, name, closing, selfClosing, html.AsSpan(p, end - p), ref dropping);
+                }
             }
 
-            var closing = match.Groups["close"].Value.Length > 0;
-            if (dropping is not null)
-            {
-                if (closing && name.Equals(dropping, StringComparison.OrdinalIgnoreCase)) dropping = null;
-                continue;
-            }
-            if (DroppedWithContent.Contains(name))
-            {
-                if (!closing && !match.Value.EndsWith("/>", StringComparison.Ordinal)) dropping = name;
-                continue;
-            }
-            if (!SanitizeAllowedTags.Contains(name)) continue;
-
-            var tag = name.ToLowerInvariant();
-            if (closing)
-            {
-                if (tag is not ("br" or "hr")) output.Append("</").Append(tag).Append('>');
-                continue;
-            }
-            output.Append('<').Append(tag);
-            if (tag == "a" && HrefRegex.Match(match.Groups["attrs"].Value) is { Success: true } href
-                && SafeHref(System.Net.WebUtility.HtmlDecode(href.Groups["v"].Value)) is { } url)
-            {
-                output.Append(" href=\"").Append(Encode(url)).Append("\" rel=\"nofollow noopener noreferrer\"");
-            }
-            output.Append('>');
+            i = position < html.Length ? html.IndexOf('<', position) : -1;
         }
         if (dropping is null && position < html.Length)
             AppendText(output, html.AsSpan(position));
         return output.ToString().Trim();
     }
 
-    private static void AppendText(System.Text.StringBuilder output, ReadOnlySpan<char> text)
+    /// <summary>
+    /// For every position <c>p</c>, the index of the <c>&gt;</c> that ends a tag whose attribute text starts
+    /// at <c>p</c> (the first <c>&gt;</c> outside <c>"…"</c> / <c>'…'</c> quoting), or -1 when the input ends
+    /// first. One right-to-left pass, so every tag start is answered in O(1) and the whole scan is linear.
+    /// </summary>
+    private static int[] BuildTagEndTable(string html)
+    {
+        var n = html.Length;
+        var table = new int[n + 1];
+        table[n] = -1;
+        int nextDouble = -1, nextSingle = -1;   // nearest quote to the right of p
+        for (var p = n - 1; p >= 0; p--)
+        {
+            var c = html[p];
+            table[p] = c switch
+            {
+                '>' => p,
+                '"' => nextDouble < 0 ? -1 : table[nextDouble + 1],
+                '\'' => nextSingle < 0 ? -1 : table[nextSingle + 1],
+                _ => table[p + 1],
+            };
+            if (c == '"') nextDouble = p;
+            else if (c == '\'') nextSingle = p;
+        }
+        return table;
+    }
+
+    private static void EmitTag(StringBuilder output, string html, ReadOnlySpan<char> name, bool closing, bool selfClosing,
+        ReadOnlySpan<char> attrs, ref string? dropping)
+    {
+        if (dropping is not null)
+        {
+            if (closing && name.Equals(dropping, StringComparison.OrdinalIgnoreCase)) dropping = null;
+            return;
+        }
+        if (DroppedLookup.Contains(name))
+        {
+            if (!closing && !selfClosing) dropping = name.ToString();
+            return;
+        }
+        if (!AllowedLookup.Contains(name)) return;
+
+        var tag = name.ToString().ToLowerInvariant();
+        if (closing)
+        {
+            if (tag is not ("br" or "hr")) output.Append("</").Append(tag).Append('>');
+            return;
+        }
+        output.Append('<').Append(tag);
+        if (tag == "a" && HrefRegex().Match(attrs.ToString()) is { Success: true } href
+            && SafeHref(System.Net.WebUtility.HtmlDecode(href.Groups["v"].Value)) is { } url)
+        {
+            output.Append(" href=\"").Append(Encode(url)).Append("\" rel=\"nofollow noopener noreferrer\"");
+        }
+        output.Append('>');
+    }
+
+    private static void AppendText(StringBuilder output, ReadOnlySpan<char> text)
     {
         foreach (var c in text)
         {
@@ -135,7 +215,7 @@ public static class HtmlHelper
     public static string TrimWhitespace(string html)
     {
         if (string.IsNullOrEmpty(html)) return string.Empty;
-        return WhitespaceRegex.Replace(html, " ").Trim();
+        return WhitespaceRegex().Replace(html, " ").Trim();
     }
 
     /// <summary>

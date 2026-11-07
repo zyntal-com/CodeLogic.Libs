@@ -54,6 +54,7 @@ public static class CronParser
         if (!parseResult.IsSuccess) return parseResult.Error!;
 
         var expr  = parseResult.Value!;
+        if (NeverMatches(expr) is { } never) return never;
         var start = (from ?? DateTime.UtcNow).AddMinutes(1);
         // Truncate to the minute
         start = new DateTime(start.Year, start.Month, start.Day, start.Hour, start.Minute, 0, DateTimeKind.Utc);
@@ -85,6 +86,7 @@ public static class CronParser
         if (!parseResult.IsSuccess) return parseResult.Error!;
 
         var expr = parseResult.Value!;
+        if (NeverMatches(expr) is { } never) return never;
         var utc = from.UtcDateTime;
         var start = new DateTime(utc.Year, utc.Month, utc.Day, utc.Hour, utc.Minute, 0, DateTimeKind.Utc).AddMinutes(1);
         var zone = timeZone ?? TimeZoneInfo.Utc;
@@ -103,6 +105,34 @@ public static class CronParser
     }
 
     // ── Field matching ────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// A validation error when some field can match no value of its range (<c>99 * * * *</c>, <c>0 0 0 * *</c>,
+    /// <c>0 0 * 13 *</c>), so the minute-by-minute search would scan a whole year for nothing; null otherwise.
+    /// </summary>
+    private static Error? NeverMatches(CronExpression expr)
+    {
+        if (!CanMatchAny(expr.Minutes, 0, 59)) return Impossible("minutes", expr.Minutes);
+        if (!CanMatchAny(expr.Hours, 0, 23)) return Impossible("hours", expr.Hours);
+        if (!CanMatchAny(expr.Month, 1, 12)) return Impossible("month", expr.Month);
+
+        var dom = CanMatchAny(expr.DayOfMonth, 1, 31);
+        var dow = CanMatchAny(expr.DayOfWeek, 0, 6);
+        // Both restricted: either may match a day; otherwise both must (see MatchesTime).
+        if (IsRestricted(expr.DayOfMonth) && IsRestricted(expr.DayOfWeek) ? !(dom || dow) : !(dom && dow))
+            return Impossible(dom ? "day-of-week" : "day-of-month", dom ? expr.DayOfWeek : expr.DayOfMonth);
+        return null;
+
+        static Error Impossible(string field, string value) =>
+            Error.Validation(ErrorCode.InvalidFormat, $"Cron field {field} '{value}' can never match; the expression never fires.");
+    }
+
+    private static bool CanMatchAny(string field, int min, int max)
+    {
+        for (var value = min; value <= max; value++)
+            if (Matches(field, value, min, max)) return true;
+        return false;
+    }
 
     private static bool MatchesTime(CronExpression expr, DateTime t)
     {

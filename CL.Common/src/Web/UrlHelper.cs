@@ -22,12 +22,13 @@ public static class UrlHelper
 
     /// <summary>
     /// Combines a base URL and a relative path, handling trailing/leading slashes correctly.
-    /// Example: Combine("https://api.example.com/", "/users") → "https://api.example.com/users"
+    /// Example: Combine("https://api.example.com/", "/users") → "https://api.example.com/users".
+    /// A null argument counts as empty.
     /// </summary>
-    public static string Combine(string baseUrl, string relativePath)
+    public static string Combine(string? baseUrl, string? relativePath)
     {
-        baseUrl      = baseUrl.TrimEnd('/');
-        relativePath = relativePath.TrimStart('/');
+        baseUrl      = (baseUrl ?? string.Empty).TrimEnd('/');
+        relativePath = (relativePath ?? string.Empty).TrimStart('/');
         return $"{baseUrl}/{relativePath}";
     }
 
@@ -55,8 +56,9 @@ public static class UrlHelper
     }
 
     /// <summary>
-    /// Parses a query string into a dictionary of key-value pairs.
-    /// Example: "?foo=bar&amp;baz=1" → { "foo": "bar", "baz": "1" }
+    /// Parses a query string into a dictionary of key-value pairs, decoding percent-escapes and, as in
+    /// form encoding (<c>application/x-www-form-urlencoded</c>), <c>+</c> as a space. A fragment is ignored.
+    /// Example: "?foo=bar&amp;baz=1&amp;q=a+b" → { "foo": "bar", "baz": "1", "q": "a b" }
     /// </summary>
     public static Dictionary<string, string> ParseQuery(string url)
     {
@@ -65,16 +67,21 @@ public static class UrlHelper
 
         var queryStart = url.IndexOf('?');
         var query      = queryStart >= 0 ? url[(queryStart + 1)..] : url;
+        var fragment   = query.IndexOf('#');
+        if (fragment >= 0) query = query[..fragment];
 
         foreach (var pair in query.Split('&', StringSplitOptions.RemoveEmptyEntries))
         {
             var idx = pair.IndexOf('=');
-            if (idx < 0) { result[Decode(pair)] = string.Empty; continue; }
-            var key   = Decode(pair[..idx]);
-            var value = Decode(pair[(idx + 1)..]);
+            if (idx < 0) { result[DecodeComponent(pair)] = string.Empty; continue; }
+            var key   = DecodeComponent(pair[..idx]);
+            var value = DecodeComponent(pair[(idx + 1)..]);
             result[key] = value;
         }
         return result;
+
+        // "+" is a space in a query component; Uri.UnescapeDataString leaves it alone.
+        static string DecodeComponent(string component) => Uri.UnescapeDataString(component.Replace('+', ' '));
     }
 
     /// <summary>Extracts just the domain (host) from a URL. Returns empty string on failure.</summary>

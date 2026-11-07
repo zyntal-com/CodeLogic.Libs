@@ -10,17 +10,26 @@ namespace CL.Common.Web;
 /// Provides utilities for working with HTTP headers, client detection,
 /// and IP address utilities. Framework-agnostic — pass header values directly.
 /// </summary>
-public static class HttpHeaderHelper
+public static partial class HttpHeaderHelper
 {
     // ── Accept-Language ───────────────────────────────────────────────────────
 
+    /// <summary>The locale <see cref="GetPrimaryLocale"/> returns when the header holds no well-formed tag.</summary>
+    public const string DefaultLocale = "en-US";
+
+    // BCP 47 shape: a 1-8 letter primary subtag, then "-" separated 1-8 letter/digit subtags.
+    [GeneratedRegex(@"^[A-Za-z]{1,8}(-[A-Za-z0-9]{1,8})*$")]
+    private static partial Regex LanguageTagRegex();
+
     /// <summary>
-    /// Parses an Accept-Language header value and returns the preferred culture.
-    /// Example: "da-DK,da;q=0.9,en-US;q=0.8" → "da-DK"
+    /// Parses an Accept-Language header value and returns the preferred language tag.
+    /// Example: "da-DK,da;q=0.9,en-US;q=0.8" → "da-DK". Only well-formed tags are considered
+    /// (<c>^[A-Za-z]{1,8}(-[A-Za-z0-9]{1,8})*$</c>): the header is client input, so anything else, including
+    /// the <c>*</c> wildcard, is skipped, and <see cref="DefaultLocale"/> is returned when nothing is left.
     /// </summary>
     public static string GetPrimaryLocale(string? acceptLanguageHeader)
     {
-        if (string.IsNullOrWhiteSpace(acceptLanguageHeader)) return "en-US";
+        if (string.IsNullOrWhiteSpace(acceptLanguageHeader)) return DefaultLocale;
 
         return acceptLanguageHeader
             .Split(',')
@@ -29,13 +38,14 @@ public static class HttpHeaderHelper
                 var parts = lang.Trim().Split(';');
                 var tag   = parts[0].Trim();
                 var q     = 1.0;
-                if (parts.Length > 1 && parts[1].Trim().StartsWith("q="))
-                    double.TryParse(parts[1][2..].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out q);
+                if (parts.Length > 1 && parts[1].Trim().StartsWith("q=", StringComparison.Ordinal))
+                    double.TryParse(parts[1].Trim()[2..].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out q);
                 return (tag, q);
             })
+            .Where(x => x.tag.Length <= 64 && LanguageTagRegex().IsMatch(x.tag))
             .OrderByDescending(x => x.q)
             .Select(x => x.tag)
-            .FirstOrDefault(t => !string.IsNullOrEmpty(t)) ?? "en-US";
+            .FirstOrDefault() ?? DefaultLocale;
     }
 
     // ── Client IP ─────────────────────────────────────────────────────────────
@@ -162,21 +172,19 @@ public static class HttpHeaderHelper
 
     // ── User-Agent ────────────────────────────────────────────────────────────
 
-    private static readonly Regex BotRegex = new(
-        @"bot|crawler|spider|scraper|baiduspider|ia_archiver|wget|curl|python|java|go-http",
-        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    [GeneratedRegex(@"bot|crawler|spider|scraper|baiduspider|ia_archiver|wget|curl|python|java|go-http", RegexOptions.IgnoreCase)]
+    private static partial Regex BotRegex();
+
+    [GeneratedRegex(@"android|iphone|ipad|ipod|windows phone|mobile", RegexOptions.IgnoreCase)]
+    private static partial Regex MobileRegex();
 
     /// <summary>Returns true if the User-Agent string matches known bot/crawler patterns.</summary>
     public static bool IsBot(string? userAgent) =>
-        !string.IsNullOrWhiteSpace(userAgent) && BotRegex.IsMatch(userAgent);
+        !string.IsNullOrWhiteSpace(userAgent) && BotRegex().IsMatch(userAgent);
 
     /// <summary>Returns true if the User-Agent suggests a mobile device.</summary>
-    public static bool IsMobile(string? userAgent)
-    {
-        if (string.IsNullOrWhiteSpace(userAgent)) return false;
-        return Regex.IsMatch(userAgent, @"android|iphone|ipad|ipod|windows phone|mobile",
-            RegexOptions.IgnoreCase);
-    }
+    public static bool IsMobile(string? userAgent) =>
+        !string.IsNullOrWhiteSpace(userAgent) && MobileRegex().IsMatch(userAgent);
 
     // ── Content negotiation ───────────────────────────────────────────────────
 

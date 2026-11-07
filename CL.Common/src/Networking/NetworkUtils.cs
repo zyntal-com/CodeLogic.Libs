@@ -54,7 +54,7 @@ public static class NetworkPing
         try
         {
             using var ping = new Ping();
-            var reply = await ping.SendPingAsync(host, timeout);
+            var reply = await ping.SendPingAsync(host, timeout).ConfigureAwait(false);
             return reply.Status switch
             {
                 IPStatus.Success => new PingResponse(host, reply.Address.ToString(), reply.RoundtripTime),
@@ -95,7 +95,7 @@ public static class NetworkDns
         ArgumentException.ThrowIfNullOrEmpty(hostname);
         try
         {
-            var addresses = await Dns.GetHostAddressesAsync(hostname);
+            var addresses = await Dns.GetHostAddressesAsync(hostname).ConfigureAwait(false);
             var result = addresses.Select(a => a.ToString()).ToArray();
             return Result<string[]>.Success(result);
         }
@@ -191,7 +191,7 @@ public static class TraceRoute
             for (int ttl = 1; ttl <= maxHops; ttl++)
             {
                 options.Ttl = ttl;
-                var reply = await ping.SendPingAsync(host, 3000, new byte[32], options);
+                var reply = await ping.SendPingAsync(host, 3000, new byte[32], options).ConfigureAwait(false);
 
                 var address = reply.Address?.ToString() ?? "*";
                 var ms = reply.Status is IPStatus.Success or IPStatus.TtlExpired

@@ -15,7 +15,7 @@ public static class FileSystem
         {
             if (!File.Exists(path))
                 return Error.NotFound(ErrorCode.FileNotFound, $"File not found: {path}");
-            return await File.ReadAllTextAsync(path);
+            return await File.ReadAllTextAsync(path).ConfigureAwait(false);
         }
         catch (Exception ex) { return Error.Internal(ErrorCode.FileReadFailed, $"Failed to read '{path}'", ex.Message); }
     }
@@ -27,7 +27,7 @@ public static class FileSystem
         {
             var dir = Path.GetDirectoryName(path);
             if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
-            await File.WriteAllTextAsync(path, content);
+            await File.WriteAllTextAsync(path, content).ConfigureAwait(false);
             return Result.Success();
         }
         catch (Exception ex) { return Error.Internal(ErrorCode.FileWriteFailed, $"Failed to write '{path}'", ex.Message); }
@@ -40,7 +40,7 @@ public static class FileSystem
         {
             if (!File.Exists(path))
                 return Error.NotFound(ErrorCode.FileNotFound, $"File not found: {path}");
-            return await File.ReadAllBytesAsync(path);
+            return await File.ReadAllBytesAsync(path).ConfigureAwait(false);
         }
         catch (Exception ex) { return Error.Internal(ErrorCode.FileReadFailed, $"Failed to read '{path}'", ex.Message); }
     }
@@ -52,7 +52,7 @@ public static class FileSystem
         {
             var dir = Path.GetDirectoryName(path);
             if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
-            await File.WriteAllBytesAsync(path, data);
+            await File.WriteAllBytesAsync(path, data).ConfigureAwait(false);
             return Result.Success();
         }
         catch (Exception ex) { return Error.Internal(ErrorCode.FileWriteFailed, $"Failed to write '{path}'", ex.Message); }
@@ -74,9 +74,13 @@ public static class FileSystem
             var dir = Path.GetDirectoryName(dest);
             if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
 
-            await using var src = File.OpenRead(source);
-            await using var dst = File.Open(dest, overwrite ? FileMode.Create : FileMode.CreateNew);
-            await src.CopyToAsync(dst);
+            var src = File.OpenRead(source);
+            await using (src.ConfigureAwait(false))
+            {
+                var dst = File.Open(dest, overwrite ? FileMode.Create : FileMode.CreateNew);
+                await using (dst.ConfigureAwait(false))
+                    await src.CopyToAsync(dst).ConfigureAwait(false);
+            }
             return Result.Success();
         }
         catch (Exception ex) { return Error.Internal(ErrorCode.Internal, $"Failed to copy '{source}' to '{dest}'", ex.Message); }

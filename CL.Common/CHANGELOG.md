@@ -34,6 +34,19 @@ All notable changes to **CodeLogic.Common** are documented here. Versions follow
   `LegacyPasswordIterations`, `PasswordHashPrefix`.
 - `StringValidator.MatchesPattern` runs the caller's regex with a timeout (optional `matchTimeout`, default
   `StringValidator.DefaultMatchTimeout`, 1 s); a timed-out match returns `false` (ReDoS guard).
+- **`HtmlHelper.Sanitize` runs in linear time** (audit 2026-11). Its tag regex was quadratic on input such as
+  `<a <a <a …` or unbalanced quotes, with no timeout, so a few hundred KB of user HTML could pin a CPU core. Tags
+  are now found by a single linear scan (no regex); `StripTags` uses a `NonBacktracking` regex. Output for
+  well-formed input is unchanged.
+- **`HttpHeaderHelper.GetPrimaryLocale` validates the tag.** It returned raw header text (anything up to the first
+  `,`/`;`), which callers put into cookies, paths and culture lookups. Only BCP 47-shaped tags
+  (`^[A-Za-z]{1,8}(-[A-Za-z0-9]{1,8})*$`) are considered; otherwise `HttpHeaderHelper.DefaultLocale` (`"en-US"`).
+- **`Encryption` blobs are versioned and use 600 000 PBKDF2 iterations** (was 100 000). New blobs start with a
+  version byte (`0x01`); `DecryptAes` / `DecryptBytes` still read the unversioned pre-5.0 layout. New constants
+  `Encryption.Iterations` and `Encryption.LegacyIterations`.
+- `HttpClientHelper` validates request headers (`Headers.Add`), so a value with a line break fails the call instead
+  of being sent; `User-Agent`, `Authorization`, `Proxy-Authorization`, `Cookie` and `Referer` stay unvalidated, and
+  content headers (`Content-Type`, `Content-Language`, …) go on the body.
 - `HttpClientHelper` puts at most `MaxErrorBodyLength` (256) characters of a failed response body into
   `Error.Message`, followed by the full length, instead of the whole body.
 
@@ -41,6 +54,15 @@ All notable changes to **CodeLogic.Common** are documented here. Versions follow
 
 - `CronParser`: when both day-of-month and day-of-week are restricted (neither starts with `*`), a day matches if
   **either** matches, as in standard cron (`0 0 1 * 1` = the 1st and every Monday). It used to require both.
+- `CronParser.GetNextOccurrence` fails at once with a validation error when a field can never match (`99 * * * *`,
+  `0 0 0 * *`, `0 0 * 13 *`) instead of scanning a year minute by minute and returning an internal error.
+- `UrlHelper.ParseQuery` decodes `+` as a space (form encoding) and ignores a `#fragment`; `UrlHelper.Combine`
+  treats a null argument as empty instead of throwing.
+- `IdGenerator.RandomHex` throws `ArgumentOutOfRangeException` for a zero or negative length, like the other
+  generators (it returned `""` or threw from a slice).
+- `HttpHeaderHelper.IsBot` / `IsMobile` and `StringValidator` use source-generated regexes (`[GeneratedRegex]`).
+- `ConfigureAwait(false)` on the awaits of `HttpClientHelper`, `FileSystem`, `JsonHelper`, `NetworkUtils`;
+  `CommonLibrary` lifecycle methods no longer use `async`.
 - `StringHelper.Truncate` no longer throws when `maxLength` is smaller than the suffix; the result never exceeds
   `maxLength` (clipped without the suffix when it does not fit; empty for `maxLength <= 0`).
 - `DateTimeHelper.NextBusinessDay`: the XML doc claimed it returns the same day for a business day; the method
@@ -60,6 +82,14 @@ All notable changes to **CodeLogic.Common** are documented here. Versions follow
   when the remote address is missing or unparsable (it used to echo the raw string).
 - **`Hashing.HashPassword` output format changed** (see Security). Hashes from 4.x still verify; code that
   parsed the old Base64 layout itself, or verifies with another stack, must handle the new format.
+- **`Encryption` output format changed**: new blobs carry a version byte and use 600 000 iterations. 5.0 decrypts
+  both formats; 4.x cannot decrypt blobs written by 5.0. `DecryptAes` throws `CryptographicException` (not
+  `FormatException`) for invalid Base64, as its documentation said.
+- **`ICache<TKey>.Set` / `MemoryCache.Set` return `bool`**: `false` when the entry is larger than `SizeLimit` and was
+  not stored (it used to be dropped silently). Source compatible for callers; custom `ICache` implementations
+  must change their signature.
+- `HttpHeaderHelper.GetPrimaryLocale` returns `"en-US"` for headers whose preferred entry is not a well-formed
+  language tag (including `*`) instead of echoing it.
 - `CompressionHelper.Decompress*` reject output above 100 MiB by default; pass `maxOutputBytes` for larger
   payloads. The new optional parameters are source compatible but change the method signatures (recompile).
 
