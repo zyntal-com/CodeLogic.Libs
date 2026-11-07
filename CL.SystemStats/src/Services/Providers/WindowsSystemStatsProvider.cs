@@ -50,6 +50,9 @@ public sealed class WindowsSystemStatsProvider : ISystemStatsProvider
     private PerformanceCounter? _overallCpuCounter;
     private PerformanceCounter?[] _coreCounters = [];
     private bool _countersAvailable;
+    // PerformanceCounter.NextValue() measures since the previous call on the same counter: two overlapping
+    // readings corrupt each other, so samplings are serialised. Never disposed (waiters would hang).
+    private readonly SemaphoreSlim _sampling = new(1, 1);
 
     /// <summary>
     /// Initializes the Windows stats provider.
@@ -184,6 +187,7 @@ public sealed class WindowsSystemStatsProvider : ISystemStatsProvider
     // ── CPU Stats ────────────────────────────────────────────────────────────
 
     /// <inheritdoc/>
+    /// <remarks>Samplings are serialised: concurrent calls read the counters one after the other.</remarks>
     public async Task<Result<CpuStats>> GetCpuStatsAsync()
     {
         try
@@ -193,21 +197,33 @@ public sealed class WindowsSystemStatsProvider : ISystemStatsProvider
 
             if (_countersAvailable && _overallCpuCounter is not null)
             {
-                // Allow the counter to stabilise
-                await Task.Delay(_config.CpuSamplingIntervalMs);
-                overall = Math.Round(_overallCpuCounter.NextValue(), 2);
-
-                // Per-core counters were primed at initialization, so each reading covers the same interval.
-                foreach (var counter in _coreCounters)
+                await _sampling.WaitAsync().ConfigureAwait(false);
+                try
                 {
-                    try
+                    var overallCounter = _overallCpuCounter;
+                    if (overallCounter is null)
+                        return Result<CpuStats>.Failure(Error.Unavailable(SystemStatsErrorCodes.CpuStats, "The provider has been disposed"));
+
+                    // Allow the counter to stabilise
+                    await Task.Delay(_config.CpuSamplingIntervalMs).ConfigureAwait(false);
+                    overall = Math.Round(overallCounter.NextValue(), 2);
+
+                    // Per-core counters were primed at initialization, so each reading covers the same interval.
+                    foreach (var counter in _coreCounters)
                     {
-                        perCore.Add(counter is null ? 0.0 : Math.Round(counter.NextValue(), 2));
+                        try
+                        {
+                            perCore.Add(counter is null ? 0.0 : Math.Round(counter.NextValue(), 2));
+                        }
+                        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
+                        {
+                            perCore.Add(0.0);
+                        }
                     }
-                    catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
-                    {
-                        perCore.Add(0.0);
-                    }
+                }
+                finally
+                {
+                    _sampling.Release();
                 }
             }
             else
@@ -348,19 +364,19 @@ public sealed class WindowsSystemStatsProvider : ISystemStatsProvider
     /// <inheritdoc/>
     public async Task<Result<IReadOnlyList<ProcessStats>>> GetTopProcessesByCpuAsync(int topCount)
     {
-        var result = await GetAllProcessesAsync();
+        var result = await GetAllProcessesAsync().ConfigureAwait(false);
         if (result.IsFailure) return result;
         // Per-process CPU% requires sampling processor time over an interval — a single
         // snapshot can't measure it. Delegate to the shared sampler.
         var top = await ProcessCpuSampler.TopByCpuAsync(
-            result.Value!, _config.CpuSamplingIntervalMs, topCount);
+            result.Value!, _config.CpuSamplingIntervalMs, topCount).ConfigureAwait(false);
         return Result<IReadOnlyList<ProcessStats>>.Success(top);
     }
 
     /// <inheritdoc/>
     public async Task<Result<IReadOnlyList<ProcessStats>>> GetTopProcessesByMemoryAsync(int topCount)
     {
-        var result = await GetAllProcessesAsync();
+        var result = await GetAllProcessesAsync().ConfigureAwait(false);
         if (result.IsFailure) return result;
         var top = result.Value!.OrderByDescending(p => p.WorkingSetBytes).Take(topCount).ToList();
         return Result<IReadOnlyList<ProcessStats>>.Success(top);
@@ -371,20 +387,20 @@ public sealed class WindowsSystemStatsProvider : ISystemStatsProvider
     /// <inheritdoc/>
     public async Task<Result<SystemSnapshot>> GetSystemSnapshotAsync()
     {
-        var cpuResult = await GetCpuStatsAsync();
+        var cpuResult = await GetCpuStatsAsync().ConfigureAwait(false);
         if (cpuResult.IsFailure)
             return Result<SystemSnapshot>.Failure(cpuResult.Error!);
 
-        var memResult = await GetMemoryStatsAsync();
+        var memResult = await GetMemoryStatsAsync().ConfigureAwait(false);
         if (memResult.IsFailure)
             return Result<SystemSnapshot>.Failure(memResult.Error!);
 
-        var uptimeResult = await GetSystemUptimeAsync();
+        var uptimeResult = await GetSystemUptimeAsync().ConfigureAwait(false);
         if (uptimeResult.IsFailure)
             return Result<SystemSnapshot>.Failure(uptimeResult.Error!);
 
-        var topCpu = await GetTopProcessesByCpuAsync(_config.MaxTopProcesses);
-        var topMem = await GetTopProcessesByMemoryAsync(_config.MaxTopProcesses);
+        var topCpu = await GetTopProcessesByCpuAsync(_config.MaxTopProcesses).ConfigureAwait(false);
+        var topMem = await GetTopProcessesByMemoryAsync(_config.MaxTopProcesses).ConfigureAwait(false);
 
         var snapshot = new SystemSnapshot(
             cpuResult.Value!,

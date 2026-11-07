@@ -27,7 +27,7 @@ await CodeLogic.StartAsync();
 var sys = Libraries.Get<SystemStatsLibrary>();
 ```
 
-The library forwards all stats methods, so `sys.GetCpuStatsAsync()` and `sys.Stats.GetCpuStatsAsync()` are equivalent. The `Stats` property (a `SystemStatsService`) additionally exposes `ClearCache()`, `GetPlatformInfo()`, and `IsInitialized`.
+The library forwards all stats methods, so `sys.GetCpuStatsAsync()` and `sys.Stats.GetCpuStatsAsync()` are equivalent. The `Stats` property (a `SystemStatsService`) additionally exposes `ClearCache()`, `GetPlatformInfo()`, and `IsInitialized`. The library is `IAsyncDisposable`: `OnStopAsync` disposes the service and provider, and a later `Dispose()` / `DisposeAsync()` does nothing.
 
 ## How readings work across platforms
 
@@ -211,7 +211,7 @@ public sealed record SystemSnapshot(
     DateTime                    TakenAt);
 ```
 
-A snapshot takes fresh (uncached) CPU, memory and uptime readings; its CPU reading is smoothed like `GetCpuStatsAsync()`. Taking a snapshot publishes `SystemSnapshotTakenEvent`, and because it reads CPU and memory stats it also runs the CPU and memory threshold checks (so it can publish `HighCpuUsageEvent` / `HighMemoryUsageEvent`).
+A snapshot takes fresh (uncached) CPU, memory and uptime readings; its CPU reading is smoothed like `GetCpuStatsAsync()`. CPU samplings are serialised across the service, so concurrent snapshots and CPU reads take their samples one after the other (overlapping PerformanceCounter reads would corrupt each other); under load a snapshot can therefore take a few sampling intervals. Taking a snapshot publishes `SystemSnapshotTakenEvent`, and because it reads CPU and memory stats it also runs the CPU and memory threshold checks (so it can publish `HighCpuUsageEvent` / `HighMemoryUsageEvent`).
 
 ## Caching
 

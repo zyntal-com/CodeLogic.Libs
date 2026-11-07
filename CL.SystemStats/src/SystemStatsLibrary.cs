@@ -20,7 +20,7 @@ namespace CL.SystemStats;
 /// </list>
 /// </para>
 /// </summary>
-public sealed class SystemStatsLibrary : ILibrary
+public sealed class SystemStatsLibrary : ILibrary, IAsyncDisposable
 {
     /// <inheritdoc/>
     public LibraryManifest Manifest { get; } = new()
@@ -74,7 +74,7 @@ public sealed class SystemStatsLibrary : ILibrary
 
         _service = new SystemStatsService(provider, config, context.Events, context.Logger);
 
-        await _service.InitializeAsync();
+        await _service.InitializeAsync().ConfigureAwait(false);
 
         context.Logger.Info($"{Manifest.Name} initialized — using {_service.GetPlatformInfo()}");
     }
@@ -95,13 +95,7 @@ public sealed class SystemStatsLibrary : ILibrary
     public async Task OnStopAsync()
     {
         _context?.Logger.Info($"Stopping {Manifest.Name}");
-
-        if (_service is not null)
-        {
-            await _service.DisposeAsync();
-            _service = null;
-        }
-
+        await DisposeAsync().ConfigureAwait(false);
         _context?.Logger.Info($"{Manifest.Name} stopped");
     }
 
@@ -115,7 +109,7 @@ public sealed class SystemStatsLibrary : ILibrary
 
         try
         {
-            var result = await _service.GetCpuStatsAsync();
+            var result = await _service.GetCpuStatsAsync().ConfigureAwait(false);
             return result.IsSuccess
                 ? HealthStatus.Healthy($"CPU: {result.Value!.OverallUsagePercent:F1}% | Platform: {_service.GetPlatformInfo()}")
                 : HealthStatus.Degraded($"CPU stats unavailable: {result.Error}");
@@ -174,13 +168,31 @@ public sealed class SystemStatsLibrary : ILibrary
     public Task<Result<Models.SystemSnapshot>> GetSystemSnapshotAsync() =>
         Stats.GetSystemSnapshotAsync();
 
-    // ── IDisposable ───────────────────────────────────────────────────────────
+    // ── Disposal ──────────────────────────────────────────────────────────────
 
-    /// <inheritdoc/>
+    /// <summary>
+    /// Disposes the stats service and its provider. Safe to call more than once and after
+    /// <see cref="OnStopAsync"/> (which already disposed them): then it does nothing.
+    /// </summary>
+    public async ValueTask DisposeAsync()
+    {
+        var service = Interlocked.Exchange(ref _service, null);
+        if (service is not null)
+            await service.DisposeAsync().ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Synchronous disposal for <see cref="IDisposable"/>. The providers release their resources
+    /// synchronously, so this does not block; prefer <see cref="DisposeAsync"/> or <see cref="OnStopAsync"/>.
+    /// A no-op after either of them has run.
+    /// </summary>
     public void Dispose()
     {
-        _service?.DisposeAsync().AsTask().GetAwaiter().GetResult();
-        _service = null;
+        var service = Interlocked.Exchange(ref _service, null);
+        if (service is null) return;
+        var pending = service.DisposeAsync();
+        if (!pending.IsCompleted)
+            pending.AsTask().GetAwaiter().GetResult();   // only if a provider ever disposes asynchronously
     }
 
     // ── Provider factory ──────────────────────────────────────────────────────
