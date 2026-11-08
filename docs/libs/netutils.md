@@ -21,6 +21,8 @@ dotnet add package CodeLogic.NetUtils
 
 ```csharp
 using CL.NetUtils;
+using CL.NetUtils.Models;   // DnsblCheck, IpLocation, DnsblCheckRequest, NetUtilsErrorCodes
+using CodeLogic.Core.Results;
 
 await Libraries.LoadAsync<NetUtilsLibrary>();   // register before ConfigureAsync()
 await CodeLogic.ConfigureAsync();
@@ -33,36 +35,42 @@ The library exposes four members:
 
 | Member | Type | Notes |
 |--------|------|-------|
-| `Dnsbl` | `DnsblChecker` | Always available once the library has initialized (throws only before that). While DNSBL checking is switched off (`enabled` or `dnsbl.enabled` is `false`), `Dnsbl.IsEnabled` is `false` and every check returns `Status = Error` with `ErrorMessage` "DNSBL checking is disabled", without a DNS query. |
+| `Dnsbl` | `DnsblChecker` | Always available once the library has initialized (throws only before that). While DNSBL checking is switched off (`enabled` or `dnsbl.enabled` is `false`), `Dnsbl.IsEnabled` is `false` and every check fails with `netutils.dnsbl_disabled` ("DNSBL checking is disabled"), without a DNS query. |
 | `HasDnsbl` | `bool` | `true` when DNSBL checking is enabled. |
 | `GeoIp` | `GeoIpService` | **Throws** if accessed when no database is available — guard with `HasGeoIp`. |
 | `HasGeoIp` | `bool` | `true` only when a GeoIP database loaded successfully on startup. |
 
 ## DNSBL checking
 
-`DnsblChecker.CheckIpAsync` resolves the address against one or more DNSBL zones and returns a `DnsblCheckResult`. Two overloads are available.
+`DnsblChecker.CheckIpAsync` resolves the address against one or more DNSBL zones and returns a `Result<DnsblCheck>`. A check that ran is a success whatever the verdict (`DnsblCheck.Status`); a check that could not run is an `Error` (see [Errors](#errors)). Two overloads are available.
 
 ### Using the configured zones
 
 The no-request overload uses the zones from `config.netutils.json`:
 
 ```csharp
-DnsblCheckResult result = await net.Dnsbl.CheckIpAsync("203.0.113.1");
+Result<DnsblCheck> result = await net.Dnsbl.CheckIpAsync("203.0.113.1");
 
-switch (result.Status)
+switch (result)
 {
-    case DnsblCheckStatus.Blacklisted:
-        Console.WriteLine($"Listed by {result.MatchedService}");
+    case DnsblCheck check:
+        Console.WriteLine(check.Status switch
+        {
+            DnsblCheckStatus.Blacklisted    => $"Listed by {check.MatchedService}",
+            // No zone that answered lists it, but these zones could not be checked.
+            DnsblCheckStatus.Indeterminate  => $"Unknown: {string.Join(", ", check.FailedServices)} did not answer",
+            DnsblCheckStatus.NotBlacklisted => "Clean.",
+            _                               => $"Unexpected status {check.Status}",
+        });
         break;
-    case DnsblCheckStatus.Indeterminate:
-        // No zone that answered lists it, but these zones could not be checked.
-        Console.WriteLine($"Unknown: {string.Join(", ", result.FailedServices)} did not answer");
+    case ValidationError e:            // netutils.invalid_ip_address
+        Console.WriteLine($"Not an IP address: {e.Message}");
         break;
-    case DnsblCheckStatus.Error:
-        Console.WriteLine($"Check failed: {result.ErrorMessage}");
+    case UnavailableError { Code: NetUtilsErrorCodes.Cancelled }:
+        Console.WriteLine("Check cancelled.");
         break;
-    case DnsblCheckStatus.NotBlacklisted:
-        Console.WriteLine("Clean.");
+    case Error e:                      // netutils.dnsbl_disabled, netutils.dnsbl_check_failed
+        Console.WriteLine($"Check did not run: [{e.Code}] {e.Message}");
         break;
 }
 ```
@@ -88,9 +96,9 @@ A zone counts as answered "not listed" on NXDOMAIN or no A record, or when it on
 
 ### Per-call overrides with `DnsblCheckRequest`
 
-Apps that store their own DNSBL zones or IP allowlists (e.g. in a database) can bypass the static config with the request overload. Supply per-call service lists, a timeout, and an optional async allowlist predicate — returning `true` from `IsAllowedAsync` skips all DNSBL queries for that IP and returns **not blacklisted**. The predicate receives the address in canonical form (`1.2.3.4` for the inputs `1.2.3.4`, `::ffff:1.2.3.4` and `0x01.0x02.0x03.0x04`), so an allowlist compares one spelling; `DnsblCheckResult.IpAddress` still echoes the caller's text.
+Apps that store their own DNSBL zones or IP allowlists (e.g. in a database) can bypass the static config with the request overload. Supply per-call service lists, a timeout, and an optional async allowlist predicate — returning `true` from `IsAllowedAsync` skips all DNSBL queries for that IP and returns **not blacklisted**. The predicate receives the address in canonical form (`1.2.3.4` for the inputs `1.2.3.4`, `::ffff:1.2.3.4` and `0x01.0x02.0x03.0x04`), so an allowlist compares one spelling; `DnsblCheck.IpAddress` still echoes the caller's text.
 
-A check whose cancellation token fires returns `Status = DnsblCheckStatus.Cancelled` (`IsBlacklisted` false, no zones reported): the caller's own abort, distinguishable from `Error` (the check could not run) and `Indeterminate` (zones failed).
+A check whose cancellation token fires fails with an `UnavailableError` coded `netutils.cancelled`: the caller's own abort, never a verdict on the address, and distinguishable from `Indeterminate` (zones failed). Nothing is thrown.
 
 ```csharp
 var request = new DnsblCheckRequest
@@ -104,7 +112,7 @@ var request = new DnsblCheckRequest
     IsAllowedAsync       = async (ip, ct) => await myAllowlist.ContainsAsync(ip, ct),
 };
 
-DnsblCheckResult result = await net.Dnsbl.CheckIpAsync("203.0.113.1", request);
+Result<DnsblCheck> result = await net.Dnsbl.CheckIpAsync("203.0.113.1", request);
 ```
 
 `DnsblCheckRequest` (sealed class) fields:
@@ -120,23 +128,22 @@ DnsblCheckResult result = await net.Dnsbl.CheckIpAsync("203.0.113.1", request);
 | `ParallelQueries` | `bool` | `true` | Query the zones of a list concurrently; `false` queries them one at a time and stops at the first listing. |
 | `DetailedLogging` | `bool` | `false` | Log each zone query. |
 
-### `DnsblCheckResult`
+### `DnsblCheck`
 
 ```csharp
-public sealed record DnsblCheckResult
+public sealed record DnsblCheck
 {
-    public string IpAddress { get; init; }
-    public DnsblCheckStatus Status { get; init; }   // NotBlacklisted | Blacklisted | Indeterminate | Error
-    public bool IsBlacklisted { get; init; }
-    public string? MatchedService { get; init; }   // the zone that matched, or null
+    public required string IpAddress { get; init; }            // the caller's text
+    public required IpAddressType AddressType { get; init; }   // IPv4 | IPv6 | Unknown
+    public required DnsblCheckStatus Status { get; init; }     // NotBlacklisted | Blacklisted | Indeterminate
+    public bool IsBlacklisted { get; }                         // Status == Blacklisted
+    public string? MatchedService { get; init; }               // the zone that matched, or null
     public IReadOnlyList<string> FailedServices { get; init; } // zones that could not be checked
-    public IpAddressType AddressType { get; init; } // IPv4 | IPv6 | Unknown
-    public string? ErrorMessage { get; init; }      // set for Error and Indeterminate
-    public DateTime CheckedAt { get; init; }        // UTC
+    public DateTime CheckedAt { get; init; }                   // UTC
 }
 ```
 
-The record exposes `Blacklisted`, `NotBlacklisted`, `Indeterminate`, and `Error` factory methods used internally to build each outcome. `IsBlacklisted` is `false` for `Indeterminate`, so code that only checks `IsBlacklisted` treats an unchecked address as allowed; check `Status` to decide yourself.
+`IsBlacklisted` is `false` for `Indeterminate`, so code that only checks `IsBlacklisted` treats an unchecked address as allowed; check `Status` to decide yourself.
 
 ## GeoIP
 
@@ -154,13 +161,20 @@ The edition is read from the database's metadata (`GeoIpService.LoadedDatabaseTy
 
 Other editions (Anonymous-IP, Connection-Type, Domain) carry no location data and fail initialization.
 
+`LookupIpAsync` returns a `Result<IpLocation>`: the location data, or an `Error` (see [Errors](#errors)).
+
 ```csharp
 if (net.HasGeoIp)
 {
-    IpLocationResult geo = await net.GeoIp.LookupIpAsync("203.0.113.1");
-    if (geo.IsSuccessful)
-        Console.WriteLine($"{geo.CityName}, {geo.CountryName} ({geo.CountryCode}) " +
-                          $"[{geo.Latitude}, {geo.Longitude}] {geo.TimeZone}");
+    Result<IpLocation> geo = await net.GeoIp.LookupIpAsync("203.0.113.1");
+    Console.WriteLine(geo switch
+    {
+        IpLocation l     => $"{l.CityName}, {l.CountryName} ({l.CountryCode}) [{l.Latitude}, {l.Longitude}] {l.TimeZone}",
+        NotFoundError    => "Not in the database.",            // netutils.location_not_found
+        ValidationError  => "Not an IP address.",              // netutils.invalid_ip_address
+        Error e          => $"Lookup failed: {e.Code}",        // netutils.geoip_unavailable, netutils.geoip_lookup_failed
+        null             => "No result.",
+    });
 }
 ```
 
@@ -190,12 +204,12 @@ To download automatically, set your MaxMind credentials:
 }
 ```
 
-### `IpLocationResult`
+### `IpLocation`
 
 ```csharp
-public sealed record IpLocationResult
+public sealed record IpLocation
 {
-    public string IpAddress { get; init; }
+    public required string IpAddress { get; init; }
     public string? CountryName { get; init; }
     public string? CountryCode { get; init; }     // ISO alpha-2
     public string? CityName { get; init; }
@@ -207,13 +221,26 @@ public sealed record IpLocationResult
     public string? Isp { get; init; }
     public long? AutonomousSystemNumber { get; init; }        // ASN, ISP, Enterprise
     public string? AutonomousSystemOrganization { get; init; }
-    public string? ErrorMessage { get; init; }
-    public bool IsSuccessful { get; }              // no error && (CountryCode, ASN or Isp set)
     public DateTime LookedUpAt { get; init; }      // UTC
 }
 ```
 
-`IsSuccessful` is the canonical success test — it is `true` only when there is no error **and** data was found: a country code or, for ASN and ISP editions (which have no country), an autonomous system number or ISP. The record exposes `NotFound` and `Error` factory methods for the failure outcomes.
+A lookup succeeds only when data was found: a country code or, for ASN and ISP editions (which have no country), an autonomous system number or ISP. An entry without any of those is `netutils.location_not_found`, like an address the database does not contain.
+
+## Errors
+
+Every failure is an `Error` whose `Code` is a constant in `NetUtilsErrorCodes`; each code always comes with the same kind.
+
+| Code | Constant | Kind | When |
+|------|----------|------|------|
+| `netutils.invalid_ip_address` | `InvalidIpAddress` | `ValidationError` | The text given to a check or lookup is not an IP address. |
+| `netutils.dnsbl_disabled` | `DnsblDisabled` | `UnavailableError` | DNSBL checking is switched off; no query was sent. |
+| `netutils.dnsbl_check_failed` | `DnsblCheckFailed` | `InternalError` | Unexpected exception during a check (e.g. a throwing allowlist). The message is fixed, `Details` is the exception type; the exception is logged. |
+| `netutils.location_not_found` | `LocationNotFound` | `NotFoundError` | No entry for the address, or an entry with no country, ASN or ISP. |
+| `netutils.geoip_unavailable` | `GeoIpUnavailable` | `UnavailableError` | The `GeoIpService` has no open database (not initialized, or disposed). |
+| `netutils.geoip_lookup_failed` | `GeoIpLookupFailed` | `InternalError` | The MaxMind reader failed. The message is fixed, `Details` is the exception type. |
+| `netutils.cancelled` | `Cancelled` | `UnavailableError` | The caller's cancellation token fired (DNSBL check or download). |
+| `netutils.download_*`, `netutils.checksum_*`, `netutils.invalid_database` | see [Download errors](#download-errors) | | GeoIP database download failures. |
 
 ## Configuration
 
@@ -282,22 +309,22 @@ caching them.
 ### Download errors
 
 `GeoIpService.DownloadDatabaseAsync` returns a `Result`. On any failure the existing database and the open reader
-stay as they were; the codes are in `NetUtilsErrors`:
+stay as they were; the codes are in `NetUtilsErrorCodes`:
 
-| Code | When |
-|------|------|
-| `netutils.download_refused` | No MaxMind credentials, an untrusted `DownloadUrl`, or an invalid limit: nothing was sent. |
-| `netutils.download_failed` | A network error or an HTTP error status (404 usually means wrong credentials). |
-| `netutils.download_timeout` | `TimeoutSeconds` ran out before the body was read. |
-| `netutils.download_too_large` | The body or the unpacked database exceeds `MaxDownloadBytes`. |
-| `netutils.checksum_unavailable` | The published `.sha256` could not be fetched or is not a hex digest. |
-| `netutils.checksum_mismatch` | The archive does not match the published checksum. |
-| `netutils.invalid_database` | The archive holds no `.mmdb`, or not a usable database of the configured kind. |
-| `netutils.cancelled` | The caller's cancellation token fired. |
+| Code | Kind | When |
+|------|------|------|
+| `netutils.download_refused` | `ValidationError` | No MaxMind credentials, an untrusted `DownloadUrl`, or an invalid limit: nothing was sent. |
+| `netutils.download_failed` | `UnavailableError` | A network error or an HTTP error status (404 usually means wrong credentials). |
+| `netutils.download_timeout` | `TimeoutError` | `TimeoutSeconds` ran out before the body was read. |
+| `netutils.download_too_large` | `ValidationError` | The body or the unpacked database exceeds `MaxDownloadBytes`. |
+| `netutils.checksum_unavailable` | `UnavailableError` | The published `.sha256` could not be fetched or is not a hex digest. |
+| `netutils.checksum_mismatch` | `ValidationError` | The archive does not match the published checksum. |
+| `netutils.invalid_database` | `ValidationError` | The archive holds no `.mmdb`, or not a usable database of the configured kind. |
+| `netutils.cancelled` | `UnavailableError` | The caller's cancellation token fired. |
 
 ## Localization
 
-Log lines and the error messages the library puts in `DnsblCheckResult.ErrorMessage` and `IpLocationResult.ErrorMessage` (invalid address, DNSBL disabled, GeoIP not initialized, location not found) come from `NetUtilsStrings`, registered as localization section `netutils`. Translate them like any CodeLogic localization model; the English defaults apply until translations load. Caller-supplied addresses and zones are logged with control characters replaced and cut to 64 characters, so they cannot forge log lines.
+Log lines and the `Error.Message` of the errors a check or lookup returns (invalid address, DNSBL disabled, check cancelled, check failed, GeoIP not initialized, location not found, lookup failed) come from `NetUtilsStrings`, registered as localization section `netutils`. Translate them like any CodeLogic localization model; the English defaults apply until translations load. Caller-supplied addresses and zones are logged with control characters replaced and cut to 64 characters, so they cannot forge log lines.
 
 ## Health check
 

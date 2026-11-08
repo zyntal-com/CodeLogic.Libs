@@ -158,6 +158,11 @@ var version = await db.WithConnectionAsync((connection, transaction, ct) => Valu
 
 `SqlText.Raw(...)` is for trusted, pre-built text only.
 
+Raw SQL and `WithConnectionAsync` may leave session state on a pooled connection (`SET`, user variables, temporary
+tables, `GET_LOCK`, a raw `START TRANSACTION`). On MySQL, CL.Data resets such a connection before it returns to the pool,
+so the next command never sees that state; plain statements skip the reset (see
+[Providers](providers.md#mysql)). The other providers' drivers reset every pooled connection themselves.
+
 **What a raw statement is** (`SqlIntent`) decides where `SqlQueryAsync`, `SqlReadAsync`, `SqlScalarAsync` and `DataBatch.Sql`
 run it, whether it is retried and what happens to the cache:
 

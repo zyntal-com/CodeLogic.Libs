@@ -10,7 +10,7 @@ namespace CL.Internal;
 internal static class InternalLibraryVersion
 {
     /// <summary>
-    /// The current assembly's informational version (e.g. "4.0.2"), with any
+    /// The current assembly's informational version (e.g. "5.0.142"), with any
     /// "+sha" build-metadata suffix stripped. Falls back to "0.0.0" only if
     /// the attribute is genuinely missing — which would mean the build pipeline
     /// is broken, not something a caller should be papering over.

@@ -70,7 +70,7 @@ internal sealed partial class StorageServiceProxy
         private static Func<T, Error?> Build()
         {
             if (typeof(T) == typeof(Result))
-                return value => value is Result { IsFailure: true } result ? result.Error : null;
+                return value => value is Result result ? result.Error : null;
             if (typeof(T).IsGenericType && typeof(T).GetGenericTypeDefinition() == typeof(Result<>))
             {
                 var isFailure = typeof(T).GetProperty(nameof(Result.IsFailure))!;

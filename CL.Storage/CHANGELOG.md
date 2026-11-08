@@ -2,12 +2,11 @@
 
 ## 5.0 (unreleased)
 
-### Audit completion (2026-11-07)
+### Changed
 
 - Apply the probed volume case rules when converting contained paths back to storage paths, including Linux mounts that compare names without case. Preserve descendant spelling and root-volume boundaries.
 
 - Make synchronous disposal start observed asynchronous cleanup; split large source files and extract transfer inspection/reporting helpers without changing transfer policy.
-
 
 ### Breaking
 
@@ -35,21 +34,26 @@
   while the session is open (SSH.NET keeps accepting on a started forward, and stopping it would drop the SFTP session
   running through it). What such a client reaches is the target's SSH port, which still authenticates it. The code
   comment that claimed only this process could reach the port was wrong and is corrected.
+- README and guide brought in line with 5.x: live config changes no longer carry a "CodeLogic 4.9+" qualifier; the
+  library's synchronous `Dispose()` is described as starting the stop in the background (it no longer blocks while
+  queues stop); examples use `ValueOrThrow()` instead of `.Value!` and show an exhaustive `switch` over a
+  `Result<T>`; the overview points 4.9 users at the 5.0 breaking changes; the note on probed volume case rules moved
+  to the mount-model section; the README's broken relative link to the guide is removed.
 
 ### Security
 
-- **Swift: a storage URL returned by the server gets the same scheme check as a configured one** (audit round 5).
+- **Swift: a storage URL returned by the server gets the same scheme check as a configured one**.
   `SwiftConnectionConfig` requires `https` unless `AllowInsecureHttp`, but the `X-Storage-Url` of a TempAuth reply and
   the object-store endpoint of a Keystone catalog were accepted with any scheme, so a server (or whoever answers for
   it) could have the token sent over plain `http`. Such a URL is now refused and the operation fails with
   `storage.provider_error`; nothing is sent to it.
-- **Local links no longer disclose targets outside the root** (audit round 5). Listings reported
+- **Local links no longer disclose targets outside the root**. Listings reported
   `StorageItem.LinkTarget` and `ReadLinkAsync` returned `StorageLinkInfo.RawTarget` as stored on disk even for a
   link whose target lies outside the root, revealing paths outside the mount. The target is now reported only when
   it resolves inside the root; otherwise `LinkTarget` is null, `RawTarget` empty and `StoragePath` null (the item
   is still a link). An in-root target is reported with `FollowLinks` off as well: it names nothing beyond the mount,
   and sync's `LinkHandling.Follow` maps links through it on such connections.
-- **Object-store listings skip keys the library cannot address** (audit round 5). S3, Azure Blob, Google Cloud Storage
+- **Object-store listings skip keys the library cannot address**. S3, Azure Blob, Google Cloud Storage
   and Swift mapped a key to a storage path by stripping the prefix, so a key such as `../x`, `a/../b` or `a//b` came
   back in a listing as a path the library would normalise to a different key (and that a directory download would map
   below its destination). One normaliser (`ObjectKeyPaths`) now serves all four providers: a key whose relative part
@@ -82,7 +86,7 @@
 
 - **Google Cloud Storage flat listings** send a `/` delimiter, so the server returns one level (sub-folders as
   prefixes) instead of the client scanning every descendant object of the folder.
-- **Local path comparisons follow the probed case sensitivity** (audit round 5). The backend probes the root's volume
+- **Local path comparisons follow the probed case sensitivity**. The backend probes the root's volume
   to decide `CaseInsensitivePaths`, but the path resolver's containment checks and the transfer-path checks compared
   by operating system (`OperatingSystem.IsWindows()`); a case-sensitive folder on Windows, or a case-insensitive mount
   on Linux, got the wrong comparison. The probed answer now drives every comparison.
@@ -473,7 +477,7 @@ are listed under *Added*, even where they changed while this release was being b
 - Moving a directory onto an existing one on FTP, SFTP, or WebDAV deleted the existing directory.
 - Windows reparse points that are not links (OneDrive placeholders, deduplicated files) were treated as
   links and skipped.
-- Found while this release was reviewed (round 4), relative to earlier preview builds: same-server
+- Fixed relative to earlier preview builds: same-server
   `Rename` relayed (and failed with one session); a sync into an empty folder spelled differently made a
   second folder; a refused conditional promote brought back a destination deleted meanwhile; a failed
   confirm deleted the only previous version; resumes across processes could mix data; spare TLS connections turned drops into

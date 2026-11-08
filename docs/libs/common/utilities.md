@@ -28,11 +28,11 @@ int    words = StringHelper.WordCount("one two three");      // 3
 |--------|---------|---------|
 | `Truncate(value, maxLength, suffix = "...")` | `string` | Clip to at most `maxLength` characters including the suffix; if the suffix does not fit, clip without it. Never throws. |
 | `ToSlug` / `ToCamelCase` / `ToPascalCase` / `ToSnakeCase` / `ToKebabCase(value)` | `string` | Case / slug conversions. |
-| `StripHtml(value)` | `string` | Remove HTML tags. |
-| `WordCount(value)` | `int` | Count words. |
+| `StripHtml(html)` | `string` | Remove HTML tags. |
+| `WordCount(text)` | `int` | Count words. |
 | `Repeat(value, count)` | `string` | Repeat a string. |
 | `Reverse(value)` | `string` | Reverse the characters. |
-| `ContainsAny(value, params values)` | `bool` | Whether any candidate appears. |
+| `ContainsAny(value, params substrings)` | `bool` | Whether any candidate appears. |
 | `CountOccurrences(text, substring)` | `int` | Count non-overlapping occurrences. |
 | `ExtractNumbers(text)` | `IEnumerable<long>` | Pull integer runs out of text. |
 | `IsAscii(value)` | `bool` | Whether the string is pure ASCII. |
@@ -80,17 +80,17 @@ string   rel  = DateTimeHelper.ToRelativeString(DateTime.UtcNow.AddMinutes(-3));
 
 | Member | Returns | Purpose |
 |--------|---------|---------|
-| `ToUnixTimestamp(value)` | `long` | Seconds since epoch. |
-| `FromUnixTimestamp(seconds)` | `DateTime` | UTC time from epoch seconds. |
-| `ToUnixMilliseconds(value)` | `long` | Milliseconds since epoch. |
-| `ToIso8601(value)` | `string` | ISO 8601 string. |
-| `FromIso8601(value)` | `Result<DateTime>` | Parse ISO 8601. |
+| `ToUnixTimestamp(dt)` | `long` | Seconds since epoch. |
+| `FromUnixTimestamp(timestamp)` | `DateTime` | UTC time from epoch seconds. |
+| `ToUnixMilliseconds(dt)` | `long` | Milliseconds since epoch. |
+| `ToIso8601(dt)` | `string` | Round-trip (`"o"`) ISO 8601 string in UTC. |
+| `FromIso8601(iso)` | `Result<DateTime>` | Parse ISO 8601; failure is `validation.invalid_format`. |
 | `GetAge(birthDate)` | `int` | Whole years. |
-| `IsWeekend(value)` / `IsBusinessDay(value)` | `bool` | Day classification. |
-| `NextBusinessDay(value)` | `DateTime` | First Monday-Friday strictly after the date (Friday gives Monday, Monday gives Tuesday); time of day kept. |
-| `StartOfDay` / `EndOfDay` / `StartOfMonth` / `EndOfMonth(value)` | `DateTime` | Period boundaries. |
-| `StartOfWeek(value, startOfWeek = Monday)` | `DateTime` | Week start. |
-| `ToRelativeString(value)` | `string` | Human "3 minutes ago" text. |
+| `IsWeekend(dt)` / `IsBusinessDay(dt)` | `bool` | Day classification. |
+| `NextBusinessDay(dt)` | `DateTime` | First Monday-Friday strictly after the date (Friday gives Monday, Monday gives Tuesday); time of day kept. |
+| `StartOfDay` / `EndOfDay` / `StartOfMonth` / `EndOfMonth(dt)` | `DateTime` | Period boundaries. |
+| `StartOfWeek(dt, startOfWeek = DayOfWeek.Monday)` | `DateTime` | Week start. |
+| `ToRelativeString(dt)` | `string` | Relative to now: "just now", "3 minutes ago", "in 2 hours". |
 
 ## Web
 
@@ -109,12 +109,13 @@ string clip = HtmlHelper.TruncateText(longHtml, 120);
 
 | Member | Returns | Purpose |
 |--------|---------|---------|
-| `StripTags` / `Sanitize` / `TrimWhitespace` / `Encode` / `Decode(html)` | `string` | HTML cleanup and encoding. |
+| `StripTags(html)` / `Sanitize(html)` / `TrimWhitespace(html)` / `Decode(html)` / `Encode(text)` | `string` | HTML cleanup and encoding. |
+| `TruncateText(html, maxLength, suffix = "...")` | `string` | Strip tags and cut to at most `maxLength` characters, suffix included (like `StringHelper.Truncate`: no suffix when it does not fit, empty for `maxLength <= 0`). |
+| `SanitizeAllowedTags` | `IReadOnlySet<string>` | The elements `Sanitize` keeps. |
 
 `Sanitize` is an allowlist: basic formatting elements without attributes, and links with http(s),
 mailto or relative `href`s (`SanitizeAllowedTags` lists the elements). Images, styles, tables and embeds
 are removed; use a full HTML sanitizer for rich text. `Sanitize` and `StripTags` run in linear time, so large or malformed input (`<a <a <a …`, unbalanced quotes) cannot stall them.
-| `TruncateText(html, maxLength, suffix = "...")` | `string` | Length-limit HTML text. |
 
 ### HttpClientHelper
 
@@ -143,6 +144,35 @@ Result         del  = await HttpClientHelper.DeleteAsync(http, url);
 | `GetJsonAsync<T>(client, url, typeInfo, headers?)`, `PostJsonAsync(…, bodyTypeInfo[, responseTypeInfo], …)`, `PutJsonAsync(…, bodyTypeInfo, …)` | as above | Trim/Native-AOT-safe overloads taking source-generated `JsonTypeInfo<T>`. The overloads without it use reflection and are marked `[RequiresUnreferencedCode]` / `[RequiresDynamicCode]`. |
 
 Headers are validated: a malformed name or value (for example one containing a line break) makes the call return a failure instead of sending it. `User-Agent`, `Authorization`, `Proxy-Authorization`, `Cookie` and `Referer` are passed through unvalidated, since real-world values often fail .NET's strict parser; content headers (`Content-Type`, `Content-Language`, …) are set on the body.
+
+A non-success status code fails with the code `http.{status}` (`HttpClientHelper.StatusErrorCode(status)`) and the
+message `HTTP {status}: {body}`, the body cut to `MaxErrorBodyLength` (256) characters. The error kind follows the status:
+
+| Status | Error |
+|---|---|
+| 400, 422 | `ValidationError` |
+| 401, 403 | `UnauthorizedError` |
+| 404, 410 | `NotFoundError` |
+| 409, 412 | `ConflictError` |
+| 408, 504 | `TimeoutError` |
+| 429, 502, 503 | `UnavailableError` |
+| any other | `InternalError` |
+
+A request that gets no response fails with `TimeoutError` (`connection.timeout`) on a timeout, `UnavailableError`
+(`connection.failed`) on a transport failure, and `ValidationError` (`invalid_argument`) when the URL or a header is not
+valid.
+
+```csharp
+var page = await HttpClientHelper.GetStringAsync(client, url);
+string status = page switch
+{
+    string body                      => $"got {body.Length} chars",
+    NotFoundError                    => "no such page",
+    UnavailableError or TimeoutError => "try again later",   // 429, 502, 503, 408, 504, transport failures
+    Error e                          => $"failed: {e.Code}",
+    null                             => "empty result",
+};
+```
 
 ### HttpHeaderHelper
 
@@ -234,12 +264,13 @@ Result<string[]>       ips  = await NetworkDns.LookupAsync("example.com");
 Result<SubnetInfo>     net  = SubnetCalculator.Calculate("192.168.1.10", "255.255.255.0");
 Result<List<HopInfo>>  hops = await TraceRoute.TraceAsync("example.com");
 
-if (ping.IsSuccess)
-    Console.WriteLine($"{ping.Value.Address}: {ping.Value.RoundTripMs} ms");
-else if (ping.Error is TimeoutError)
-    Console.WriteLine("no reply in time");
-else
-    Console.WriteLine($"{ping.Error.Code}: {ping.Error.Message}");
+Console.WriteLine(ping switch
+{
+    PingResponse p => $"{p.Address}: {p.RoundTripMs} ms",
+    TimeoutError   => "no reply in time",
+    Error e        => $"{e.Code}: {e.Message}",
+    null           => "no result",
+});
 ```
 
 A ping that gets no reply is a failed result, never a successful one:
@@ -253,8 +284,8 @@ A ping that gets no reply is a failed result, never a successful one:
 | Member | Returns | Purpose |
 |--------|---------|---------|
 | `NetworkPing.PingAsync(host, timeout = 3000)` | `Task<Result<PingResponse>>` | ICMP ping; success means the host replied. |
-| `NetworkDns.LookupAsync(hostname)` | `Task<Result<string[]>>` | Resolve a host to addresses. |
-| `SubnetCalculator.Calculate(ip, subnetMask)` | `Result<SubnetInfo>` | IPv4 subnet math. |
+| `NetworkDns.LookupAsync(hostname)` | `Task<Result<string[]>>` | Resolve a host to addresses (`networking.dns_lookup_failed`). |
+| `SubnetCalculator.Calculate(ipAddress, subnetMask)` | `Result<SubnetInfo>` | IPv4 subnet math (`networking.invalid_ip`, `networking.invalid_mask`). |
 | `TraceRoute.TraceAsync(host, maxHops = 30)` | `Task<Result<List<HopInfo>>>` | Walk the route to a host. |
 
 ```csharp
@@ -284,7 +315,7 @@ Result<DateTimeOffset> local = CronParser.GetNextOccurrence("0 9 * * 1-5", DateT
 |--------|---------|---------|
 | `Parse(expression)` | `Result<CronExpression>` | Parse into fields. |
 | `IsValid(expression)` | `bool` | Quick validity check. |
-| `GetNextOccurrence(expression, from? = null)` | `Result<DateTime>` | Next UTC fire time at/after `from`. A field that can never match (`0 24 * * *`) fails at once with a validation error. |
+| `GetNextOccurrence(expression, from = null)` | `Result<DateTime>` | Next UTC fire time strictly after `from` (default now), to the minute. A `Local` `from` is converted to UTC; an `Unspecified` one is read as UTC. A field that can never match (`0 24 * * *`) fails at once with a validation error. |
 | `GetNextOccurrence(expression, from, timeZone)` | `Result<DateTimeOffset>` | Next fire time strictly after `from`, with the fields read in `timeZone` (null = UTC). Used by `JobScheduler`. |
 
 ```csharp
@@ -389,9 +420,9 @@ scheduler.Schedule("nightly-report",
 
 scheduler.Schedule("warm-up", new JobSchedule.Once(DateTimeOffset.UtcNow.AddSeconds(10)), ct => cache.WarmAsync(ct));
 
-cleanup.Pause();                                  // skip scheduled runs
+cleanup.Pause();                                  // skip scheduled runs; Resume() continues
 Result run = await scheduler.TriggerAsync("cleanup");   // run now and wait (works while paused)
-cleanup.Dispose();                                // unschedule
+cleanup.Dispose();                                // unschedule (or scheduler.Unschedule("cleanup"))
 IReadOnlyList<JobInfo> jobs = scheduler.Jobs;     // last run, duration, error, next run, run count, …
 await scheduler.StopAsync(drainTimeout: TimeSpan.FromSeconds(10));
 ```
@@ -410,6 +441,8 @@ await scheduler.StopAsync(drainTimeout: TimeSpan.FromSeconds(10));
 - **Jitter:** `JobOptions.Jitter` (0..1) adds a random fraction of the interval to each run.
 - **Stop:** `StopAsync(drainTimeout)` starts no new runs, gives running jobs the drain time (default 30 s), then
   cancels their tokens (`scheduling.cancelled`). `DisposeAsync` calls it.
+- `TriggerAsync` returns the run's own result, or `scheduling.job_not_found` (unknown name) or `scheduling.stopped`
+  (after `StopAsync`).
 - Invalid schedules or a duplicate name throw `ArgumentException` (programming errors).
 
 ## Caching — ICache&lt;TKey&gt; / MemoryCache
@@ -531,11 +564,14 @@ bool exists = FileSystem.FileExists("a.txt");
 |--------|---------|---------|
 | `ReadAllTextAsync(path)` / `WriteAllTextAsync(path, content)` | `Task<Result<string>>` / `Task<Result>` | Text I/O. |
 | `ReadAllBytesAsync(path)` / `WriteAllBytesAsync(path, data)` | `Task<Result<byte[]>>` / `Task<Result>` | Binary I/O. |
-| `CopyAsync(source, dest, overwrite = false)` / `MoveAsync(source, dest)` | `Task<Result>` | Copy / move. |
-| `DeleteFile(path)` / `CreateDirectory(path)` | `Result` | Delete file / create directory. |
-| `GetFilesAsync(directory, pattern = "*")` | `Task<Result<string[]>>` | List matching files. |
+| `CopyAsync(source, dest, overwrite = false)` / `MoveAsync(source, dest)` | `Task<Result>` | Copy / move; missing destination directories are created. `MoveAsync` never overwrites. |
+| `DeleteFile(path)` / `CreateDirectory(path)` | `Result` | Delete file / create directory; both succeed when there is nothing to do. |
+| `GetFilesAsync(directory, pattern = "*")` | `Task<Result<string[]>>` | List matching files (top directory only). |
 | `GetFileSizeBytes(path)` | `Result<long>` | File size in bytes. |
 | `FileExists(path)` / `DirectoryExists(path)` | `bool` | Existence checks. |
+
+A missing file or directory is `io.file_not_found` (`NotFoundError`). `CopyAsync` onto an existing file without
+`overwrite` is `already_exists` (`ConflictError`). Other I/O failures are `InternalError`s.
 
 ## Reflection — AssemblyHelper & ReflectionHelper
 
@@ -567,23 +603,23 @@ bool plugin = ReflectionHelper.Implements<IPlugin>(typeof(MyType));
 
 | Member | Returns | Purpose |
 |--------|---------|---------|
-| `GetName` / `GetVersion` / `GetDescription` / `GetTitle` / `GetCompany` / `GetProduct` / `GetInformationalVersion(instance)` | `string` | Assembly attribute values. |
-| `GetMetadata(instance)` | `Dictionary<string, string>` | All metadata at once. |
+| `GetName` / `GetVersion` / `GetDescription` / `GetTitle` / `GetCompany` / `GetProduct` / `GetInformationalVersion(obj)` | `string` | Assembly attribute values. |
+| `GetMetadata(obj)` | `Dictionary<string, string>` | All metadata at once. |
 | `LoadFrom(filePath)` | `Result<Assembly>` | Load an assembly from disk. |
-| `GetFileMetadata(filePath)` | `Result<Dictionary<string, string>>` | Metadata without loading into the AppDomain. |
+| `GetFileMetadata(filePath)` | `Result<Dictionary<string, string>>` | Load the assembly (as `LoadFrom`) and return its name, full name, version, description and location. |
 | `GetImplementors<T>(assembly)` | `IEnumerable<Type>` | Types implementing `T`. |
 | `GetTypesWithAttribute<TAttr>(assembly)` | `IEnumerable<Type>` | Types decorated with an attribute. |
-| `ReadEmbeddedResource(assembly, name)` | `Result<string>` | Read an embedded text resource. |
+| `ReadEmbeddedResource(assembly, resourceName)` | `Result<string>` | Read an embedded text resource. |
 
 ### ReflectionHelper
 
 | Member | Returns | Purpose |
 |--------|---------|---------|
-| `CreateInstance<T>()` | `Result<T>` | Construct via default constructor. |
+| `CreateInstance<T>()` *(where `T : class`)* | `Result<T>` | Construct via the public parameterless constructor. |
 | `CreateInstance(type, params args)` | `Result<object>` | Construct with arguments. |
-| `GetPropertyValue(obj, name)` / `SetPropertyValue(obj, name, value)` | `Result<object?>` / `Result` | Read/write a property by name. |
-| `ToDictionary<T>(value)` | `Dictionary<string, object?>` | Object → property map. |
-| `InvokeMethod(obj, name, params args)` | `Result<object?>` | Call a method by name. |
+| `GetPropertyValue(obj, propertyName)` / `SetPropertyValue(obj, propertyName, value)` | `Result<object?>` / `Result` | Read/write a property by name. |
+| `ToDictionary<T>(obj)` *(where `T : class`)* | `Dictionary<string, object?>` | Object → property map. |
+| `InvokeMethod(obj, methodName, params args)` | `Result<object?>` | Call a method by name. |
 | `Implements<TInterface>(type)` | `bool` | Interface check. |
 | `HasDefaultConstructor(type)` | `bool` | Whether a no-arg constructor exists. |
 | `GetFriendlyName(type)` | `string` | Readable type name (with generics). |

@@ -234,7 +234,7 @@ public sealed class DiscordWebhookValidationTests
         var result = await service.SendMessageAsync("hi", "http://127.0.0.1:1/api/webhooks/1/tok");
 
         Assert.True(result.IsFailure);
-        Assert.Equal("social.discord.invalid_url", result.Error!.Code);
+        Assert.Equal(SocialConnectErrorCodes.DiscordInvalidUrl, result.Error!.Code);
     }
 
     [Theory]
@@ -323,9 +323,9 @@ public sealed class SteamIdValidationTests
         var bans = await service.GetPlayerBansAsync(steamId);
         var games = await service.GetOwnedGamesAsync(steamId);
 
-        Assert.Equal("social.steam.invalid_steamid", player.Error!.Code);
-        Assert.Equal("social.steam.invalid_steamid", bans.Error!.Code);
-        Assert.Equal("social.steam.invalid_steamid", games.Error!.Code);
+        Assert.Equal(SocialConnectErrorCodes.SteamInvalidSteamId, player.Error!.Code);
+        Assert.Equal(SocialConnectErrorCodes.SteamInvalidSteamId, bans.Error!.Code);
+        Assert.Equal(SocialConnectErrorCodes.SteamInvalidSteamId, games.Error!.Code);
     }
 }
 

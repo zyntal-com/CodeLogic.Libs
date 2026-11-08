@@ -27,6 +27,43 @@ public sealed class MySqlOptions
     /// </summary>
     [ConfigField(Label = "Allow Load Local Infile", RequiresRestart = true, Order = 4)]
     public bool AllowLoadLocalInfile { get; set; }
+
+    /// <summary>
+    /// When pooled connections are reset (session state cleared). <see cref="MySqlConnectionReset.WhenDirty"/> (the default)
+    /// skips the driver's reset on every open, which costs a full round trip, and resets a connection only when it may carry
+    /// session state. Overrides a <c>ConnectionReset</c> key in the connection string.
+    /// </summary>
+    [ConfigField(Label = "Connection Reset", RequiresRestart = true, Order = 5)]
+    public MySqlConnectionReset ConnectionReset { get; set; } = MySqlConnectionReset.WhenDirty;
+
+    /// <summary>
+    /// Seconds an idle pooled connection is kept before the driver closes it. Without a reset on every open nothing checks a
+    /// pooled connection before reuse, so keep this below the idle timeout of any proxy or load balancer in front of the
+    /// server (and below the server's <c>wait_timeout</c>).
+    /// </summary>
+    [ConfigField(Label = "Connection Idle Timeout (s)", Min = 1, RequiresRestart = true, Order = 6)]
+    public int ConnectionIdleTimeoutSeconds { get; set; } = 180;
+}
+
+/// <summary>When CL.Data's MySQL provider resets pooled connections.</summary>
+public enum MySqlConnectionReset
+{
+    /// <summary>
+    /// Reset a connection before it returns to the pool, only when it may carry session state: raw SQL that is not a plain
+    /// single SELECT/INSERT/UPDATE/DELETE/DDL statement (<c>SET</c>, <c>CALL</c>, transaction control, user variables,
+    /// <c>GET_LOCK</c>, temporary tables, several statements), connections handed to <c>WithConnectionAsync</c>, advisory locks
+    /// not released cleanly, interrupted commands. Generated queries and writes skip the reset.
+    /// </summary>
+    WhenDirty = 0,
+
+    /// <summary>The driver resets every pooled connection when it is opened (one extra round trip per open).</summary>
+    Always,
+
+    /// <summary>
+    /// Never reset. Only for applications that never change session state; state left by one user of a pooled connection
+    /// (session variables, <c>SET SESSION</c>, temporary tables, held locks, open raw transactions) is seen by the next.
+    /// </summary>
+    Never,
 }
 
 /// <summary>PostgreSQL options of a connection (<c>"postgreSql": { ... }</c>).</summary>

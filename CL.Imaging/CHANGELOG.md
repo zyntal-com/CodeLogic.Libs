@@ -2,11 +2,6 @@
 
 ## 5.0 (unreleased)
 
-### Audit completion (2026-11-07)
-
-- Prevent pooled-buffer reference resurrection during concurrent final release and acquisition; cover it with a race regression.
-
-
 ### Breaking
 
 - **New package, moved from CodeLogic.Common.** Imaging lived in CL.Common as `CL.Common.Imaging.CLU_Imaging`
@@ -47,7 +42,9 @@
 
 ### Changed
 
-- **`EncodedImage.AsStream()` owns its bytes** (audit round 5). The stream shared the pooled array, so one kept past
+- Prevent pooled-buffer reference resurrection during concurrent final release and acquisition; cover it with a race regression.
+
+- **`EncodedImage.AsStream()` owns its bytes**. The stream shared the pooled array, so one kept past
   the image's `using` block (handed to a response, a background writer) read whatever the pool had since given that
   array to, possibly another request's image. The pooled buffer is now reference-counted: each stream holds a
   reference, the array goes back to the pool when the image and every stream are disposed, and a stream stays valid
@@ -67,3 +64,12 @@
 - Reading a stream with no byte limit (`MaxBytes = 0`) rents at most 16 MiB up front instead of whatever the stream
   reports as its length; larger images grow the buffer as they are read.
 
+### Documentation
+
+- Configuration tables in the README and the docs use the camelCase keys the CodeLogic loader reads
+  (`defaultMaxPixels`, `defaultFormat: "webp"`, ...); the PascalCase keys shown before were ignored.
+- API tables match the source: `Create(width, height, background)`, `DrawEllipse(bounds, …)`,
+  `Composite(…, mode, …)`, `SmartCrop(w, h, quality)`; added `GetPixel`, `Clone`, `ImageLoadOptions.ReadMetadata`,
+  `ToDataUri(bytes)`, `FitWithin`, the watermark defaults and an exhaustive `switch` over a result.
+- The `AsStream()` race note moved from the metadata page to the encoded-output section. The README's relative
+  link to the guide, which is broken on nuget.org, is replaced by a link to the docs site.

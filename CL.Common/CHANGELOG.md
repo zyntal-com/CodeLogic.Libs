@@ -5,10 +5,9 @@ All notable changes to **CodeLogic.Common** are documented here. Versions follow
 
 ## 5.0 (unreleased)
 
-### Audit completion (2026-11-07)
+### Changed
 
 - Share log formatting/async-cleanup source helpers across libraries and split oversized source files by operation without new package dependencies.
-
 
 ### Security
 
@@ -39,7 +38,7 @@ All notable changes to **CodeLogic.Common** are documented here. Versions follow
   `LegacyPasswordIterations`, `PasswordHashPrefix`.
 - `StringValidator.MatchesPattern` runs the caller's regex with a timeout (optional `matchTimeout`, default
   `StringValidator.DefaultMatchTimeout`, 1 s); a timed-out match returns `false` (ReDoS guard).
-- **`HtmlHelper.Sanitize` runs in linear time** (audit 2026-11). Its tag regex was quadratic on input such as
+- **`HtmlHelper.Sanitize` runs in linear time**. Its tag regex was quadratic on input such as
   `<a <a <a …` or unbalanced quotes, with no timeout, so a few hundred KB of user HTML could pin a CPU core. Tags
   are now found by a single linear scan (no regex); `StripTags` uses a `NonBacktracking` regex. Output for
   well-formed input is unchanged.
@@ -56,6 +55,9 @@ All notable changes to **CodeLogic.Common** are documented here. Versions follow
   `Error.Message`, followed by the full length, instead of the whole body.
 
 ### Fixed
+
+- `HtmlHelper.TruncateText` threw `ArgumentOutOfRangeException` when `maxLength` was shorter than the suffix (or negative). It now truncates like `StringHelper.Truncate`: no suffix when it does not fit, an empty string for `maxLength <= 0`.
+- `CronParser.GetNextOccurrence(expression, DateTime)` treated a `DateTimeKind.Local` start time as UTC, so the search started hours off. Local times are converted to UTC; unspecified ones are still read as UTC. The overload now shares the time-zone-aware search.
 
 - `CronParser`: when both day-of-month and day-of-week are restricted (neither starts with `*`), a day matches if
   **either** matches, as in standard cron (`0 0 1 * 1` = the 1st and every Monday). It used to require both.
@@ -77,7 +79,25 @@ All notable changes to **CodeLogic.Common** are documented here. Versions follow
 - `FastHash.XxHash128` is about 10x faster (~70 ns instead of ~700 ns per call on .NET 11): `XxHash128.HashToUInt128` has a large fixed cost, so the hash is now computed into bytes and read back. The values are unchanged.
 - `StringHelper` (`ToSlug`, `ToPascalCase`, `ToSnakeCase`, `ToKebabCase`, `StripHtml`, `WordCount`, `ExtractNumbers`) uses source-generated regexes (`[GeneratedRegex]`) instead of looking each pattern up in the static `Regex` cache and running it through the interpreter on every call. Output is unchanged.
 
+### Documentation
+
+- The docs' API tables now use the real parameter names (`DecryptAes(cipherText, …)`, `JsonHelper.Serialize(obj, …)`,
+  `DecompressString(compressed, …)`, `DateTimeHelper.ToIso8601(dt)`, `AssemblyHelper.GetName(obj)`, …) and list the error codes
+  of JSON, conversion, compression, HTTP, networking, file and scheduling failures.
+- Corrected: `AssemblyHelper.GetFileMetadata` loads the assembly; `CronParser.GetNextOccurrence(expression, from)`
+  returns the next minute strictly after `from`; `JsonHelper.Merge` is a shallow, top-level merge. The
+  `TypeConverter.TryConvert` example used `out long?`, which does not compile.
+- The `HtmlHelper` table is whole again (a paragraph had split it), and the ping example matches the union with
+  `switch`. The README's relative link to the guide, which is broken on nuget.org, is removed.
+- XML docs: `IdGenerator.NewGuid` returns a lowercase GUID, `DateTimeHelper.ToRelativeString` says "a day ago"
+  (never "yesterday"), and `TypeConverter.Convert` supports what `Convert.ChangeType` handles (no enums or
+  `TypeConverter` types).
+
 ### Breaking
+
+- **Library ID is `CL.Common`** (was `cl.common`), like every other library. Its folder is `Libraries/CL.Common` on every file system; CodeLogic 5 renames an existing `CL.common` folder on case-sensitive file systems. Code that looked the library up by its old ID with an ordinal comparison must use the new one.
+
+- **`HttpClientHelper` errors follow the HTTP status.** A non-success response used to be an `InternalError` with code `internal` whatever the status. Now the code is `http.{status}` (`HttpClientHelper.StatusErrorCode`) and the kind follows the status: 400/422 `ValidationError`, 401/403 `UnauthorizedError`, 404/410 `NotFoundError`, 409/412 `ConflictError`, 408/504 `TimeoutError`, 429/502/503 `UnavailableError`, anything else `InternalError`. A request without a response is a `TimeoutError` (`connection.timeout`), an `UnavailableError` (`connection.failed`) for transport failures, or a `ValidationError` (`invalid_argument`) for an invalid URL or header. Code that checked `Error.Code == "internal"` must switch on the kind or the new codes.
 
 - **`HttpHeaderHelper.GetEffectiveClientIp(remoteIp, xForwardedFor)` behaviour change.** It now behaves like the
   new overload with `TrustedProxies.PrivateNetworks`: the header is honoured only when the direct peer is a

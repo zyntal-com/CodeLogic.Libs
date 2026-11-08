@@ -35,7 +35,7 @@ await Libraries.LoadAsync<StorageLibrary>();
 await CodeLogic.CodeLogic.ConfigureAsync();   // the class CodeLogic.CodeLogic, not the namespace
 await CodeLogic.CodeLogic.StartAsync();
 
-var storage = Libraries.Get<StorageLibrary>();
+var storage = Libraries.Get<StorageLibrary>()!;
 IStorageService media = storage.GetStorage("media");
 ```
 
@@ -188,7 +188,7 @@ var opened = await storage.OpenTransferQueueAsync(new StorageTransferQueueOption
     MaxTransfersPerConnection = 2,
     Store = myDurableStore          // optional: jobs survive restarts and can be shared between processes
 });
-await using var queue = opened.Value!;
+await using var queue = opened.ValueOrThrow();
 queue.ProgressChanged += job => Console.WriteLine($"{job.Destination}: {job.Progress?.BytesTransferred:N0} B");
 
 await queue.EnqueueCopyAsync("s3", "reports/q3.pdf", "sftp", "outbox/q3.pdf",
@@ -212,7 +212,7 @@ var options = new StorageSyncOptions
     MaxDeletes = 100, MaxDeletePercent = 10,
     Compare = new StorageCompareOptions { Exclude = ["**/*.tmp", "cache/**"] }
 };
-var plan = (await storage.PlanSyncAsync("sftp", "site", "s3", "backup/site", options)).Value!;
+var plan = (await storage.PlanSyncAsync("sftp", "site", "s3", "backup/site", options)).ValueOrThrow();
 // show plan.Actions, plan.Conflicts, and plan.Warnings; approve plan.Digest
 var synced = await storage.ApplySyncAsync("sftp", "site", "s3", "backup/site", plan, approvedDigest, options);
 ```
@@ -252,7 +252,7 @@ available through `GetNativeClient` and `OpenNativeConnectionAsync`.
 
 ### Editing the config while running
 
-With CodeLogic 4.9+, the `storage*` sections also apply live when they are changed outside the library,
+The `storage*` sections also apply live when they are changed outside the library,
 through `Libraries.UpdateConfigAsync`, `Libraries.ReloadConfigAsync`, or the config file watcher. Only
 the connections that changed are touched: a changed or added connection is built and health-checked,
 then swapped in while the one it replaces drains its in-flight operations; removed or disabled
@@ -273,8 +273,8 @@ the queue, and a sync that has started applying report it. Writes, deletes, tran
 session events, failed operations, and queue job changes are published on the CodeLogic event bus. See
 [Errors & Events](https://zyntal-com.github.io/CodeLogic.Libs/libs/storage/errors-events.html).
 
-Upgrading from 4.8.93 or from the legacy S3-only package? See [MIGRATION.md](MIGRATION.md) and
-[CHANGELOG.md](CHANGELOG.md).
+Upgrading from 4.9? The breaking changes are in the 5.0 section of [CHANGELOG.md](CHANGELOG.md).
+Coming from 4.8.93 or from the legacy S3-only package, see [MIGRATION.md](MIGRATION.md) too.
 
 ## Requirements
 
@@ -282,5 +282,3 @@ Upgrading from 4.8.93 or from the legacy S3-only package? See [MIGRATION.md](MIG
 - .NET 11
 
 MIT license.
-
-Audit completion notes and current limits are in [the guide](../docs/libs/storage/index.md).

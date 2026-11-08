@@ -34,8 +34,8 @@ public static partial class StorageCompare
         await Parallel.ForEachAsync(needsMetadata, new ParallelOptions { MaxDegreeOfParallelism = options.HashConcurrency, CancellationToken = cancellationToken }, async (i, token) =>
         {
             var (path, a, b) = pairs[i];
-            if (NeedsMetadata(source, a) && await source.GetInfoAsync(a.Path, token).ConfigureAwait(false) is { IsSuccess: true } full) a = full.Value!;
-            if (NeedsMetadata(destination, b) && await destination.GetInfoAsync(b.Path, token).ConfigureAwait(false) is { IsSuccess: true } other) b = other.Value!;
+            if (NeedsMetadata(source, a) && await source.GetInfoAsync(a.Path, token).ConfigureAwait(false) is StorageItem full) a = full;
+            if (NeedsMetadata(destination, b) && await destination.GetInfoAsync(b.Path, token).ConfigureAwait(false) is StorageItem other) b = other;
             lock (reasons) reasons[path] = Basic(a, b, options);
             lock (pairs) pairs[i] = (path, a, b);
         }).ConfigureAwait(false);

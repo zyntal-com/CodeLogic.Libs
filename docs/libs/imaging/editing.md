@@ -27,7 +27,7 @@ bitmap each. The `CancellationToken` is checked between steps (`imaging.cancelle
 | `AutoOrient()` | Applies the EXIF orientation (all 8 values). |
 | `Resize(w, h, mode, quality, background, anchor)` | `Fit` (scale to fit, up or down), `Max` (fit, never up), `Fill` (cover and crop at `anchor`), `Stretch`, `Pad` (fit, then pad with `background` at `anchor`). `0` for one side keeps the aspect ratio (not with `Fill`/`Pad`). |
 | `Crop(PixelRect)` | Must lie inside the image when the step runs. |
-| `SmartCrop(w, h)` | Crops the most detailed region with that aspect ratio, then scales to exactly `w`×`h`. |
+| `SmartCrop(w, h, quality)` | Crops the most detailed region with that aspect ratio, then scales to exactly `w`×`h`. |
 | `Rotate(degrees, background)` | Clockwise. Right angles are exact; other angles grow the canvas and fill corners with `background` (default transparent). |
 | `FlipHorizontal()`, `FlipVertical()` | Mirror. |
 
@@ -63,10 +63,10 @@ pre-halved to avoid aliasing).
 | `RoundCorners(radius)` | Anti-aliased transparent corners (flattened onto the background for JPEG). |
 | `Border(thickness, color)` | Painted inside the edges; size unchanged. |
 | `Pad(amount, color)` / `Pad(l, t, r, b, color)` | Grows the canvas. |
-| `Watermark(watermark, anchor, opacity, margin)` | `WatermarkImage(doc, RelativeWidth)` (fraction of the image width, or null for natural size) or `WatermarkText(text, font, color)`. |
+| `Watermark(watermark, anchor, opacity, margin)` | Defaults: `BottomRight`, 0.5, 16 px. `WatermarkImage(doc, RelativeWidth)` (fraction of the image width, default 0.25, or null for natural size) or `WatermarkText(text, font, color)`. |
 | `DrawText(text, font, position, color, align)` | `position` is the top of the line box. |
-| `DrawRectangle(rect, color, strokeWidth, cornerRadius)`, `DrawEllipse(rect, color, strokeWidth)`, `DrawLine(from, to, color, width)` | `strokeWidth` 0 fills. |
-| `Composite(overlay, position, BlendMode, opacity)` | 17 blend modes (`Normal`, `Multiply`, `Screen`, `Overlay`, …). |
+| `DrawRectangle(rect, color, strokeWidth, cornerRadius)`, `DrawEllipse(bounds, color, strokeWidth)`, `DrawLine(from, to, color, width)` | `strokeWidth` 0 fills. |
+| `Composite(overlay, position, mode, opacity)` | 17 blend modes (`Normal`, `Multiply`, `Screen`, `Overlay`, …). |
 
 `ImageFont` is a record: `Family`, `Size`, `Bold`, `Italic`, or font file bytes via `ImageFont.FromFile` /
 `FromBytes`. Servers without fonts (minimal Linux containers) draw nothing for a family name; ship a font file.
@@ -89,6 +89,6 @@ using var webp = doc.Edit().Encode(new ImageEncodeOptions
 | `Quality` | `ImagingDefaults` (85) | 1–100 for JPEG and lossy WebP (effort for lossless WebP). |
 | `Lossless` | `false` | Lossless WebP. |
 | `KeepIccProfile` | `false` | Write the source ICC profile back unchanged; otherwise pixels are converted to sRGB. |
-| `KeepMetadata` | `!StripMetadataByDefault` | Write the source EXIF back (GPS included; source thumbnail and MakerNote removed). |
+| `KeepMetadata` | null: `!ImagingDefaults.Current.StripMetadata` | Write the source EXIF back (GPS included; source thumbnail and MakerNote removed). |
 | `RemoveGps` | `false` | With kept EXIF: remove the GPS position, keep the other tags. |
 | `Background` | white | JPEG flattens transparency onto it. |

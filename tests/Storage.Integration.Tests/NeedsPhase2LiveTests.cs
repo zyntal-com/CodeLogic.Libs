@@ -115,7 +115,7 @@ public sealed class GuaranteedTransferLiveTests
         }
     }
 
-    // needs-review E: skipped, not silently passed, when S3 is not configured
+    // Skipped, not silently passed, when S3 is not configured
     [SftpAndS3Fact]
     public async Task Verified_copy_from_sftp_to_an_object_store()
     {

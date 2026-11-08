@@ -19,8 +19,9 @@ public static class MailErrorCodes
 
     /// <summary>
     /// A custom header has an invalid name (empty, not printable US-ASCII, or containing <c>:</c>), a value with a
-    /// line break or NUL, or names a header the service writes itself (From, To, Cc, Bcc, Subject, MIME-Version,
-    /// Importance, Content-*).
+    /// line break or NUL, or names a reserved header: one the service writes itself or that identifies the sender or the
+    /// message (From, Sender, Reply-To, To, Cc, Bcc, Subject, Date, Message-Id, MIME-Version, Importance, Return-Path,
+    /// Received, Content-*, Resent-*).
     /// Kind: <see cref="ValidationError"/>.
     /// </summary>
     public const string InvalidHeader = "mail.invalid_header";

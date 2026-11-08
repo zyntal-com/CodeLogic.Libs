@@ -7,7 +7,6 @@ using CL.Data.Configuration;
 using CL.Data.Execution;
 using CL.Data.Mapping;
 using CL.Data.Sqlite;
-using CodeLogic.Core.Results;
 
 var file = Path.Combine(Path.GetTempPath(), $"cl-data-aot-{Guid.NewGuid():N}.db");
 var failures = new List<string>();
@@ -16,47 +15,43 @@ void Check(bool ok, string what)
     Console.WriteLine($"{(ok ? "ok  " : "FAIL")} {what}");
     if (!ok) failures.Add(what);
 }
-T Ok<T>(Result<T> result) => result.IsSuccess ? result.Value! : throw new InvalidOperationException(result.Error!.ToString());
-
+// ValueOrThrow() turns a failure into a ResultFailedException that carries the Error.
 try
 {
     Check(!EntityAccessorRegistry.IsReflectionSupported, "reflection mapping is off (trimmed away)");
     Check(EntityAccessorRegistry.HasGenerated<Note>(), "Note has a generated accessor");
 
-    await using var db = Ok(Database.Create("aot", SqliteDataProvider.Instance, new DataConnectionConfig { Provider = "sqlite", Database = file }));
-    Ok(await db.Schema.SyncAsync<Note>());
+    await using var db = Database.Create("aot", SqliteDataProvider.Instance, new DataConnectionConfig { Provider = "sqlite", Database = file }).ValueOrThrow();
+    (await db.Schema.SyncAsync<Note>()).ValueOrThrow();
 
     var notes = db.Repository<Note>();
-    var first = Ok(await notes.InsertAsync(new Note { Title = "first", Priority = Priority.High, Due = DateTimeOffset.UtcNow.AddDays(1) }));
-    Ok(await notes.InsertManyAsync([new Note { Title = "second", Priority = Priority.Low }, new Note { Title = "third", Priority = Priority.High, Done = true }]));
+    var first = (await notes.InsertAsync(new Note { Title = "first", Priority = Priority.High, Due = DateTimeOffset.UtcNow.AddDays(1) })).ValueOrThrow();
+    (await notes.InsertManyAsync([new Note { Title = "second", Priority = Priority.Low }, new Note { Title = "third", Priority = Priority.High, Done = true }])).ValueOrThrow();
     Check(first.Id > 0, "identity written back");
 
     for (var round = 0; round < 3; round++)   // repeated shapes exercise the plan cache
     {
         var wanted = round == 0 ? Priority.High : Priority.Low;
-        var count = Ok(await db.Query<Note>().Where(n => n.Priority == wanted && !n.Done).CountAsync());
+        var count = (await db.Query<Note>().Where(n => n.Priority == wanted && !n.Done).CountAsync()).ValueOrThrow();
         Check(count == 1, $"filtered count round {round}");
     }
 
-    var titles = Ok(await db.Query<Note>().Where(n => n.Title.StartsWith("s") || n.Id == first.Id).OrderBy(n => n.Title).ToListAsync()).Select(n => n.Title).ToArray();
+    var titles = (await db.Query<Note>().Where(n => n.Title.StartsWith("s") || n.Id == first.Id).OrderBy(n => n.Title).ToListAsync()).ValueOrThrow().Select(n => n.Title).ToArray();
     Check(titles is ["first", "second"], "LIKE and OR translate");
 
     first.Done = true;
-    Ok(await notes.UpdateAsync(first));
-    Check(Ok(await db.Query<Note>().FirstOrDefaultAsync(n => n.Id == first.Id))!.Done, "update round-trips");
+    (await notes.UpdateAsync(first)).ValueOrThrow();
+    Check((await db.Query<Note>().FirstOrDefaultAsync(n => n.Id == first.Id)).ValueOrThrow()!.Done, "update round-trips");
 
-    Ok(await db.InTransactionAsync(async (tx, ct) =>
-    {
-        await tx.Repository<Note>().InsertAsync(new Note { Title = "in tx" }, ct);
-        return Result<int>.Success(0);
-    }));
-    Check(Ok(await db.Query<Note>().CountAsync()) == 4, "transaction committed");
+    (await db.InTransactionAsync(async (tx, ct) =>
+        (await tx.Repository<Note>().InsertAsync(new Note { Title = "in tx" }, ct)).Map(_ => 0))).ValueOrThrow();
+    Check((await db.Query<Note>().CountAsync()).ValueOrThrow() == 4, "transaction committed");
 
-    var raw = Ok(await db.SqlScalarAsync<long>($"SELECT COUNT(*) FROM notes WHERE done = {true}"));
+    var raw = (await db.SqlScalarAsync<long>($"SELECT COUNT(*) FROM notes WHERE done = {true}")).ValueOrThrow();
     Check(raw == 2, "raw SQL with a parameter");
 
-    Ok(await notes.DeleteAsync(first));
-    Check(Ok(await db.Query<Note>().CountAsync()) == 3, "delete");
+    (await notes.DeleteAsync(first)).ValueOrThrow();
+    Check((await db.Query<Note>().CountAsync()).ValueOrThrow() == 3, "delete");
 }
 catch (Exception ex)
 {

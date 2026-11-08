@@ -73,21 +73,21 @@ public sealed class SteamAuthenticationService : IDisposable
     /// <param name="appId">
     /// The App ID to validate the ticket against. Falls back to <c>config.AppId</c> when not specified.
     /// </param>
-    /// <param name="cancellationToken">Cancels the request (<c>social.steam.cancelled</c>).</param>
+    /// <param name="cancellationToken">Cancels the request (<see cref="SocialConnectErrorCodes.SteamCancelled"/>).</param>
     /// <returns>
     /// A <see cref="Result{T}"/> containing the <see cref="SteamTicketIdentity"/> when Steam accepted the ticket.
     /// Failures:
     /// <list type="bullet">
-    ///   <item><see cref="ValidationError"/> <c>social.steam.invalid_ticket</c> (empty or not hex) /
-    ///   <c>social.steam.no_appid</c> (no App ID) — nothing was sent to Steam.</item>
-    ///   <item><see cref="UnauthorizedError"/> <c>social.steam.auth_failed</c> — Steam rejected the ticket
+    ///   <item><see cref="ValidationError"/> <see cref="SocialConnectErrorCodes.SteamInvalidTicket"/> (empty or not hex) /
+    ///   <see cref="SocialConnectErrorCodes.SteamNoAppId"/> (no App ID) — nothing was sent to Steam.</item>
+    ///   <item><see cref="UnauthorizedError"/> <see cref="SocialConnectErrorCodes.SteamAuthFailed"/> — Steam rejected the ticket
     ///   (invalid, expired, forged or for another app); <see cref="Error.Details"/> carries Steam's error code when given.</item>
-    ///   <item><see cref="TimeoutError"/> <c>social.steam.timeout</c> — no answer within <c>TimeoutSeconds</c>.</item>
-    ///   <item><see cref="UnavailableError"/> <c>social.steam.network_error</c> — Steam could not be reached or answered 5xx;
-    ///   <c>social.steam.cancelled</c> — <paramref name="cancellationToken"/> was cancelled.</item>
-    ///   <item><see cref="InternalError"/> <c>social.steam.request_rejected</c> (Steam answered 4xx, e.g. a bad API key),
-    ///   <c>social.steam.parse_error</c> (unreadable answer, or an answer whose Steam IDs are not SteamID64s) or
-    ///   <c>social.steam.error</c> (anything else).</item>
+    ///   <item><see cref="TimeoutError"/> <see cref="SocialConnectErrorCodes.SteamTimeout"/> — no answer within <c>TimeoutSeconds</c>.</item>
+    ///   <item><see cref="UnavailableError"/> <see cref="SocialConnectErrorCodes.SteamNetworkError"/> — Steam could not be reached or answered 5xx;
+    ///   <see cref="SocialConnectErrorCodes.SteamCancelled"/> — <paramref name="cancellationToken"/> was cancelled.</item>
+    ///   <item><see cref="InternalError"/> <see cref="SocialConnectErrorCodes.SteamRequestRejected"/> (Steam answered 4xx, e.g. a bad API key),
+    ///   <see cref="SocialConnectErrorCodes.SteamParseError"/> (unreadable answer, or an answer whose Steam IDs are not SteamID64s) or
+    ///   <see cref="SocialConnectErrorCodes.SteamError"/> (anything else).</item>
     /// </list>
     /// </returns>
     public async Task<Result<SteamTicketIdentity>> AuthenticateAsync(string ticket, string? appId = null, CancellationToken cancellationToken = default)
@@ -96,7 +96,7 @@ public sealed class SteamAuthenticationService : IDisposable
         {
             const string msg = "Ticket must be a non-empty hex string";
             return Result<SteamTicketIdentity>.Failure(
-                Error.Validation("social.steam.invalid_ticket", $"[{SocialError.AuthenticationFailed}] {msg}")
+                Error.Validation(SocialConnectErrorCodes.SteamInvalidTicket, msg)
             );
         }
 
@@ -105,7 +105,7 @@ public sealed class SteamAuthenticationService : IDisposable
         {
             const string msg = "App ID is required for Steam authentication";
             return Result<SteamTicketIdentity>.Failure(
-                Error.Validation("social.steam.no_appid", $"[{SocialError.ConfigurationError}] {msg}")
+                Error.Validation(SocialConnectErrorCodes.SteamNoAppId, msg)
             );
         }
 
@@ -122,7 +122,7 @@ public sealed class SteamAuthenticationService : IDisposable
             // Check for API-level error
             if (response?.Response?.Error is { } error)
             {
-                var errMsg = $"[{SocialError.AuthenticationFailed}] Steam auth error {error.ErrorCode}: {error.ErrorDesc}";
+                var errMsg = $"Steam auth error {error.ErrorCode}: {error.ErrorDesc}";
                 _logger?.Warning(errMsg);
 
                 _events?.Publish(new SteamAuthenticatedEvent(
@@ -130,7 +130,7 @@ public sealed class SteamAuthenticationService : IDisposable
                 ));
 
                 return Result<SteamTicketIdentity>.Failure(
-                    Error.Unauthorized("social.steam.auth_failed", errMsg, error.ErrorCode.ToString(CultureInfo.InvariantCulture))
+                    Error.Unauthorized(SocialConnectErrorCodes.SteamAuthFailed, errMsg, error.ErrorCode.ToString(CultureInfo.InvariantCulture))
                 );
             }
 
@@ -138,7 +138,7 @@ public sealed class SteamAuthenticationService : IDisposable
             if (@params is null || @params.Result != "OK")
             {
                 var resultStr = @params?.Result ?? "null";
-                var errMsg = $"[{SocialError.AuthenticationFailed}] Steam auth result was not OK: {resultStr}";
+                var errMsg = $"Steam auth result was not OK: {resultStr}";
                 _logger?.Warning(errMsg);
 
                 _events?.Publish(new SteamAuthenticatedEvent(
@@ -146,21 +146,21 @@ public sealed class SteamAuthenticationService : IDisposable
                 ));
 
                 return Result<SteamTicketIdentity>.Failure(
-                    Error.Unauthorized("social.steam.auth_failed", errMsg)
+                    Error.Unauthorized(SocialConnectErrorCodes.SteamAuthFailed, errMsg)
                 );
             }
 
             // Steam's answer is data from the network: only SteamID64s reach the log, the event and the caller.
             if (!SteamIds.IsSteamId64(@params.SteamId) || !SteamIds.IsSteamId64(@params.OwnerSteamId))
             {
-                var errMsg = $"[{SocialError.SerializationError}] Steam auth answer did not carry valid Steam IDs";
+                const string errMsg = "Steam auth answer did not carry valid Steam IDs";
                 _logger?.Error(errMsg);
 
                 _events?.Publish(new SteamAuthenticatedEvent(
                     string.Empty, false, authenticatedAt, resolvedAppId, errMsg
                 ));
 
-                return Result<SteamTicketIdentity>.Failure(Error.Internal("social.steam.parse_error", errMsg));
+                return Result<SteamTicketIdentity>.Failure(Error.Internal(SocialConnectErrorCodes.SteamParseError, errMsg));
             }
 
             var identity = new SteamTicketIdentity(
@@ -187,22 +187,22 @@ public sealed class SteamAuthenticationService : IDisposable
                 string.Empty, false, authenticatedAt, resolvedAppId, errMsg
             ));
 
-            return Result<SteamTicketIdentity>.Failure(Error.Unavailable("social.steam.cancelled", errMsg));
+            return Result<SteamTicketIdentity>.Failure(Error.Unavailable(SocialConnectErrorCodes.SteamCancelled, errMsg));
         }
         catch (OperationCanceledException ex)
         {
-            var errMsg = $"[{SocialError.Timeout}] Steam auth request timed out: {ex.Message}";
+            var errMsg = $"Steam auth request timed out: {ex.Message}";
             _logger?.Error(errMsg, ex);
 
             _events?.Publish(new SteamAuthenticatedEvent(
                 string.Empty, false, authenticatedAt, resolvedAppId, errMsg
             ));
 
-            return Result<SteamTicketIdentity>.Failure(Error.Timeout("social.steam.timeout", errMsg));
+            return Result<SteamTicketIdentity>.Failure(Error.Timeout(SocialConnectErrorCodes.SteamTimeout, errMsg));
         }
         catch (HttpRequestException ex) when ((int?)ex.StatusCode is >= 400 and < 500)
         {
-            var errMsg = $"[{SocialError.AuthenticationFailed}] Steam rejected the auth request ({(int)ex.StatusCode!}); check the API key and App ID";
+            var errMsg = $"Steam rejected the auth request ({(int)ex.StatusCode!}); check the API key and App ID";
             _logger?.Error(errMsg, ex);
 
             _events?.Publish(new SteamAuthenticatedEvent(
@@ -210,40 +210,40 @@ public sealed class SteamAuthenticationService : IDisposable
             ));
 
             return Result<SteamTicketIdentity>.Failure(
-                Error.Internal("social.steam.request_rejected", errMsg, ((int)ex.StatusCode!).ToString(CultureInfo.InvariantCulture)));
+                Error.Internal(SocialConnectErrorCodes.SteamRequestRejected, errMsg, ((int)ex.StatusCode!).ToString(CultureInfo.InvariantCulture)));
         }
         catch (HttpRequestException ex)
         {
-            var errMsg = $"[{SocialError.NetworkError}] Network error during Steam auth: {ex.Message}";
+            var errMsg = $"Network error during Steam auth: {ex.Message}";
             _logger?.Error(errMsg, ex);
 
             _events?.Publish(new SteamAuthenticatedEvent(
                 string.Empty, false, authenticatedAt, resolvedAppId, errMsg
             ));
 
-            return Result<SteamTicketIdentity>.Failure(Error.Unavailable("social.steam.network_error", errMsg));
+            return Result<SteamTicketIdentity>.Failure(Error.Unavailable(SocialConnectErrorCodes.SteamNetworkError, errMsg));
         }
         catch (JsonException ex)
         {
-            var errMsg = $"[{SocialError.SerializationError}] Failed to parse Steam auth response: {ex.Message}";
+            var errMsg = $"Failed to parse Steam auth response: {ex.Message}";
             _logger?.Error(errMsg, ex);
 
             _events?.Publish(new SteamAuthenticatedEvent(
                 string.Empty, false, authenticatedAt, resolvedAppId, errMsg
             ));
 
-            return Result<SteamTicketIdentity>.Failure(Error.Internal("social.steam.parse_error", errMsg));
+            return Result<SteamTicketIdentity>.Failure(Error.Internal(SocialConnectErrorCodes.SteamParseError, errMsg));
         }
         catch (Exception ex)
         {
-            var errMsg = $"[{SocialError.NetworkError}] Unexpected error during Steam auth: {ex.Message}";
+            var errMsg = $"Unexpected error during Steam auth: {ex.Message}";
             _logger?.Error(errMsg, ex);
 
             _events?.Publish(new SteamAuthenticatedEvent(
                 string.Empty, false, authenticatedAt, resolvedAppId, errMsg
             ));
 
-            return Result<SteamTicketIdentity>.Failure(Error.Internal("social.steam.error", errMsg, ex.GetType().Name));
+            return Result<SteamTicketIdentity>.Failure(Error.Internal(SocialConnectErrorCodes.SteamError, errMsg, ex.GetType().Name));
         }
     }
     /// <inheritdoc/>

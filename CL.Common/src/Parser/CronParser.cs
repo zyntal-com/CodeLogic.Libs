@@ -43,32 +43,24 @@ public static class CronParser
     public static bool IsValid(string expression) => Parse(expression).IsSuccess;
 
     /// <summary>
-    /// Returns the next UTC occurrence of the cron schedule after the given time.
+    /// Returns the next UTC occurrence of the cron schedule strictly after the given time, with the fields read as UTC.
     /// Searches up to 1 year ahead. Accuracy is to the minute.
     /// </summary>
     /// <param name="expression">A valid 5-field cron expression.</param>
-    /// <param name="from">Start searching from this point. Defaults to <see cref="DateTime.UtcNow"/>.</param>
+    /// <param name="from">
+    /// Start searching after this point. Defaults to <see cref="DateTime.UtcNow"/>. A <see cref="DateTimeKind.Local"/> time is
+    /// converted to UTC first; an <see cref="DateTimeKind.Unspecified"/> one is taken as UTC.
+    /// </param>
+    /// <returns>The next occurrence, with <see cref="DateTimeKind.Utc"/>.</returns>
     public static Result<DateTime> GetNextOccurrence(string expression, DateTime? from = null)
     {
-        var parseResult = Parse(expression);
-        if (!parseResult.IsSuccess) return parseResult.Error!;
-
-        var expr  = parseResult.Value!;
-        if (NeverMatches(expr) is { } never) return never;
-        var start = (from ?? DateTime.UtcNow).AddMinutes(1);
-        // Truncate to the minute
-        start = new DateTime(start.Year, start.Month, start.Day, start.Hour, start.Minute, 0, DateTimeKind.Utc);
-
-        for (int i = 0; i < 525_600; i++) // max 1 year = 525,600 minutes
+        var instant = from switch
         {
-            if (MatchesTime(expr, start))
-            {
-                return start;
-            }
-            start = start.AddMinutes(1);
-        }
-
-        return Error.Internal(ErrorCode.Internal, "No next occurrence found within one year for the given expression");
+            null => DateTimeOffset.UtcNow,
+            { Kind: DateTimeKind.Local } local => new DateTimeOffset(local.ToUniversalTime(), TimeSpan.Zero),
+            { } other => new DateTimeOffset(DateTime.SpecifyKind(other, DateTimeKind.Utc), TimeSpan.Zero),
+        };
+        return GetNextOccurrence(expression, instant, null).Map(static next => next.UtcDateTime);
     }
 
     /// <summary>

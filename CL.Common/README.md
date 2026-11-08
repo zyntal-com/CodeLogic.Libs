@@ -81,5 +81,3 @@ Full guide: **[CL.Common documentation](https://zyntal-com.github.io/CodeLogic.L
 ## License
 
 MIT — see [LICENSE](https://github.com/zyntal-com/CodeLogic.Libs/blob/main/LICENSE).
-
-Audit completion notes and current limits are in [the guide](../docs/libs/common/utilities.md).

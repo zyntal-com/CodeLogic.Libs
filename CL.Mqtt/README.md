@@ -96,10 +96,8 @@ broker.Authorizer = new MyAccountAuthorizer();
 
 ## Documentation
 
-Full guide, configuration reference and error codes: [docs/libs/mqtt.md](https://github.com/zyntal-com/CodeLogic.Libs/blob/main/docs/libs/mqtt.md).
+Full guide, configuration reference, error codes and current limits: [docs/libs/mqtt.md](https://github.com/zyntal-com/CodeLogic.Libs/blob/main/docs/libs/mqtt.md).
 
 ## License
 
 MIT
-
-Audit completion notes and current limits are in [the guide](../docs/libs/mqtt.md).

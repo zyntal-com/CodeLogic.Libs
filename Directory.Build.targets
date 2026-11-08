@@ -37,7 +37,7 @@
 
   <!--
     Derive AssemblyVersion from $(Version) — strip any -prerelease suffix AND
-    any +build-metadata (e.g. 4.8.142-preview+a1b2c3d → 4.8.142) so the value
+    any +build-metadata (e.g. 5.0.142-preview+a1b2c3d → 5.0.142) so the value
     parses as a numeric System.Version, then keep only Major.Minor.0.0 so every
     patch loads interchangeably.
   -->

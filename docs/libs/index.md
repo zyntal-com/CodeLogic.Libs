@@ -109,20 +109,26 @@ await Libraries.LoadAsync<CL.Mail.MailLibrary>();   // register before Configure
 await CodeLogic.ConfigureAsync();
 await CodeLogic.StartAsync();
 
-var mail = Libraries.Get<CL.Mail.MailLibrary>();   // resolve after StartAsync()
+var mail = Libraries.Get<CL.Mail.MailLibrary>()!;  // resolve after StartAsync()
 ```
 
 ### Result-based APIs
 
-Most operations return `Result` / `Result<T>` rather than throwing for expected failures:
+Operations return CodeLogic `Result` / `Result<T>` rather than throwing for expected failures. They are
+C# 15 unions, so the compiler checks that a `switch` covers every case:
 
 ```csharp
-var result = await repo.GetByIdAsync(42);
-if (result.IsSuccess)
-    Use(result.Value);
-else
-    log.Warn(result.Error?.Message);
+var found = await db.Repository<User>().GetByIdAsync(42);
+var text = found switch
+{
+    User user => user.Name,
+    Error e   => $"Lookup failed: {e.Code}",   // NotFoundError, TimeoutError, ... are Error kinds
+    null      => "No such user",               // a success without a row
+};
 ```
+
+`IsSuccess` / `Value` / `Error` still work. `ValueOrThrow()` and `ThrowIfFailure()` throw a
+`ResultFailedException` that carries the `Error`. Every library works this way, CL.NetUtils included.
 
 ### Configuration files
 
@@ -135,7 +141,7 @@ so first boot always succeeds and you tune from there.
 Every library implements `HealthCheckAsync()`:
 
 ```csharp
-var status = await mysql.HealthCheckAsync();
+var status = await mail.HealthCheckAsync();
 // status.Status : Healthy | Degraded | Unhealthy
 // status.Message, status.Data (structured metrics)
 ```

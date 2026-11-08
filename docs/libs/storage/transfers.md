@@ -260,7 +260,7 @@ file's content into, for push-style producers:
 
 ```csharp
 var opened = await files.OpenWriteAsync("exports/data.csv", new StorageUploadOptions { Verify = true });
-await using var writer = opened.Value!;
+await using var writer = opened.ValueOrThrow();
 await writer.WriteAsync(chunk);
 Result<StorageItem> committed = await writer.CommitAsync(); // or AbortAsync(); disposing without commit aborts
 ```
@@ -449,7 +449,7 @@ var opened = await storage.OpenTransferQueueAsync(new StorageTransferQueueOption
     AutomaticRetries = 3,
     Store = myDurableStore          // optional: jobs survive restarts
 });
-await using var queue = opened.Value!;
+await using var queue = opened.ValueOrThrow();
 queue.ProgressChanged += job => Console.WriteLine($"{job.Destination}: {job.Progress?.BytesTransferred:N0} B");
 
 await queue.EnqueueUploadDirectoryAsync(@"C:\exports", "sftp", "incoming");
@@ -585,8 +585,9 @@ calls; each transfer ends `Queued` or `Interrupted` by its phase, with its lease
 `Failed`. Once `DisposeAsync` returns, the queue makes no new call to the store, so the store may be
 closed: an attempt that outlived `ShutdownTimeout` records nothing more, and its job is recovered by the
 restart rules once its lease lapses (a store call already in flight is the store's to finish). The
-library's synchronous `Dispose()` stops its queues the same way, so it blocks the calling thread while
-they stop, up to their `ShutdownTimeout`; prefer `DisposeAsync` or the CodeLogic stop. After disposal, calls that change jobs return `storage.unavailable`. A queue that
+library's synchronous `Dispose()` starts the same stop in the background and returns without waiting;
+await `DisposeAsync` or the CodeLogic stop before closing the store or exiting. After disposal, calls that
+change jobs return `storage.unavailable`. A queue that
 finishes opening while the library is stopping is disposed at once, and `OpenTransferQueueAsync` fails
 with `storage.unavailable`.
 
@@ -685,7 +686,7 @@ var options = new StorageSyncOptions
     Verify = true,
     Compare = new StorageCompareOptions { Exclude = ["**/*.tmp", "cache/**"] }
 };
-var plan = (await storage.PlanSyncAsync("sftp", "site", "s3", "backup/site", options)).Value!;
+var plan = (await storage.PlanSyncAsync("sftp", "site", "s3", "backup/site", options)).ValueOrThrow();
 // show plan.Actions, plan.Conflicts, and plan.Warnings; store plan.ToJson(); approve plan.Digest
 var report = await storage.ApplySyncAsync("sftp", "site", "s3", "backup/site", plan, approvedDigest, options);
 ```

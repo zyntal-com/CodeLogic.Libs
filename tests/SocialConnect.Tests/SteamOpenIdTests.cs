@@ -147,7 +147,7 @@ public sealed class SteamOpenIdTests
 
         Assert.True(first.IsSuccess, first.Error?.Message);
         Assert.True(second.IsFailure);
-        Assert.Equal("social.steam.openid_replayed", second.Error!.Code);
+        Assert.Equal(SocialConnectErrorCodes.SteamOpenIdReplayed, second.Error!.Code);
         Assert.Equal(2, steam.Bodies.Count);   // Only authenticated assertions reach the atomic replay check.
     }
 
@@ -158,7 +158,7 @@ public sealed class SteamOpenIdTests
         using var service = Service(new FakeSteam(_ => new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(answers.Dequeue()) }));
         var assertion = Assertion();
 
-        Assert.Equal("social.steam.openid_rejected", (await service.VerifyAsync(assertion, ReturnTo)).Error!.Code);
+        Assert.Equal(SocialConnectErrorCodes.SteamOpenIdRejected, (await service.VerifyAsync(assertion, ReturnTo)).Error!.Code);
         Assert.True((await service.VerifyAsync(assertion, ReturnTo)).IsSuccess);
     }
 
@@ -171,7 +171,7 @@ public sealed class SteamOpenIdTests
         var assertion = Assertion();
 
         Assert.True((await a.VerifyAsync(assertion, ReturnTo)).IsSuccess);
-        Assert.Equal("social.steam.openid_replayed", (await b.VerifyAsync(assertion, ReturnTo)).Error!.Code);
+        Assert.Equal(SocialConnectErrorCodes.SteamOpenIdReplayed, (await b.VerifyAsync(assertion, ReturnTo)).Error!.Code);
         Assert.Equal(1, nonces.Count);
     }
 
@@ -222,7 +222,7 @@ public sealed class SteamOpenIdTests
 
         var result = await service.VerifyAsync(query, ReturnTo);
 
-        Assert.Equal("social.steam.openid_invalid", result.Error!.Code);
+        Assert.Equal(SocialConnectErrorCodes.SteamOpenIdInvalid, result.Error!.Code);
         foreach (var text in new[] { result.Error.Message, logger.All, Assert.Single(events).ErrorMessage! })
         {
             Assert.DoesNotContain("\n", text);
@@ -241,7 +241,7 @@ public sealed class SteamOpenIdTests
         var result = await service.VerifyAsync(Assertion(), ReturnTo, cts.Token);
 
         Assert.IsType<CodeLogic.Core.Results.UnavailableError>(result.Error);
-        Assert.Equal("social.steam.cancelled", result.Error!.Code);
+        Assert.Equal(SocialConnectErrorCodes.SteamCancelled, result.Error!.Code);
     }
 
     // ── VerifyAsync ───────────────────────────────────────────────────────────
@@ -284,7 +284,7 @@ public sealed class SteamOpenIdTests
         var result = await service.VerifyAsync(Assertion(nonce: Nonce(TimeSpan.FromMinutes(10))), ReturnTo);
 
         Assert.True(result.IsFailure);
-        Assert.Equal("social.steam.openid_expired", result.Error!.Code);
+        Assert.Equal(SocialConnectErrorCodes.SteamOpenIdExpired, result.Error!.Code);
         Assert.Empty(steam.Bodies);
     }
 
@@ -307,7 +307,7 @@ public sealed class SteamOpenIdTests
         var result = await service.VerifyAsync(Assertion(nonce: Nonce(TimeSpan.FromMinutes(-5))), ReturnTo);
 
         Assert.True(result.IsFailure);
-        Assert.Equal("social.steam.openid_invalid", result.Error!.Code);
+        Assert.Equal(SocialConnectErrorCodes.SteamOpenIdInvalid, result.Error!.Code);
     }
 
     [Theory]
@@ -324,7 +324,7 @@ public sealed class SteamOpenIdTests
         var result = await service.VerifyAsync(Assertion(nonce: nonce), ReturnTo);
 
         Assert.True(result.IsFailure);
-        Assert.Equal("social.steam.openid_invalid", result.Error!.Code);
+        Assert.Equal(SocialConnectErrorCodes.SteamOpenIdInvalid, result.Error!.Code);
         Assert.Empty(steam.Bodies);
     }
 
@@ -356,7 +356,7 @@ public sealed class SteamOpenIdTests
         using var service = Service(Answer(body));
         var result = await service.VerifyAsync(Assertion(), ReturnTo);
         Assert.True(result.IsFailure);
-        Assert.Equal("social.steam.openid_rejected", result.Error!.Code);
+        Assert.Equal(SocialConnectErrorCodes.SteamOpenIdRejected, result.Error!.Code);
     }
 
     [Fact]
@@ -369,14 +369,14 @@ public sealed class SteamOpenIdTests
 
     public static TheoryData<string, string, string> Tampered => new()
     {
-        { "openid.return_to", "https://example.com/auth/steam/callback?state=other", "social.steam.openid_return_to" },
-        { "openid.op_endpoint", "https://evil.example/openid/login", "social.steam.openid_invalid" },
-        { "openid.ns", "http://openid.net/signon/1.1", "social.steam.openid_invalid" },
-        { "openid.mode", "cancel", "social.steam.openid_cancelled" },
-        { "openid.mode", "check_authentication", "social.steam.openid_invalid" },
-        { "openid.identity", "https://steamcommunity.com/openid/id/76561197960435531", "social.steam.openid_identity" },
-        { "openid.signed", "signed,op_endpoint,claimed_id,identity,response_nonce", "social.steam.openid_invalid" },
-        { "openid.sig", "", "social.steam.openid_invalid" }
+        { "openid.return_to", "https://example.com/auth/steam/callback?state=other", SocialConnectErrorCodes.SteamOpenIdReturnTo },
+        { "openid.op_endpoint", "https://evil.example/openid/login", SocialConnectErrorCodes.SteamOpenIdInvalid },
+        { "openid.ns", "http://openid.net/signon/1.1", SocialConnectErrorCodes.SteamOpenIdInvalid },
+        { "openid.mode", "cancel", SocialConnectErrorCodes.SteamOpenIdCancelled },
+        { "openid.mode", "check_authentication", SocialConnectErrorCodes.SteamOpenIdInvalid },
+        { "openid.identity", "https://steamcommunity.com/openid/id/76561197960435531", SocialConnectErrorCodes.SteamOpenIdIdentity },
+        { "openid.signed", "signed,op_endpoint,claimed_id,identity,response_nonce", SocialConnectErrorCodes.SteamOpenIdInvalid },
+        { "openid.sig", "", SocialConnectErrorCodes.SteamOpenIdInvalid }
     };
 
     [Theory]
@@ -409,7 +409,7 @@ public sealed class SteamOpenIdTests
         var result = await service.VerifyAsync(Assertion(claimedId), ReturnTo);
 
         Assert.True(result.IsFailure);
-        Assert.Equal("social.steam.openid_identity", result.Error!.Code);
+        Assert.Equal(SocialConnectErrorCodes.SteamOpenIdIdentity, result.Error!.Code);
         Assert.Empty(steam.Bodies);
     }
 
@@ -447,7 +447,7 @@ public sealed class SteamOpenIdTests
         using var service = Service(new FakeSteam(_ => throw new HttpRequestException("connection refused")));
         var result = await service.VerifyAsync(Assertion(), ReturnTo);
         Assert.True(result.IsFailure);
-        Assert.Equal("social.steam.openid_unavailable", result.Error!.Code);
+        Assert.Equal(SocialConnectErrorCodes.SteamOpenIdUnavailable, result.Error!.Code);
     }
 
     [Fact]
@@ -456,6 +456,6 @@ public sealed class SteamOpenIdTests
         using var service = Service(Answer("is_valid:true"));
         var result = await service.VerifyAsync(Assertion(), "");
         Assert.True(result.IsFailure);
-        Assert.Equal("social.steam.openid_return_to", result.Error!.Code);
+        Assert.Equal(SocialConnectErrorCodes.SteamOpenIdReturnTo, result.Error!.Code);
     }
 }

@@ -9,6 +9,9 @@ namespace CL.Data.Sql;
 /// </summary>
 public abstract class SqlDialect
 {
+    /// <summary>How this dialect lexes comments and literals, for the raw-SQL classifiers. Standard SQL by default.</summary>
+    public virtual SqlLexicon Lexicon => SqlLexicon.Standard;
+
     /// <summary>Character that opens a quoted identifier.</summary>
     protected virtual char OpenQuote => '"';
 

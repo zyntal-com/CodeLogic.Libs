@@ -52,13 +52,14 @@ using CL.GameNetQuery.Models;
 using CodeLogic.Core.Results;
 
 Result<ServerQuery> r = await ValveUdpQuery.QueryAsync("192.168.1.100", 27015);
-if (r.IsSuccess)
+var line = r switch
 {
-    var (info, players, ms) = r.Value;
-    Console.WriteLine($"{info.Hostname} on {info.Map} ({info.PlayerCount}/{info.MaxPlayers}) in {ms} ms");
-}
-else if (r.Error is TimeoutError)
-    Console.WriteLine("Server did not answer");
+    ServerQuery q => $"{q.Info.Hostname} on {q.Info.Map} ({q.Info.PlayerCount}/{q.Info.MaxPlayers}) in {q.DurationMs} ms",
+    TimeoutError  => "Server did not answer",
+    Error e       => $"{e.Code}: {e.Message}",
+    null          => "No result"
+};
+Console.WriteLine(line);
 ```
 
 ```csharp
@@ -162,7 +163,6 @@ rcon.Disconnect();
 | `SendCommandAsync(string command)` | `Task<string>` | Sends `command` verbatim; raw server response |
 | `Disconnect()` | `void` | Close the socket |
 | `Dispose()` | `void` | Release resources |
-
 | `ResponseTimeout` | `TimeSpan` | Time allowed for an auth or command reply (default 5 s) |
 | `MultiPacketIdleTimeout` | `TimeSpan` | Ends a response after this pause when the server doesn't answer the end marker (default 500 ms) |
 
@@ -289,7 +289,7 @@ The CS2 `status` layout differs, so it has its own parser:
 | Method | Returns |
 |--------|---------|
 | `GetHostname(status)` / `GetMapName(status)` | `string` |
-| `GetPlayerCount(status)` | `(int, int)` |
+| `GetPlayerCount(status)` | `(int HumanCount, int BotCount)` |
 | `GetPlayerList(status)` | `List<PlayerInfo>` |
 | `GetSpawngroups(status)` | `List<string>` |
 

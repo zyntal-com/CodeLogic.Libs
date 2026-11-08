@@ -62,7 +62,7 @@ on its page under [Libraries](libs/index.md).
 Resolve the library after `StartAsync()` and call into it. Operations return `Result` / `Result<T>`:
 
 ```csharp
-var mail = Libraries.Get<CL.Mail.MailLibrary>();
+var mail = Libraries.Get<CL.Mail.MailLibrary>()!;
 
 var message = mail.CreateMessage()
     .From("noreply@example.com", "My App")

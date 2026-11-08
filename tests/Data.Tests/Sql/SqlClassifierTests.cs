@@ -44,6 +44,37 @@ public sealed class SqlClassifierTests
     [InlineData("PRAGMA user_version = 3")]
     public void Not_plain_reads(string sql) => Assert.False(SqlClassifier.IsPlainRead(sql));
 
+    // Lexing follows the dialect: code the server runs must never look like a comment or a literal.
+    [Theory]
+    [InlineData("SELECT 1--1, 2; DELETE FROM t", "mysql", false)]          // MySQL: --1 is arithmetic, not a comment
+    [InlineData("SELECT 1 -- note; DELETE FROM t", "mysql", true)]         // -- plus a space is a comment
+    [InlineData("SELECT 1--note; DELETE FROM t", "standard", true)]        // elsewhere -- always starts a comment
+    [InlineData("SELECT 1 # x; DELETE FROM t", "mysql", true)]             // MySQL # comment
+    [InlineData("SELECT 1 # 2; DELETE FROM t", "postgresql", false)]       // PostgreSQL: # is an operator
+    [InlineData("SELECT $x$, 1; DELETE FROM t; SELECT $x$", "mysql", false)]       // MySQL: $x$ is an identifier
+    [InlineData("SELECT $x$, 1; DELETE FROM t; SELECT $x$", "postgresql", true)]   // PostgreSQL: one dollar-quoted string
+    [InlineData("SELECT $$insert$$", "postgresql", true)]
+    [InlineData("SELECT [x; DELETE FROM t]", "mysql", false)]              // MySQL has no [identifiers]
+    [InlineData("SELECT [x; DELETE FROM t]", "standard", true)]
+    public void Lexing_follows_the_dialect(string sql, string dialect, bool plainRead) =>
+        Assert.Equal(plainRead, SqlClassifier.IsPlainRead(sql, dialect switch
+        {
+            "mysql" => SqlLexicon.MySql,
+            "postgresql" => SqlLexicon.PostgreSql,
+            _ => SqlLexicon.Standard,
+        }));
+
+    [Theory]
+    [InlineData(@"SELECT 'a\'', 1; DELETE FROM t; SELECT ''")]   // MySQL ends the first string after the escaped quote
+    [InlineData(@"SELECT 'C:\path'")]
+    [InlineData(@"SELECT ""a\""b""")]
+    public void Literals_with_a_backslash_are_never_plain_reads(string sql)
+    {
+        Assert.False(SqlClassifier.IsPlainRead(sql, SqlLexicon.MySql));
+        Assert.False(SqlClassifier.IsPlainRead(sql, SqlLexicon.PostgreSql));
+        Assert.False(SqlClassifier.IsPlainRead(sql, SqlLexicon.Standard));
+    }
+
     [Fact]
     public void Explicit_intents_override_the_text()
     {

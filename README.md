@@ -11,8 +11,9 @@
 </p>
 
 <p align="center">
-  Fifteen production-ready .NET 11 library integrations for
-  <a href="https://github.com/zyntal-com/CodeLogic">CodeLogic 5</a>.
+  Twelve .NET 11 libraries for
+  <a href="https://github.com/zyntal-com/CodeLogic">CodeLogic 5</a>,
+  published as sixteen packages (CL.Data has four provider packages).
   Each is a self-contained <code>ILibrary</code> with auto-generated configuration,
   lifecycle management, and health checks.
 </p>
@@ -34,7 +35,7 @@
 | [CodeLogic.GitHelper](CL.GitHelper/) | [![NuGet](https://img.shields.io/nuget/v/CodeLogic.GitHelper?label=)](https://www.nuget.org/packages/CodeLogic.GitHelper) | Git repository automation via LibGit2Sharp |
 | [CodeLogic.TwoFactorAuth](CL.TwoFactorAuth/) | [![NuGet](https://img.shields.io/nuget/v/CodeLogic.TwoFactorAuth?label=)](https://www.nuget.org/packages/CodeLogic.TwoFactorAuth) | TOTP 2FA with QR-code generation |
 
-All packages target **.NET 11** and depend on **CodeLogic 5.0** (range `[5.0.0-preview, 6.0.0)` while CodeLogic 5.0 is in preview, `[5.0.0, 6.0.0)` from its stable release). On .NET 10, use the 4.9.x packages (CodeLogic `[4.9.0, 5.0.0)`), maintained on the `support/4.x` branch.
+All packages target **.NET 11** and depend on **CodeLogic 5.0** (range `[5.0.35-preview, 6.0.0)` today: the floor is the CodeLogic version the libraries are built against). On .NET 10, use the 4.9.x packages (CodeLogic `[4.9.0, 5.0.0)`), maintained on the `support/4.x` branch.
 
 Every library and the CodeLogic framework itself share one version line: **`5.0.<patch>`** (4.9 on the .NET 10 maintenance line).
 The `major.minor` is hand-controlled in the repo-root `version.txt`; the patch is the CI run
@@ -114,12 +115,24 @@ rely on database connections, mail services, and the rest being available.
 
 ```csharp
 // Resolve a loaded library anywhere in your code:
-var mail = Libraries.Get<CL.Mail.MailLibrary>();
+var mail = Libraries.Get<CL.Mail.MailLibrary>()!;
 var sent = await mail.Smtp.SendAsync(message);
+
+// Result<T> is a union, so the compiler checks that a switch covers every case.
+var text = sent switch
+{
+    MailSendReceipt receipt => $"Sent {receipt.MessageId}",
+    ValidationError e       => $"Rejected: {e.Message}",
+    Error e                 => $"Failed: {e.Code}",
+    null                    => "No result",
+};
 ```
 
-Most operations return `Result` / `Result<T>` rather than throwing for expected failures
-(a few libraries — Mail, GitHelper, NetUtils — use their own result types; see their docs).
+Operations return CodeLogic `Result` / `Result<T>` rather than throwing for expected failures. A failure
+carries an `Error` whose kind (`NotFoundError`, `ValidationError`, `TimeoutError`, ...) you can match on.
+`ValueOrThrow()` / `ThrowIfFailure()` turn a failure into an exception where that is simpler (tests, startup).
+Every library works this way, CL.NetUtils included: a DNSBL check returns `Result<DnsblCheck>` and a GeoIP lookup
+`Result<IpLocation>`.
 
 ## Documentation
 

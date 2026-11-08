@@ -300,8 +300,8 @@ public sealed class NetUtilsLibrary : ILibrary, IConfigReloadable
     /// <summary>
     /// The DNSBL checker service. Always available once the library has initialized: while DNSBL checking is switched
     /// off (<c>enabled</c> or <c>dnsbl.enabled</c> is <see langword="false"/>) it is a checker whose
-    /// <see cref="DnsblChecker.IsEnabled"/> is <see langword="false"/> and whose checks return
-    /// <see cref="DnsblCheckStatus.Error"/> with a "DNSBL checking is disabled" message, without any DNS query.
+    /// <see cref="DnsblChecker.IsEnabled"/> is <see langword="false"/> and whose checks fail with
+    /// <see cref="NetUtilsErrorCodes.DnsblDisabled"/>, without any DNS query.
     /// Read it per use rather than caching it: a config change replaces it.
     /// </summary>
     /// <exception cref="InvalidOperationException">Thrown before the library has initialized.</exception>

@@ -158,7 +158,7 @@ jobs:
           # SemVer build-metadata: nuget.org strips it from the package version, so it is
           # provenance only — it survives in the assembly InformationalVersion. Nothing is
           # written back to the repo; the version is composed at pack time via -p:Version.
-          $rootVer = (Get-Content 'version.txt' -TotalCount 1).Trim()   # e.g. "4.8"
+          $rootVer = (Get-Content 'version.txt' -TotalCount 1).Trim()   # e.g. "5.0"
           $sha     = '${{ github.sha }}'.Substring(0, 7)
           if ('${{ github.ref_name }}'.StartsWith('prerelease/')) {
             $version = "$rootVer.${{ github.run_number }}-preview+$sha"
@@ -220,13 +220,14 @@ jobs:
           # Push order: referenced packages first (see "Detect changes").
           $packageIds | ForEach-Object { "$_.$($version.Split('+')[0]).nupkg" } | Set-Content 'artifacts/push-order.txt'
 
-          # NuGet normalizes PackageReference ranges to use the restored version as
-          # the lower bound. For libs to keep accepting older CodeLogic versions,
-          # rewrite each nupkg's .nuspec to use the literal range "[5.0.0-preview, 6.0.0)".
-          # 5.0 is the floor: the libraries use the net11 union Result/Error API. The "-preview" floor admits every
-          # 5.0.N-preview (they sort above 5.0.0-preview) and every stable 5.x. nuget.org rejects a purely numeric
-          # prerelease label such as "5.0.0-0" (400 "invalid Version"), so never use one here.
-          $targetRange = '[5.0.0-preview, 6.0.0)'
+          # Rewrite each nupkg's CodeLogic dependency to "[<pinned>, 6.0.0)", where <pinned> is CodeLogicPackageVersion
+          # from Directory.Build.props: the version the libraries were just compiled against. A lower floor let NuGet
+          # resolve older CodeLogic previews: 5.0.28-preview and earlier are not strong-name signed and lack APIs the
+          # libraries use, so consumers got CS0012 ("'Result<>' is defined in an assembly that is not referenced").
+          # The floor rises with each pin bump; every later 5.x (preview or stable) still satisfies it.
+          $pinned = (Select-Xml -Path 'Directory.Build.props' -XPath "//*[local-name()='CodeLogicPackageVersion']").Node.InnerText.Trim()
+          if (-not $pinned) { throw 'CodeLogicPackageVersion is missing from Directory.Build.props.' }
+          $targetRange = "[$pinned, 6.0.0)"
           foreach ($nupkg in Get-ChildItem artifacts -Filter '*.nupkg') {
             $tmp = "$env:RUNNER_TEMP/nupkg-$([Guid]::NewGuid())"
             New-Item -ItemType Directory -Force -Path $tmp | Out-Null
@@ -334,7 +335,7 @@ jobs:
 
       - name: Create GitHub release
         if: steps.changes.outputs.has_changes == 'True'
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3
         with:
           # Tag the commit that was built. Without this a new tag lands on the default branch.
           target_commitish: ${{ github.sha }}

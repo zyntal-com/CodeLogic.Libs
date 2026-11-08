@@ -14,7 +14,7 @@ public interface ITotpUsedStepStore
     /// concurrent requests cannot both accept the same code.
     /// </summary>
     /// <param name="userId">The user the code belongs to.</param>
-    /// <param name="step">The absolute TOTP time step that matched (<c>TotpValidationResult.MatchedWindow</c>).</param>
+    /// <param name="step">The absolute TOTP time step that matched (<c>TotpMatch.MatchedWindow</c>).</param>
     /// <returns><c>true</c> when the step is newer than every step accepted before and is now recorded; <c>false</c> when it was already used, or an older step was accepted since.</returns>
     bool TryUse(string userId, long step);
 }

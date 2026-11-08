@@ -271,8 +271,9 @@ if (job.IsSuccess) await queue.CancelAsync(job.Value!.Id);
   later. Set `ControlTimeout = TimeSpan.Zero` to return as soon as the request is recorded.
 - A job whose store saves fail 8 times in a row ends `Failed` with `storage.unavailable`; retry it with
   `RetryAsync` once the store works.
-- Keep the store open until `DisposeAsync` has returned; after that the queue does not use it. Do not
-  call the library's synchronous `Dispose()` on a UI thread: it blocks while the queues stop.
+- Keep the store open until `DisposeAsync` has returned; after that the queue does not use it. The
+  library's synchronous `Dispose()` starts the stop in the background and returns without waiting, so
+  await `DisposeAsync` (or the CodeLogic stop) before closing the store or deleting state.
 - Progress and job handlers without an `EventContext` must not wait synchronously on the queue's methods.
 - Give each running queue its own `WorkerId` (the service and a desktop app sharing a store included).
 

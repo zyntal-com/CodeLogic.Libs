@@ -16,6 +16,7 @@ internal sealed class DataSession : IAsyncDisposable
     private readonly Database _db;
     private readonly DbConnection _connection;
     private DbTransaction? _transaction;
+    private bool _dirty;
 
     private DataSession(Database db, DbConnection connection)
     {
@@ -106,7 +107,7 @@ internal sealed class DataSession : IAsyncDisposable
     {
         if (_transaction is not { } tx) return;
         try { await tx.RollbackAsync(CancellationToken.None).ConfigureAwait(false); }
-        catch { /* the connection may already be broken */ }
+        catch { _dirty = true; /* the connection may already be broken */ }
         finally
         {
             await tx.DisposeAsync().ConfigureAwait(false);
@@ -116,10 +117,16 @@ internal sealed class DataSession : IAsyncDisposable
 
     private CommandSpec Spec(SqlText sql) => new(sql.Render(_db.Provider.Dialect), sql.Parameters);
 
+    /// <summary>
+    /// Marks the session as carrying session state (a lock that may still be held, session settings), so its connection is
+    /// reset before it returns to the pool on providers that reset dirty sessions.
+    /// </summary>
+    public void MarkDirty() => _dirty = true;
+
     /// <inheritdoc />
     public async ValueTask DisposeAsync()
     {
         await RollbackAsync().ConfigureAwait(false);
-        await _connection.DisposeAsync().ConfigureAwait(false);
+        await _db.Primary.ReturnAsync(_connection, _dirty).ConfigureAwait(false);
     }
 }

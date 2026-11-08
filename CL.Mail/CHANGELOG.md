@@ -5,11 +5,6 @@ All notable changes to **CodeLogic.Mail** are documented here. Versions follow
 
 ## 5.0 (unreleased)
 
-### Audit completion (2026-11-07)
-
-- Fetch bounded MIME sections instead of whole messages, cap aggregate decoded message bytes/body bytes/attachment counts, and add GetAttachmentAsync for on-demand content. Return ContentTruncated and part identifiers on descriptors.
-
-
 ### Breaking
 
 - Targets **.NET 11** (`net11.0`) and requires **CodeLogic 5.0** (`[5.0.0, 6.0.0)`). On .NET 10, stay on
@@ -176,8 +171,17 @@ All notable changes to **CodeLogic.Mail** are documented here. Versions follow
 
 - Configuration examples in the README and the docs use the camelCase keys the CodeLogic loader reads.
   The PascalCase keys shown before are matched case-sensitively and were ignored, leaving defaults active.
+- The live config section no longer says "CodeLogic 4.9+". The README lists `Imap.MaxMessageBytes`,
+  `MaxBodyBytes` and `MaxAttachments`, and `GetAttachmentAsync`. The docs list `GetAttachmentAsync` and
+  `ReceivedMessage.ContentTruncated`, show `CreatedAt` as `DateTime`, say `MailPriority` sets only the
+  `Importance` header, and switch on the result union in the error example. The README's trailing relative
+  link, which broke on nuget.org, is replaced by a link to the Receiving & Templates page.
+- The `Enabled` setting's description no longer mentions inbox polling (there is none) or no-op operations:
+  when it is off, the `Smtp` / `Imap` accessors throw. The `InvalidHeader` code lists every reserved header.
 
 ### Changed
+
+- Fetch bounded MIME sections instead of whole messages, cap aggregate decoded message bytes/body bytes/attachment counts, and add GetAttachmentAsync for on-demand content. Return ContentTruncated and part identifiers on descriptors.
 
 - Package versions are pinned (MailKit and MimeKit 4.18.2) instead of floating (`4.*`), so a build restores the same dependencies every time.
 - `SimpleTemplateEngine` uses source-generated regexes (`[GeneratedRegex]`) for its block, section and

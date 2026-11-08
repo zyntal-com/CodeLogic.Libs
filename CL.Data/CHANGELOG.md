@@ -14,6 +14,8 @@
 
 ### Fixed
 
+- **Packages depend on a signed CodeLogic:** published nuspecs require CodeLogic `[5.0.35-preview, 6.0.0)` (the version the libraries are built against) instead of `[5.0.0-preview, 6.0.0)`. NuGet resolved the lowest match, 5.0.28-preview, whose `CodeLogic.dll` is not strong-name signed, so projects failed with `CS0012 'Result<>' is defined in an assembly that is not referenced` unless they referenced a newer CodeLogic themselves.
+- **Advisory-lock release failures are no longer ignored:** when `RELEASE_LOCK` (or `pg_advisory_unlock`) fails or does not report the lock as released, the lock's connection is reset (MySQL) before it can be reused.
 - **Provider table hints are applied:** `[PostgresTable(Unlogged, FillFactor, Tablespace)]` and `[SqlServerTable(FileGroup, DataCompression)]` now shape `CREATE TABLE` (new `DdlGenerator.CreateTableKeyword` hook). They apply when sync creates a table; existing tables are not altered. `[SqlServerColumn(Sparse)]` and `[MySqlColumn(Charset)]` are still not applied and are marked `[Obsolete]` (set `Collation`, which implies the MySQL character set). Before, all of them were declared and documented but ignored.
 - **Compiled queries keep `WithCache()` and `ReadFrom()`:** a compiled chain's cache policy and read preference apply to every call. Before, both were dropped silently, so a compiled query was never cached and always followed the connection's read preference.
 - **`SeedAppliedEvent` is published** for every seed a `SeedRunner` applies (and forwarded to the CodeLogic event bus by `DataLibrary`). Before, it was declared and documented but never raised.
@@ -46,10 +48,13 @@
 
 ### Changed
 
+- **MySQL skips the connection reset round trip (behaviour change):** pooled MySQL connections are no longer reset by the driver on every open, which cost one full round trip per command (a lookup by key took about twice as long against a remote server). CL.Data resets a connection itself, before it returns to the pool, only when it may carry session state: raw SQL that is not one plain query, DML or DDL statement (`SET`, `CALL`, transaction control, user variables, `GET_LOCK`, temporary tables, several statements), connections handed to `WithConnectionAsync`, advisory locks that were not released cleanly, SQL rewritten by an interceptor, and commands interrupted by anything but a plain statement error. `mySql.connectionReset` (`WhenDirty`, the default; `Always`, the old behaviour; `Never`) chooses. Without the reset on open, a pooled connection dropped while idle fails on its first command: keep `mySql.connectionIdleTimeoutSeconds` (default 180) below any proxy's idle timeout. See the MySQL section of the provider docs.
 - N+1 diagnostics use a dedicated `System.Threading.Lock` for each counting window.
 
 ### Added
 
+- **Dialect-aware raw-SQL lexing:** `SqlDialect.Lexicon` (`SqlLexicon.Standard`, `.MySql`, `.PostgreSql`) tells the raw-SQL classifiers how the server lexes comments and literals: MySQL `#` comments and `-- ` with a space (`1--1` is arithmetic), PostgreSQL dollar quotes, `[identifiers]` only on SQL Server and SQLite. A `'...'` or `"..."` literal with a backslash is ambiguous (escaping depends on `sql_mode` / `E'...'`) and makes the statement count as a write that may change the session. Before, one lexer served every dialect, so text the server runs could look like a comment or literal (for example `SELECT 1--1, ...` on MySQL, or `$x$` identifiers), and `SqlIntent.Auto` could take a write for a plain read.
+- **Dirty-session tracking for providers:** `DataProvider.ResetsDirtySessions`, `ResetSessionAsync`, `DiscardSessionAsync` and `MayChangeSession` let a provider run its pool without a reset on every open and reset only connections that may carry session state. `SessionSqlRules` classifies raw SQL conservatively (single statement, neutral first word, no user variables, executable comments or listed words; CL.Data's numbered parameters are not taken for variables). New metrics `cl.data.session.resets` and `cl.data.session.reset_failures`.
 - **MySQL: index changes join the table's single ALTER:** `DROP INDEX` / `ADD [UNIQUE] INDEX` become clauses of the one `ALTER TABLE` per table (with the column changes), so a table copy no longer rebuilds an index that is dropped right after, and index-only changes are one in-place pass.
 - **Slow-query log includes the plan:** with `captureExplainOnSlowQuery` the captured EXPLAIN is written to the library log under the SQL (`SlowQueryWithPlan`), not only carried on `SlowQueryEvent.Plan`.
 - **Schema scripts:** `db.Schema.ScriptAsync(maps, level)` / `ScriptAsync<T>()` compares the models with the database and returns the DDL table sync would run, without running it (`SchemaScript`: per-table changes, pending items, `Statements`, `ToSql()`). Generate reviewed migration scripts from the models against a copy of production; an empty script means the database matches.
@@ -231,7 +236,6 @@
   - **One process at a time:** the run holds an advisory lock.
 - **Advisory locks:** `db.AcquireLockAsync(name, timeout)` returns a `DataLock`, held on its own connection. It uses GET_LOCK on MySQL, pg_try_advisory_lock on PostgreSQL and sp_getapplock on SQL Server; SQLite returns `data.unsupported`.
 - **Events:** `DatabaseOptions.Events` receives CL.Data events.
-- **Backup before alter:** moved to WP-75, together with backup and restore.
 - **Migrations:** `IMigration`/`Migration` with `MigrationVersion` (semantic app version plus order, written `1.2.0/003`).
   - **Context:** `IMigrationContext` gives a `Db` bound to the migration's transaction, plus `ExecuteAsync`, `ApplyAsync(SchemaChange)`, `ReadTableAsync` and `SyncTableAsync<T>`.
   - **Runner:** `db.Migrations(...)` creates a `MigrationRunner` with `PendingAsync`, `AppliedAsync`, `MigrateAsync` and `RollbackAsync(target)`.
@@ -327,30 +331,30 @@
   - `InProcessCacheBus` links caches inside one process.
   - `DatabaseCacheBus` polls a shared `cl_data_cache_bus` table: no extra infrastructure, old rows are pruned, and polling starts with `Start(scheduler)`.
   - A failed publish leaves the other nodes on their TTL; the local write is unaffected.
-- **Resilience (WP-90):** an innermost pipeline step, built on CL.Common `RetryPolicy` and `CircuitBreaker`, configured by `RetryCount`, `RetryBaseDelayMs`, `CircuitBreakerThreshold` and `CircuitBreakSeconds`.
+- **Resilience:** an innermost pipeline step, built on CL.Common `RetryPolicy` and `CircuitBreaker`, configured by `RetryCount`, `RetryBaseDelayMs`, `CircuitBreakerThreshold` and `CircuitBreakSeconds`.
   - **Retries:** reads retry transient failures with backoff and jitter. Writes retry only when the statement certainly didn't take effect: the connection couldn't be opened, or the server rolled it back (deadlock, lock timeout). A failed commit is never retried.
   - **Transactions:** nothing retries inside a user transaction.
   - **Errors:** after the last attempt the original `data.*` error is returned unchanged.
   - **Circuit breaker:** each node (`DataNode.Breaker`, `IsHealthy`) has one, and it counts only node failures (unreachable, connection lost). While it is open, commands fail fast with `data.circuit_open` until a trial call succeeds.
-- **Read routing (WP-91):** on connections with replicas, reads go to a healthy replica, chosen at random by weight.
+- **Read routing:** on connections with replicas, reads go to a healthy replica, chosen at random by weight.
   - **Skipped replicas:** those whose circuit is open, and those lagging beyond `MaxReplicaLagMs` (`DataNode.LagMs`).
   - **Always the primary:** writes and transactions.
   - **Read preference:** set per connection (`ReadPreference`), per view (`db.ReadFrom(preference)`) or per query (`QueryBuilder.ReadFrom`).
   - **Reads-your-writes:** for `StickyAfterWriteMs` after a write, reads stay on the primary.
   - **No usable replica:** `PreferReplica` falls back to the primary and `ReplicaOnly` fails with `data.no_healthy_node`. A read whose replica turns out to be down runs again on the primary.
-- **Replica lag probes (WP-92):** `DataProvider.ReplicaProbe` measures lag on each server provider. SQLite has none.
+- **Replica lag probes:** `DataProvider.ReplicaProbe` measures lag on each server provider. SQLite has none.
   - **MySQL:** `SHOW REPLICA STATUS`.
   - **PostgreSQL:** replay LSN and timestamp.
   - **SQL Server:** `sys.dm_hadr_database_replica_states`.
 - **Running probes:** `db.ProbeReplicasAsync()`, or `db.StartReplicaProbes(scheduler)` to run them every `ReplicaProbeIntervalSeconds`.
   - Each probe updates `DataNode.LagMs` and feeds the replica's circuit breaker, so a recovered replica gets back into rotation through the probe.
   - When replication is stopped, the probe reports `ReplicaProbe.Broken`, which keeps that replica out of rotation.
-- **Node health (WP-94):** `db.CheckHealthAsync()` pings every node, skipping routing and retries. For each node it reports reachability, circuit state, lag, latency and any error (`NodeHealth.IsUsable`).
+- **Node health:** `db.CheckHealthAsync()` pings every node, skipping routing and retries. For each node it reports reachability, circuit state, lag, latency and any error (`NodeHealth.IsUsable`).
   - Primary failover through the drivers was already mapped: MySQL failover hosts, Npgsql `TargetSessionAttributes=primary`, and SQL Server `MultiSubnetFailover` and `FailoverPartner` (primary only, now tested).
-- **Live replica tests (WP-93):** `tests/replicas/docker-compose.yml` starts a MySQL 8.4 GTID pair and a PostgreSQL 18 streaming pair.
+- **Live replica tests:** `tests/replicas/docker-compose.yml` starts a MySQL 8.4 GTID pair and a PostgreSQL 18 streaming pair.
   - `LiveReplicaSuite` covers replica reads seeing primary writes, live lag, skipping a paused replica until it catches up, and falling back to the primary when the replica is down.
   - It runs with `CL_DATA_REPLICAS=1`, in the non-required CI job `data-replicas`.
-- **Telemetry (WP-A0):** `DataTelemetry` exposes `ActivitySource` and `Meter` "CL.Data", following the OpenTelemetry database conventions.
+- **Telemetry:** `DataTelemetry` exposes `ActivitySource` and `Meter` "CL.Data", following the OpenTelemetry database conventions.
   - **Spans:** one client span per logical command (retries included), tagged `db.system.name`, `db.namespace`, `db.operation.name`, `db.collection.name`, parameterized `db.query.text`, `server.address`, returned rows, `error.type` and attempts.
   - **Metrics:** `db.client.operation.duration`, `cl.data.rows`, `cl.data.retries`, `cl.data.cache.hits` and `cl.data.cache.misses`, `cl.data.circuit.opened`, and the gauge `cl.data.replica.lag`.
   - **Cost:** nothing is built without a listener.
@@ -359,40 +363,43 @@
   - `NPlusOneDetectedEvent` fires once per one-second window.
   - `QueryExecutedEvent` is opt-in (`PublishQueryEvents`).
   - `CircuitStateChangedEvent` is published on every breaker transition.
-- **Bulk copy (WP-A1):** `db.Bulk<T>().InsertAsync(IEnumerable<T> | IAsyncEnumerable<T>, BulkOptions)` returns a `BulkCopyReceipt`.
+- **Bulk copy:** `db.Bulk<T>().InsertAsync(IEnumerable<T> | IAsyncEnumerable<T>, BulkOptions)` returns a `BulkCopyReceipt`.
   - **Native paths:** MySqlBulkCopy, SqlBulkCopy, PostgreSQL `COPY BINARY` with each column's real type, and prepared inserts in one transaction on SQLite. Without a native path, rows are batched into multi-row inserts.
   - **Same rows as an insert:** values are stamped and converted exactly as an insert does.
   - **Large input:** input is streamed in chunks.
   - **Transactions and cache:** a copy joins a transaction view and drops the table's cached results.
   - **`InsertManyAsync`** switches to bulk at `BulkThreshold` when nothing has to be read back.
 - **Faster write path:** placeholder names are cached per dialect, and the SQL writer is reused on each thread. Inserting 100 rows went from 5.90 ms / 298 KB to 5.51 ms / 226 KB, which beats CL.MySQL2 4.9.
-- **Performance budgets (WP-A4):** `benchmarks/budgets.json` sets limits per benchmark: allocations per operation, and time as a ratio to the category's Dapper or ADO.NET baseline.
+- **Performance budgets:** `benchmarks/budgets.json` sets limits per benchmark: allocations per operation, and time as a ratio to the category's Dapper or ADO.NET baseline.
   - `Data.Benchmarks --check-budgets` runs a short BenchmarkDotNet pass and exits 1 when a benchmark is over budget.
   - It runs in the CI job `data-perf` (MySQL, not required yet).
-- **Hosting (WP-A2):** `DataLibrary` (`ILibrary`, `IConfigReloadable`) owns the `data` and `data.cache` config sections and provides `Db(name)`.
+- **Hosting:** `DataLibrary` (`ILibrary`, `IConfigReloadable`) owns the `data` and `data.cache` config sections and provides `Db(name)`.
   - **Start:** it warms each node's pool up to `MinPoolSize` and starts replica probes, warm-query refresh and the cache invalidation bus (`None`, `Events` through the new `EventBusCacheBus`, or `Database`), all on one `DataScheduler`.
   - **Events:** CL.Data events are forwarded to the CodeLogic event bus under their concrete types, and slow queries, N+1 patterns, drift and circuit changes are logged.
   - **Live reload:** applied per connection.
   - **Health:** checked per node, with `NodeHealthChangedEvent` published on each change.
   - **Provider libraries:** they now declare `Dependencies = [Required("CL.Data")]`.
-- **Provider extensions (WP-A3):** C# extension members expose provider-only operations. Each fails with `data.unsupported` on another provider.
+- **Provider extensions:** C# extension members expose provider-only operations. Each fails with `data.unsupported` on another provider.
   - `db.MySql`: `OptimizeTableAsync<T>` and `AnalyzeTableAsync<T>`, which return the per-table messages.
   - `db.Postgres`: `NotifyAsync`, `ListenAsync` (on a dedicated connection, until disposed) and `VacuumAnalyzeAsync<T>`.
   - `db.SqlServer`: `UpdateStatisticsAsync<T>(fullScan)`.
   - `DataAdmin.QuotedTable<T>()` is now public for provider-specific statements.
   - Maintenance runs as a read, so cached results stay valid.
-- **Parity sweep (WP-B0):** `PARITY.md` now maps every 4.x feature to CL.Data, each marked done (with the suite that covers it), dropped on purpose or partial. The gaps the sweep found are closed:
+- **Gaps against the 4.x libraries closed:**
   - `DataLibrary` registers and uses the `DataStrings` localization.
   - SQL Server JSON columns get `CHECK (ISJSON(col) = 1)`.
   - `db.Admin.ServerVersionAsync()` is new.
   - `db.WithConnectionAsync(...)` gives raw driver access and joins a transaction view.
   - New tests cover aggregates over empty sets and key-column safety in set-based updates.
-- **Settings audit:**
+- **Settings:**
   - **Now honored:** `CacheEnabled` per connection (opts out of the shared cache, or opts in when the cache is off for everyone else), `CreateDatabaseIfMissing` (at startup and on reload), and `data.cache.PublishEvents` (`CacheHitEvent` / `CacheMissEvent`).
   - **Parameter limit:** queries over the provider's parameter limit fail with `data.parameter_limit` before they are sent.
   - **Removed** (they never did anything): `MaxInClauseValues` and `data.cache.TimeQuantizeSeconds`.
-- **Documentation (WP-B1):** eight pages under `docs/libs/data/`: overview, providers, queries and writes, caching, replicas and resilience, schema and migrations, telemetry, and performance.
+- **Documentation:** eight pages under `docs/libs/data/`: overview, providers, queries and writes, caching, replicas and resilience, schema and migrations, telemetry, and performance.
   - Added the docfx table of contents and index cards, plus real READMEs for the core and each provider.
   - The docs build passes with 0 warnings. The generator's analyzer-release files are no longer included twice.
-- **Cleanup (WP-B2):** the last references to the 4.x database libraries are gone from the API index, AGENTS.md and the library index. AGENTS.md now records the CL.Data state, the replica, reflection and performance test commands, and the release preconditions. A check of the database branches found no unported fixes.
 - **Strong-named** with the CodeLogic key (public key token `53a89305eedc5d98`), like every CodeLogic assembly. Releases are fully signed and verified before push.
+
+### Documentation
+
+- Table sync stores a model fingerprint (a hash), not a CRC; `backupDirectory` backs up only before changes that can lose data; seeds run by `Order`, then id; telemetry lists the `batch` operation, the cache counter units and `nPlusOneThreshold` (default 0, off); the overview shows the CodeLogic 5 `Result` patterns and which `Error` kind each `data.*` code maps to.

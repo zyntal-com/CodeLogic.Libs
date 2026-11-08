@@ -46,7 +46,7 @@ else
 - **Fluent `MailBuilder`** — `mail.CreateMessage()` composes an immutable `MailMessage`; `Build()` throws if sender, recipients, subject, or a body are missing.
 - **Template engine** — JSON-backed templates with `{{var}}` / `${var}` / `{var}` substitution (HTML-encoded in HTML bodies; `{{{var}}}` for trusted HTML), `{{#if}}…{{#else}}…{{/if}}` conditionals, `{{#each}}…{{/each}}` loops, and `{{#section}}` / layout composition. Values are inserted once: placeholders inside a value are never expanded.
 - **Templated send** — `SendTemplatedAsync` renders a template by id and sends it in one call.
-- **IMAP reading** — list folders, fetch and page messages, fetch by UID with attachments (decoded up to `Imap.MaxAttachmentBytes`, 25 MiB by default; a bigger one is returned as `TooLarge` with its size and no content), search, move/copy/delete, and add/remove flags.
+- **IMAP reading** — list folders, fetch and page messages, fetch by UID with attachments (decoded up to `Imap.MaxAttachmentBytes`, 25 MiB by default; a bigger one is returned as `TooLarge` with no content), fetch one attachment on demand (`GetAttachmentAsync`), search, move/copy/delete, and add/remove flags.
 - **IMAP IDLE** — RFC 2177 push notifications via `StartIdleAsync` and the `NewMailReceived` event.
 - **Result-based errors** — operations return CodeLogic `Result` / `Result<T>`; sends return `Result<MailSendReceipt>` (Message-ID + send time). Failures are `Error` kinds (`ValidationError`, `NotFoundError`, `UnauthorizedError`, `TimeoutError`, `UnavailableError`, `InternalError`) with a `MailErrorCodes` code. An unexpected exception gives a generic message (`Details` = exception type); the exception goes to the log. Upgrading from 4.x: see the [changelog](CHANGELOG.md).
 
@@ -95,12 +95,15 @@ Auto-generated on first run as `config.mail.json`. The `Imap` section is optiona
 | `Imap.EnableIdle` | `false` | Allow RFC 2177 IDLE push monitoring (`StartIdleAsync` is refused while `false`). |
 | `Imap.IdleRefreshMinutes` | `25` | IDLE connection refresh interval (1–28; keep under 29). |
 | `Imap.MaxAttachmentBytes` | `26214400` (25 MiB) | Largest attachment `GetMessageAsync` loads into memory; a bigger one is returned with `TooLarge` and no content. |
+| `Imap.MaxMessageBytes` | `33554432` (32 MiB) | Combined decoded body and attachment bytes for one message fetch (1–134217728). |
+| `Imap.MaxBodyBytes` | `1048576` (1 MiB) | Decoded bytes of one text or HTML body (1–16777216). |
+| `Imap.MaxAttachments` | `100` | Attachment descriptors returned per message (1–1000). |
 | `DefaultFromEmail` / `DefaultFromName` | `null` | Fallback sender when a message from `CreateMessage()` / `SendTemplatedAsync` omits `From`. |
 | `TemplateDirectory` | `templates` | Template folder; relative to the library data dir unless absolute. |
 
 ### Changing config while running
 
-With CodeLogic 4.9+, `config.mail.json` applies live when changed through `Libraries.UpdateConfigAsync`, `Libraries.ReloadConfigAsync`, or the config file watcher. Only what changed is rebuilt:
+`config.mail.json` applies live when changed through `Libraries.UpdateConfigAsync`, `Libraries.ReloadConfigAsync`, or the config file watcher. Only what changed is rebuilt:
 
 - **SMTP settings**: `mail.Smtp` is replaced. Every send opens its own connection, so sends already running finish on the old settings.
 - **Template directory**: `mail.TemplateProvider` and `mail.TemplateEngine` are replaced.
@@ -111,7 +114,7 @@ Other settings (default sender, ...) are read when used and need nothing rebuilt
 
 ## Documentation
 
-Full guide: **[CL.Mail documentation](https://zyntal-com.github.io/CodeLogic.Libs/libs/mail/index.html)**
+Full guide: **[CL.Mail documentation](https://zyntal-com.github.io/CodeLogic.Libs/libs/mail/index.html)**. IMAP, IDLE, receive limits and templates: [Receiving & Templates](https://zyntal-com.github.io/CodeLogic.Libs/libs/mail/receiving-templates.html).
 
 ## Requirements
 
@@ -121,5 +124,3 @@ Full guide: **[CL.Mail documentation](https://zyntal-com.github.io/CodeLogic.Lib
 ## License
 
 MIT — see [LICENSE](https://github.com/zyntal-com/CodeLogic.Libs/blob/main/LICENSE).
-
-Audit completion notes and current limits are in [the guide](../docs/libs/mail/receiving-templates.md).
