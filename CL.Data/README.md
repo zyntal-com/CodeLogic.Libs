@@ -43,5 +43,4 @@ var cheap = await db.Query<Product>().WithCache().Where(p => p.Price < 20m).Orde
 **Measured:** within a few percent of raw ADO.NET and Dapper. Against CL.MySQL2 4.9 it uses 20–45% less memory, and cached reads take microseconds.
 
 **Documentation:** [docs/libs/data](../docs/libs/data/index.md).
-- [Parity with the 4.x libraries](PARITY.md)
 - [Changelog](CHANGELOG.md)

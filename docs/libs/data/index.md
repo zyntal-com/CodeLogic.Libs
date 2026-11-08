@@ -12,8 +12,7 @@
 | **Target** | .NET 11 / CodeLogic 5, Native AOT compatible |
 | **Result model** | `Result` and `Result<T>` for every expected failure (`data.*` error codes); exceptions only for bugs |
 
-CL.Data replaces the 4.x libraries CL.MySQL2, CL.MSSQL, CL.PostgreSQL and CL.SQLite. Feature-by-feature mapping:
-[PARITY.md](https://github.com/zyntal-com/CodeLogic.Libs/blob/main/CL.Data/PARITY.md).
+CL.Data replaces the 4.x libraries CL.MySQL2, CL.MSSQL, CL.PostgreSQL and CL.SQLite.
 
 **More pages:**
 - **[Providers](providers.md):** connection settings and what is specific to each database.
