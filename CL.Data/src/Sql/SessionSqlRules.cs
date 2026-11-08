@@ -21,11 +21,14 @@ public sealed class SessionSqlRules
     /// The dialect's parameter prefix when it is <c>@</c> (MySQL, SQL Server): CL.Data's numbered parameters (<c>@p0</c>,
     /// <c>@p1</c>, ...) are then not taken for user variables.
     /// </param>
-    public SessionSqlRules(IEnumerable<string> neutralStarts, IEnumerable<string> dirtyWords, char? parameterPrefix = null)
+    /// <param name="lexicon">How the dialect lexes comments and literals; null is standard SQL. It must match the server.</param>
+    public SessionSqlRules(IEnumerable<string> neutralStarts, IEnumerable<string> dirtyWords, char? parameterPrefix = null,
+        SqlLexicon? lexicon = null)
     {
         ArgumentNullException.ThrowIfNull(neutralStarts);
         ArgumentNullException.ThrowIfNull(dirtyWords);
         _parameterPrefix = parameterPrefix;
+        Lexicon = lexicon ?? SqlLexicon.Standard;
         NeutralStarts = new HashSet<string>(neutralStarts, StringComparer.OrdinalIgnoreCase);
         DirtyWords = new HashSet<string>(dirtyWords, StringComparer.OrdinalIgnoreCase);
         _starts = ((HashSet<string>)NeutralStarts).GetAlternateLookup<ReadOnlySpan<char>>();
@@ -38,6 +41,9 @@ public sealed class SessionSqlRules
     /// <summary>Words that make a statement session-changing wherever they appear.</summary>
     public IReadOnlySet<string> DirtyWords { get; }
 
+    /// <summary>How the statements are lexed.</summary>
+    public SqlLexicon Lexicon { get; }
+
     /// <summary>
     /// True unless <paramref name="sql"/> is certainly session-neutral. Unknown or ambiguous text (several statements,
     /// unterminated literals, procedure calls, <c>SET</c>, transaction control) counts as session-changing.
@@ -47,7 +53,7 @@ public sealed class SessionSqlRules
         if (string.IsNullOrEmpty(sql)) return false;
         var first = true;
         var ended = false;
-        var tokens = new SqlTokenizer(sql);
+        var tokens = new SqlTokenizer(sql, Lexicon);
         while (tokens.Next())
         {
             if (tokens.Kind is SqlTokenKind.Invalid or SqlTokenKind.ExecutableComment) return true;
@@ -63,7 +69,12 @@ public sealed class SessionSqlRules
                     first = false;
                     break;
                 case SqlTokenKind.Word:
-                    if (_dirty.Contains(tokens.Text) && !tokens.AfterDot) return true;
+                    // A qualified name (t.temporary) is a column, unless it is called.
+                    if (_dirty.Contains(tokens.Text) && (!tokens.AfterDot || IsCall(tokens))) return true;
+                    break;
+                case SqlTokenKind.Quoted when IsQuotedIdentifier(tokens.Text) && IsCall(tokens):
+                    // A quoted function name (`GET_LOCK`(...), "GET_LOCK"(...) with ANSI_QUOTES, [GET_LOCK](...)).
+                    if (_dirty.Contains(tokens.Text[1..^1])) return true;
                     break;
                 case SqlTokenKind.Quoted when first:
                     return true;
@@ -76,6 +87,12 @@ public sealed class SessionSqlRules
         }
         return false;
     }
+
+    // True when the next token (comments and whitespace skipped) opens a parenthesis: the current name is called.
+    private static bool IsCall(SqlTokenizer tokens) =>
+        tokens.Next() && tokens.Kind == SqlTokenKind.Symbol && tokens.Text[0] == '(';
+
+    private static bool IsQuotedIdentifier(ReadOnlySpan<char> text) => text.Length >= 2 && text[0] is '`' or '"' or '[';
 
     // A CL.Data parameter: the prefix, 'p', digits, then no further word character. Skips it when it is one.
     private bool IsParameter(ref SqlTokenizer tokens)

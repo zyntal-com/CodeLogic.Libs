@@ -21,6 +21,8 @@ public sealed class SessionSqlRulesTests
     [InlineData("SELECT `temporary`, \"get_lock\" FROM t")]       // quoted identifiers
     [InlineData("SELECT t.temporary FROM t")]                     // a qualified column
     [InlineData("SELECT 'a@b.c' AS mail")]
+    [InlineData("SELECT `get_lock` FROM t")]                      // a quoted column, not a call
+    [InlineData("SELECT t.temporary, t.get_lock FROM t")]
     public void Neutral(string sql) => Assert.False(Rules.MayChangeSession(sql));
 
     [Theory]
@@ -35,6 +37,12 @@ public sealed class SessionSqlRulesTests
     [InlineData("SELECT @x := 1")]                               // user variable
     [InlineData("SELECT a INTO @v FROM t")]
     [InlineData("SELECT GET_LOCK('a', 0)")]
+    [InlineData("SELECT `GET_LOCK`('a', 0)")]                    // quoted function names
+    [InlineData("SELECT `get_lock` ('a', 0)")]
+    [InlineData("SELECT \"GET_LOCK\"('a', 0)")]
+    [InlineData("SELECT [GET_LOCK]('a', 0)")]
+    [InlineData("SELECT x.GET_LOCK('a', 0)")]                    // a qualified name that is called
+    [InlineData("SELECT GET_LOCK /* why */ ('a', 0)")]
     [InlineData("CREATE TEMPORARY TABLE x (id INT)")]
     [InlineData("SELECT 1; SELECT 2")]                           // several statements
     [InlineData("SELECT 1; SET @x = 1")]

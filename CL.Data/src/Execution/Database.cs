@@ -259,7 +259,7 @@ public sealed partial class Database : IAsyncDisposable
     private CommandContext Context(SqlText sql, CommandKind kind, CancellationToken ct, SqlIntent intent)
     {
         var text = sql.Render(Provider.Dialect);
-        var isWrite = SqlClassifier.IsWrite(intent, text);
+        var isWrite = SqlClassifier.IsWrite(intent, text, Provider.Dialect.Lexicon);
         return new(this, new CommandSpec(text, sql.Parameters), kind, ct)
         {
             IsWrite = isWrite,
@@ -467,7 +467,7 @@ public sealed partial class Database : IAsyncDisposable
     /// <summary>Drops the whole connection's cached results after a raw statement that may have changed rows.</summary>
     private void AfterRaw(CommandContext context, SqlIntent intent)
     {
-        if (context.IsWrite && SqlClassifier.Invalidates(intent, context.Spec.Sql)) InvalidateCache(["*"]);
+        if (context.IsWrite && SqlClassifier.Invalidates(intent, context.Spec.Sql, Provider.Dialect.Lexicon)) InvalidateCache(["*"]);
     }
 
     /// <summary>Checks that the primary answers (health checks).</summary>

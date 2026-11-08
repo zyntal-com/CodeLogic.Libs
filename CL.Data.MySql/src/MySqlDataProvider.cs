@@ -172,7 +172,7 @@ public sealed class MySqlDataProvider : DataProvider
         ["SELECT", "WITH", "VALUES", "TABLE", "SHOW", "EXPLAIN", "DESCRIBE", "DESC", "INSERT", "REPLACE", "UPDATE", "DELETE",
          "CREATE", "ALTER", "DROP", "TRUNCATE", "RENAME", "OPTIMIZE", "ANALYZE"],
         ["GET_LOCK", "TEMPORARY", "LAST_INSERT_ID", "SQL_LOG_BIN"],
-        parameterPrefix: '@');
+        parameterPrefix: '@', lexicon: SqlLexicon.MySql);
 
     /// <inheritdoc />
     public override bool ResetsDirtySessions(DataConnectionConfig config) =>

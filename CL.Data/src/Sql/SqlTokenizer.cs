@@ -23,12 +23,14 @@ internal enum SqlTokenKind
 }
 
 /// <summary>
-/// Splits SQL text into words, literals and symbols, skipping whitespace and comments (<c>--</c>, <c>#</c>, <c>/* */</c>). Used by
-/// the conservative raw-SQL classifiers; it allocates nothing.
+/// Splits SQL text into words, literals and symbols, skipping whitespace and comments the way <paramref name="lexicon"/>'s
+/// dialect does. Used by the conservative raw-SQL classifiers; it allocates nothing. A <c>'...'</c> or <c>"..."</c> literal
+/// containing a backslash is <see cref="SqlTokenKind.Invalid"/>: whether the backslash escapes depends on server settings.
 /// </summary>
-internal ref struct SqlTokenizer(ReadOnlySpan<char> sql)
+internal ref struct SqlTokenizer(ReadOnlySpan<char> sql, SqlLexicon lexicon)
 {
     private readonly ReadOnlySpan<char> _sql = sql;
+    private readonly SqlLexicon _lexicon = lexicon;
     private int _pos;
 
     /// <summary>Kind of the current token.</summary>
@@ -58,9 +60,11 @@ internal ref struct SqlTokenizer(ReadOnlySpan<char> sql)
         {
             var c = span[i];
             if (char.IsWhiteSpace(c)) { i++; continue; }
-            if ((c == '-' && i + 1 < span.Length && span[i + 1] == '-') || c == '#')
+            if ((c == '-' && i + 1 < span.Length && span[i + 1] == '-'
+                    && (!_lexicon.DashCommentNeedsSpace || i + 2 >= span.Length || char.IsWhiteSpace(span[i + 2]) || char.IsControl(span[i + 2])))
+                || (c == '#' && _lexicon.HashComments))
             {
-                // Line comment (# is MySQL's).
+                // Line comment.
                 while (i < span.Length && span[i] != '\n') i++;
                 continue;
             }
@@ -74,13 +78,14 @@ internal ref struct SqlTokenizer(ReadOnlySpan<char> sql)
                 continue;
             }
             if (c == ';') return Emit(SqlTokenKind.Semicolon, i, i + 1);
-            if (c is '\'' or '"' or '`' or '[')
+            if (c is '\'' or '"' or '`' || (c == '[' && _lexicon.BracketIdentifiers))
             {
                 var closing = c == '[' ? ']' : c;
                 var start = i++;
                 while (true)
                 {
                     if (i >= span.Length) return Emit(SqlTokenKind.Invalid, start, span.Length);
+                    if (span[i] == '\\' && c is '\'' or '"') return Emit(SqlTokenKind.Invalid, start, span.Length);
                     if (span[i] == closing)
                     {
                         if (i + 1 < span.Length && span[i + 1] == closing) { i += 2; continue; }   // doubled quote
@@ -91,7 +96,7 @@ internal ref struct SqlTokenizer(ReadOnlySpan<char> sql)
                 }
                 return Emit(SqlTokenKind.Quoted, start, i);
             }
-            if (c == '$' && i + 1 < span.Length && (span[i + 1] == '$' || char.IsLetter(span[i + 1])))
+            if (_lexicon.DollarQuotes && c == '$' && i + 1 < span.Length && (span[i + 1] == '$' || char.IsLetter(span[i + 1])))
             {
                 // PostgreSQL dollar quoting ($$...$$ or $tag$...$tag$); $1 placeholders fall through to a symbol.
                 var tagEnd = span[(i + 1)..].IndexOf('$');

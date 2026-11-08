@@ -133,6 +133,19 @@ public sealed class MySqlSessionHygieneTests(MySqlFixture fixture)
         Assert.Null(await Outside<long?>($"SELECT IS_USED_LOCK('{name}')"));
     }
 
+    [SkippableTheory]
+    [InlineData("SELECT GET_LOCK('{0}', 0)")]
+    [InlineData("SELECT `GET_LOCK`('{0}', 0)")]
+    [InlineData("SELECT `get_lock` ('{0}', 0)")]
+    [InlineData("SELECT 1--1 = 2 AND GET_LOCK('{0}', 0)")]                                // --1 is arithmetic, not a comment
+    public async Task A_raw_lock_by_any_spelling_is_released(string template)
+    {
+        await using var db = Open();
+        var name = "hyg_" + Guid.NewGuid().ToString("N")[..12];
+        Assert.Equal(1, await Scalar<int>(db, string.Format(System.Globalization.CultureInfo.InvariantCulture, template, name)));
+        Assert.Null(await Outside<long?>($"SELECT IS_USED_LOCK('{name}')"));
+    }
+
     [SkippableFact]
     public async Task A_raw_transaction_is_rolled_back_before_the_next_user()
     {
@@ -186,6 +199,25 @@ public sealed class MySqlSessionHygieneTests(MySqlFixture fixture)
         finally
         {
             (await repo.DeleteAsync(product)).ValueOrThrow();
+        }
+    }
+
+    [SkippableFact]
+    public async Task Statements_prepared_inside_transactions_still_work_after_a_reset()
+    {
+        await using var db = Open(prepare: true);
+        for (var i = 0; i < 3; i++)
+        {
+            await using var tx = (await db.BeginTransactionAsync()).ValueOrThrow();
+            var value = (await tx.Db.WithConnectionAsync(async (connection, transaction, ct) =>
+            {
+                await using var command = new MySqlCommand("SELECT @a + 1", (MySqlConnection)connection, (MySqlTransaction?)transaction);
+                command.Parameters.AddWithValue("@a", i);
+                await command.PrepareAsync(ct);
+                return Convert.ToInt64(await command.ExecuteScalarAsync(ct), System.Globalization.CultureInfo.InvariantCulture);
+            })).ValueOrThrow();
+            Assert.Equal(i + 1, value);
+            (await tx.CommitAsync()).ThrowIfFailure();
         }
     }
 

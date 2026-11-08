@@ -54,8 +54,9 @@ public sealed partial class Database
         {
             if (_transaction is { } tx)
             {
-                // User code may change the session: the transaction resets it before its connection returns to the pool.
-                if (Primary.TracksSessions) SessionTracker.MarkDirty(tx.Handles.Connection);
+                // User code may change the session or prepare statements: the transaction resets it (clearing the driver's
+                // prepared-statement cache too) before its connection returns to the pool.
+                if (Primary.TracksSessions) SessionTracker.MarkHandedToUser(tx.Handles.Connection);
                 return await work(tx.Handles.Connection, tx.Handles.Transaction, ct).ConfigureAwait(false);
             }
             owned = await Primary.DataSource.OpenConnectionAsync(ct).ConfigureAwait(false);

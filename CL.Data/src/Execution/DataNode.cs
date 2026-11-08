@@ -63,7 +63,9 @@ public sealed class DataNode : IAsyncDisposable
     internal ValueTask ReturnAsync(DbConnection connection, bool dirty = false, bool handedToUser = false)
     {
         if (_provider is null) return connection.DisposeAsync();
-        dirty |= SessionTracker.TakeDirty(connection);
+        var mark = SessionTracker.Take(connection);
+        dirty |= mark != SessionMark.None;
+        handedToUser |= mark == SessionMark.HandedToUser;
         return dirty && connection.State == System.Data.ConnectionState.Open
             ? ResetAndReturnAsync(connection, handedToUser)
             : connection.DisposeAsync();   // clean, or broken (the driver drops a broken session)

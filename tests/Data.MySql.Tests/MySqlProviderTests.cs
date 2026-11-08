@@ -97,6 +97,8 @@ public sealed class MySqlProviderTests
     [InlineData("CALL p()", true)]
     [InlineData("DO GET_LOCK('a', 0)", true)]
     [InlineData("SELECT GET_LOCK('a', 0)", true)]
+    [InlineData("SELECT `GET_LOCK`('a', 0)", true)]
+    [InlineData("SELECT `get_lock` FROM t", false)]
     [InlineData("SELECT LAST_INSERT_ID(5)", true)]
     [InlineData("CREATE TEMPORARY TABLE x (id INT)", true)]
     [InlineData("LOCK TABLES t WRITE", true)]
@@ -106,6 +108,12 @@ public sealed class MySqlProviderTests
     [InlineData("LOAD DATA LOCAL INFILE 'x' INTO TABLE t", true)]
     [InlineData("SELECT /*!40101 SQL_NO_CACHE */ 1", true)]
     [InlineData("SELECT 1; SELECT 2", true)]
+    [InlineData("SELECT 1--1, GET_LOCK('a', 0)", true)]          // --1 is arithmetic in MySQL, not a comment
+    [InlineData("SELECT 1 -- GET_LOCK('a', 0)", false)]          // a real comment
+    [InlineData("SELECT 1 # GET_LOCK('a', 0)", false)]           // a real MySQL comment
+    [InlineData("SELECT 1 AS $x$, GET_LOCK('a', 0) AS $x$", true)]   // $x$ is an identifier in MySQL, not a dollar quote
+    [InlineData(@"SELECT 'a\'', GET_LOCK('x', 0), ''", true)]    // backslash escapes depend on sql_mode: ambiguous
+    [InlineData(@"SELECT 'C:\path'", true)]
     public void Raw_sql_session_rules(string sql, bool dirty) => Assert.Equal(dirty, Provider.MayChangeSession(sql));
 
     [Fact]

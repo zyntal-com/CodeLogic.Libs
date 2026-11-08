@@ -126,8 +126,8 @@ public sealed class DataBatch
                     var text = raw.Render(dialect);
                     separate.Add(new RenderedSql(text, raw.Parameters));
                     parts.Add(raw.Render(dialect, parameters.Count));
-                    isWrite |= SqlClassifier.IsWrite(item.Intent, text);
-                    invalidates |= SqlClassifier.Invalidates(item.Intent, text);
+                    isWrite |= SqlClassifier.IsWrite(item.Intent, text, dialect.Lexicon);
+                    invalidates |= SqlClassifier.Invalidates(item.Intent, text, dialect.Lexicon);
                     dirtiesSession |= tracksSessions && !dirtiesSession && _db.Provider.MayChangeSession(text);
                     primary |= item.Intent == SqlIntent.ReadPrimary;
                 }

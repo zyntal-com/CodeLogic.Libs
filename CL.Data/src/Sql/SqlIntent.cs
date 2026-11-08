@@ -51,18 +51,18 @@ internal static class SqlClassifier
     private static readonly HashSet<string>.AlternateLookup<ReadOnlySpan<char>> ReadStartLookup = ReadStarts.GetAlternateLookup<ReadOnlySpan<char>>();
 
     /// <summary>True when <paramref name="intent"/> sends the statement to the primary as a write (no retry once sent).</summary>
-    public static bool IsWrite(SqlIntent intent, string sql) => intent switch
+    public static bool IsWrite(SqlIntent intent, string sql, SqlLexicon? lexicon = null) => intent switch
     {
         SqlIntent.Read or SqlIntent.ReadPrimary => false,
         SqlIntent.Write or SqlIntent.SideEffect => true,
-        _ => !IsPlainRead(sql),
+        _ => !IsPlainRead(sql, lexicon),
     };
 
     /// <summary>True when the statement is a write that may change cached rows.</summary>
-    public static bool Invalidates(SqlIntent intent, string sql) => intent switch
+    public static bool Invalidates(SqlIntent intent, string sql, SqlLexicon? lexicon = null) => intent switch
     {
         SqlIntent.Write => true,
-        SqlIntent.Auto => !IsPlainRead(sql),
+        SqlIntent.Auto => !IsPlainRead(sql, lexicon),
         _ => false,
     };
 
@@ -70,11 +70,13 @@ internal static class SqlClassifier
     /// True for one plain read statement: it starts with SELECT, WITH, VALUES or SHOW, contains none of the words above outside
     /// literals, quoted identifiers and comments, and nothing follows a terminating semicolon.
     /// </summary>
-    public static bool IsPlainRead(string sql)
+    /// <param name="sql">The statement.</param>
+    /// <param name="lexicon">How the dialect lexes comments and literals (<see cref="SqlDialect.Lexicon"/>); null is standard SQL.</param>
+    public static bool IsPlainRead(string sql, SqlLexicon? lexicon = null)
     {
         var first = true;
         var ended = false;
-        var tokens = new SqlTokenizer(sql);
+        var tokens = new SqlTokenizer(sql, lexicon ?? SqlLexicon.Standard);
         while (tokens.Next())
         {
             switch (tokens.Kind)

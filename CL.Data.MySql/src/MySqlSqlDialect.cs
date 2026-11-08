@@ -9,6 +9,9 @@ namespace CL.Data.MySql;
 /// </summary>
 public sealed class MySqlSqlDialect : SqlDialect
 {
+    /// <inheritdoc />
+    public override SqlLexicon Lexicon => SqlLexicon.MySql;
+
     private const string ExcludedAlias = "excluded";
 
     /// <inheritdoc />
