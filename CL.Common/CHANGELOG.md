@@ -5,10 +5,9 @@ All notable changes to **CodeLogic.Common** are documented here. Versions follow
 
 ## 5.0 (unreleased)
 
-### Audit completion (2026-11-07)
+### Changed
 
 - Share log formatting/async-cleanup source helpers across libraries and split oversized source files by operation without new package dependencies.
-
 
 ### Security
 
@@ -39,7 +38,7 @@ All notable changes to **CodeLogic.Common** are documented here. Versions follow
   `LegacyPasswordIterations`, `PasswordHashPrefix`.
 - `StringValidator.MatchesPattern` runs the caller's regex with a timeout (optional `matchTimeout`, default
   `StringValidator.DefaultMatchTimeout`, 1 s); a timed-out match returns `false` (ReDoS guard).
-- **`HtmlHelper.Sanitize` runs in linear time** (audit 2026-11). Its tag regex was quadratic on input such as
+- **`HtmlHelper.Sanitize` runs in linear time**. Its tag regex was quadratic on input such as
   `<a <a <a …` or unbalanced quotes, with no timeout, so a few hundred KB of user HTML could pin a CPU core. Tags
   are now found by a single linear scan (no regex); `StripTags` uses a `NonBacktracking` regex. Output for
   well-formed input is unchanged.

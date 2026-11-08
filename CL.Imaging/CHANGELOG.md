@@ -2,11 +2,6 @@
 
 ## 5.0 (unreleased)
 
-### Audit completion (2026-11-07)
-
-- Prevent pooled-buffer reference resurrection during concurrent final release and acquisition; cover it with a race regression.
-
-
 ### Breaking
 
 - **New package, moved from CodeLogic.Common.** Imaging lived in CL.Common as `CL.Common.Imaging.CLU_Imaging`
@@ -47,7 +42,9 @@
 
 ### Changed
 
-- **`EncodedImage.AsStream()` owns its bytes** (audit round 5). The stream shared the pooled array, so one kept past
+- Prevent pooled-buffer reference resurrection during concurrent final release and acquisition; cover it with a race regression.
+
+- **`EncodedImage.AsStream()` owns its bytes**. The stream shared the pooled array, so one kept past
   the image's `using` block (handed to a response, a background writer) read whatever the pool had since given that
   array to, possibly another request's image. The pooled buffer is now reference-counted: each stream holds a
   reference, the array goes back to the pool when the image and every stream are disposed, and a stream stays valid

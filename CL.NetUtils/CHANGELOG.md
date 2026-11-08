@@ -5,10 +5,9 @@ All notable changes to **CodeLogic.NetUtils** are documented here. Versions foll
 
 ## 5.0 (unreleased)
 
-### Audit completion (2026-11-07)
+### Changed
 
 - Propagate cancellation and timeout through archive extraction reads; share bounded single-line log formatting across libraries.
-
 
 ### Breaking
 
@@ -57,7 +56,7 @@ All notable changes to **CodeLogic.NetUtils** are documented here. Versions foll
   validation fails.
 - **SharpCompress dependency removed.** The GeoIP archive is read with the built-in `System.Formats.Tar`
   and `System.IO.Compression` (`tar.gz` and `zip`).
-- **`GeoIpService.DownloadDatabaseAsync` returns `Result`** (audit round 5). It used to swallow every failure into a
+- **`GeoIpService.DownloadDatabaseAsync` returns `Result`**. It used to swallow every failure into a
   log line; it now reports a `netutils.*` error (`NetUtilsErrors`: `download_refused`, `download_failed`,
   `download_timeout`, `download_too_large`, `checksum_unavailable`, `checksum_mismatch`, `invalid_database`,
   `cancelled`). `await`-ing it as before still compiles.
@@ -89,7 +88,7 @@ All notable changes to **CodeLogic.NetUtils** are documented here. Versions foll
   `DnsblCheckResult.FailedServices` and `DnsblCheckResult.Indeterminate(...)`.
 - `DnsblCheckRequest.ParallelQueries` (default `true`).
 - `GeoIpConfig.TrustedDownloadHosts` and `GeoIpConfig.TryGetTrustedDownloadUri(...)`.
-- **`NetUtilsLibrary` implements `IConfigReloadable`** (audit round 5): a change to `config.netutils.json` (admin UI,
+- **`NetUtilsLibrary` implements `IConfigReloadable`**: a change to `config.netutils.json` (admin UI,
   `LibraryManager.UpdateConfigAsync`, reload, file watcher) is applied without a restart. DNSBL settings replace
   `Dnsbl` at once; GeoIP settings build a new `GeoIpService` (downloading when needed) and swap it in, the old one
   closing after a grace period; a GeoIP configuration that fails to initialize keeps the previous database serving
@@ -102,7 +101,7 @@ All notable changes to **CodeLogic.NetUtils** are documented here. Versions foll
 
 ### Fixed
 
-- **`DnsblCheckRequest.IsAllowedAsync` receives the canonical address** (audit round 5). It was given the caller's
+- **`DnsblCheckRequest.IsAllowedAsync` receives the canonical address**. It was given the caller's
   text, so an allowlist holding `1.2.3.4` did not match a check for `::ffff:1.2.3.4` or `0x01.0x02.0x03.0x04`; it now
   gets `ip.ToString()` of the parsed (IPv4-unmapped) address. `DnsblCheckResult.IpAddress` still echoes the input.
 - **Caller cancellation of a DNSBL check is no longer reported as `Status = Error`**; see `DnsblCheckStatus.Cancelled`.
@@ -112,14 +111,14 @@ All notable changes to **CodeLogic.NetUtils** are documented here. Versions foll
 - `NetUtilsLibrary` awaits the GeoIP initialization with `ConfigureAwait(false)` and a token that is cancelled when
   the library stops, so a download still running at shutdown gives up instead of outliving the library.
 
-- **`NetUtilsLibrary.Dnsbl` no longer throws when DNSBL checking is disabled** (audit 2026-11-01). The docs
+- **`NetUtilsLibrary.Dnsbl` no longer throws when DNSBL checking is disabled**. The docs
   said it is always available, but with `dnsbl.enabled` (or `enabled`) off it threw `InvalidOperationException`.
   It now returns a checker whose checks answer `Status = Error` with "DNSBL checking is disabled", without a
   DNS query. It still throws before the library has initialized.
-- **GeoIP is no longer City-only** (audit 2026-11-01). `DatabaseType` was documented as any edition, but only a
+- **GeoIP is no longer City-only**. `DatabaseType` was documented as any edition, but only a
   City database installed and every lookup called `City()`. A downloaded database must now be of the same kind
   as `DatabaseType` (a Country download never replaces a City database).
-- **`NetUtilsStrings` is used** (audit 2026-11-01). The localization model was registered but nothing read it.
+- **`NetUtilsStrings` is used**. The localization model was registered but nothing read it.
   Lifecycle and DNSBL/GeoIP log lines, and the error messages in `DnsblCheckResult` / `IpLocationResult`
   (invalid address, DNSBL disabled, GeoIP not initialized, location not found), now come from it; new strings
   `InvalidIpAddressFormat`, `DnsblDisabled`, `GeoIpNotInitialized`, `LocationNotFound`. The English defaults

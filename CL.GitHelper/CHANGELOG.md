@@ -5,11 +5,6 @@ All notable changes to **CodeLogic.GitHelper** are documented here. Versions fol
 
 ## 5.0 (unreleased)
 
-### Audit completion (2026-11-07)
-
-- Apply the shared bounded single-line formatter after credential redaction; split repository operations and manager responsibilities into partial files.
-
-
 ### Breaking
 
 - Targets **.NET 11** (`net11.0`) and requires **CodeLogic 5.0** (`[5.0.0, 6.0.0)`). On .NET 10, stay on
@@ -31,7 +26,7 @@ All notable changes to **CodeLogic.GitHelper** are documented here. Versions fol
     return diagnostics; clone logs its duration and messages instead.
 - `GitHelperLibrary` / `GitManager`: `FetchAllAsync` → `Task<Dictionary<string, Result<GitDiagnostics>>>`,
   `GetAllStatusAsync` → `Task<Dictionary<string, Result<RepositoryStatus>>>`.
-- **Expected failures are results, not exceptions** (audit 2026-11):
+- **Expected failures are results, not exceptions**:
   - `GetRepositoryAsync` (library and manager) → `Task<Result<GitRepository>>`. An unknown id is a `NotFoundError`
     `git.repository_not_found` with `Details = "not_configured"` (was `ArgumentException`); on the library, calling it
     before initialization, while disabled or after stop is an `UnavailableError` `git.not_initialized` (was
@@ -62,6 +57,8 @@ All notable changes to **CodeLogic.GitHelper** are documented here. Versions fol
 
 ### Changed
 
+- Apply the shared bounded single-line formatter after credential redaction; split repository operations and manager responsibilities into partial files.
+
 - Fetch now records `ObjectCount` and `BytesTransferred` in its diagnostics.
 - Failures of read operations (status, info, branches, log) are logged at debug level with the
   full exception; before, the exception was only on the result.
@@ -78,7 +75,7 @@ All notable changes to **CodeLogic.GitHelper** are documented here. Versions fol
 
 ### Fixed
 
-- **Reads no longer race disposal** (audit 2026-11). `GetStatusAsync`, `GetRepositoryInfoAsync`, `ListBranchesAsync`,
+- **Reads no longer race disposal**. `GetStatusAsync`, `GetRepositoryInfoAsync`, `ListBranchesAsync`,
   `GetCommitLogAsync`, the dirty check of `EnsureUpToDateAsync` and the lazy open used the native handle without the
   repository lock, so an eviction could dispose it mid-read (and two first calls could each open, leaking a handle).
   Every operation now runs under the lock; an operation on a disposed instance returns `git.repository_disposed`.
@@ -124,7 +121,7 @@ All notable changes to **CodeLogic.GitHelper** are documented here. Versions fol
 
 ### Security
 
-- **Redaction gaps closed** (audit 2026-11). Commit, checkout and reset failures, and the catch blocks of the batch
+- **Redaction gaps closed**. Commit, checkout and reset failures, and the catch blocks of the batch
   calls, auto-fetch, start-up probe and health check, logged or returned the raw exception message (and handed the
   exception, with its message, to the logger). All now go through redaction. `Redact` masks the configured token
   before the URL user-info, so a token containing `@` is no longer half-masked (`https://***@ss@host`), and also

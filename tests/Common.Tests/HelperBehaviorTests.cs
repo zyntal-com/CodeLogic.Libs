@@ -7,7 +7,7 @@ using Xunit;
 namespace Common.Tests;
 
 /// <summary>HtmlHelper truncation limits, CronParser local times and HttpClientHelper error kinds.</summary>
-public sealed class FollowupFixTests
+public sealed class HelperBehaviorTests
 {
     [Theory]
     [InlineData("<b>Hello world</b>", 8, "...", "Hello...")]

@@ -5,10 +5,9 @@ All notable changes to **CodeLogic.SocialConnect** are documented here. Versions
 
 ## 5.0 (unreleased)
 
-### Audit completion (2026-11-07)
+### Changed
 
 - Record only provider-verified nonces; cap verification concurrency and replay-store capacity, refusing overload without evicting valid nonces. Failed assertions consume no replay entries. Use the shared bounded log formatter.
-
 
 ### Breaking
 

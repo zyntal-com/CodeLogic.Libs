@@ -263,7 +263,7 @@ public sealed class GeoIpDownloadTests : IDisposable
         return output.ToArray();
     }
 
-    // These tests exercise the archive handling; the checksum round trip has its own tests (AuditRound5Tests).
+    // These tests exercise the archive handling.
     private static GeoIpConfig Config(string? url = null, List<string>? hosts = null) => new()
     {
         AccountId = 42,

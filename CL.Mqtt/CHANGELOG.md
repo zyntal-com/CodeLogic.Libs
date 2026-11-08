@@ -5,7 +5,7 @@ All notable changes to **CodeLogic.Mqtt** are documented here. Versions follow
 
 ## 5.0 (unreleased)
 
-### Audit completion (2026-11-07)
+### Changed
 
 - Capture the sweeper's cancellation token before scheduling so an immediate stop cannot clear its source first. Broker listeners and cancellation sources are released even if a sweeper fails during shutdown; deferred-start and faulted-sweep regressions cover both paths.
 
@@ -59,7 +59,7 @@ First release. Targets **.NET 11** (`net11.0`) and **CodeLogic 5.0**; built on M
 - **Errors:** stable codes in `MqttErrorCodes` (`mqtt.not_connected`, `mqtt.authentication_failed`,
   `mqtt.subscribe_rejected`, ...).
 
-### Security (audit 2026-11-07, before the first release)
+### Security
 
 - A client could connect with the client id `$broker` and publish anywhere unchecked and unseen by taps, because the
   broker's own injected messages were recognised by that id. Reserved ids are now refused and injected messages are

@@ -8,7 +8,7 @@ namespace Storage.Integration.Tests;
 /// <summary>Sync against real servers: object-store times and three-way runs that settle.</summary>
 public sealed class SyncLiveTests2
 {
-    [SftpAndS3Fact] // needs-review E: skipped, not passed silently, when S3 is not configured
+    [SftpAndS3Fact] // Skipped, not passed silently, when S3 is not configured
     public async Task Two_way_sync_with_an_object_store_settles_after_the_first_run()
     {
         await using var live = await LiveLibrary.StartAsync(("sftp", LiveServers.Sftp()), ("s3", CloudEmulators.S3()));
@@ -43,7 +43,7 @@ public sealed class SyncLiveTests2
         }
     }
 
-    [SftpAndS3Fact] // needs-review E: skipped, not passed silently, when S3 is not configured
+    [SftpAndS3Fact] // Skipped, not passed silently, when S3 is not configured
     public async Task One_way_copies_to_an_object_store_keep_the_source_time()
     {
         await using var live = await LiveLibrary.StartAsync(("sftp", LiveServers.Sftp()), ("s3", CloudEmulators.S3()));
