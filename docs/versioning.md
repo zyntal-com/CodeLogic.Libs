@@ -115,8 +115,9 @@ request with the full suite green.
 3. The release workflow on that branch re-runs the full suite, packs, pre-flights every package and
    publishes. In CodeLogic.Libs only libraries changed since that channel's last release tag
    (`libs-v<major.minor>-<run>` for stable releases, `libs-preview-v<major.minor>-<run>` for previews)
-   are packed. Each published nuspec depends on CodeLogic `[5.0.0-preview, 6.0.0)` while 5.0 is in
-   preview, so the 5.0 previews satisfy it; it becomes `[5.0.0, 6.0.0)` once CodeLogic 5.0 is stable.
+   are packed. Each published nuspec depends on CodeLogic `[<pinned>, 6.0.0)`, where `<pinned>` is
+   `CodeLogicPackageVersion` in `Directory.Build.props` (the version the libraries are compiled against). Older
+   CodeLogic 5.0 previews are not strong-name signed and lack newer APIs, so they must not satisfy the range.
 
 A fix that applies to both lines is made on one integration branch and cherry-picked in a second
 pull request into the other.
