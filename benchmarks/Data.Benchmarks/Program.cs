@@ -1,5 +1,5 @@
 // CL.Data benchmarks against MySQL: CL.Data (regular and compiled queries), Dapper and raw ADO.NET (the floor).
-// The 4.x baseline (CodeLogic.MySQL2 4.9) runs the same scenarios in benchmarks/MySql2.Baseline (its own process).
+// The CodeLogic.MySQL2 4.9 numbers in benchmarks/baseline come from a one-off run of the same scenarios (mysql2-4.9.txt).
 //
 //   set CL_DATA_MYSQL_CS=Server=...;Database=...;User ID=...;Password=...
 //   dotnet run -c Release --project benchmarks/Data.Benchmarks -- --filter *

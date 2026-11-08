@@ -2,8 +2,8 @@
 
 BenchmarkDotNet 0.15.4, in-process, 3 warm-up + 10 measured iterations, `MemoryDiagnoser`. One MySQL 8.4 in Docker
 Desktop on the same Windows 11 machine (`cl-data-mysql`), 1,000 seeded rows. CL.Data, Dapper and raw ADO.NET run on
-.NET 11 (`benchmarks/Data.Benchmarks`); CodeLogic.MySQL2 4.9.107 runs the same scenarios on .NET 10 in its own process
-(`benchmarks/MySql2.Baseline`, it needs CodeLogic 4).
+.NET 11 (`benchmarks/Data.Benchmarks`). CodeLogic.MySQL2 4.9.107 ran the same scenarios once on .NET 10, in its own
+process; its raw output is `mysql2-4.9.txt` (the comparison project was removed once CL.Data beat it everywhere).
 
 **Read the numbers with the environment in mind:** a round trip to Docker Desktop costs ~1.4 ms, so it dominates every
 single-row scenario. Library overhead is in the tens of microseconds; the allocation column shows it better than the time.
@@ -54,6 +54,5 @@ from the buffered rows, so callers can never change what is cached.
 
 ```sh
 set CL_DATA_MYSQL_CS=Server=127.0.0.1;Port=33406;Database=cl_data;User ID=root;Password=;SslMode=None;AllowPublicKeyRetrieval=true
-dotnet run -c Release --project benchmarks/MySql2.Baseline -- --filter *
 dotnet run -c Release --project benchmarks/Data.Benchmarks -- --filter *
 ```
