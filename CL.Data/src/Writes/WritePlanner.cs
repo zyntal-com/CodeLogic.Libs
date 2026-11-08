@@ -13,6 +13,13 @@ public static class DataTags
 
     /// <summary>Tag of one row of <paramref name="table"/>.</summary>
     public static string Entity(string table, EntityKey key) => $"entity:{table}:{key}";
+
+    /// <summary>
+    /// Tag of every entity-cache entry (key lookup) of <paramref name="table"/>. Key lookups are not tagged with
+    /// <see cref="Table"/>, so a write to one row keeps the other rows cached; an invalidation of <see cref="Table"/> without
+    /// any <see cref="Entity"/> tag of that table (set-based writes, bulk copy, raw SQL) also drops this tag.
+    /// </summary>
+    public static string Entities(string table) => "entities:" + table;
 }
 
 /// <summary>Options for upserts.</summary>

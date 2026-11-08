@@ -26,6 +26,7 @@ internal sealed class CommandExecutor(DataProvider provider, int defaultTimeoutS
     /// Runs <paramref name="body"/> with an open command. When <paramref name="connection"/> is given the command
     /// runs on it (and in <paramref name="transaction"/>); otherwise a pooled connection is opened and closed.
     /// </summary>
+    [System.Runtime.CompilerServices.AsyncMethodBuilder(typeof(System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder<>))]
     public async ValueTask<Result<TResult>> ExecuteAsync<TState, TResult>(
         DataNode node, CommandSpec spec, TState state,
         Func<DbCommand, TState, CancellationToken, ValueTask<TResult>> body,

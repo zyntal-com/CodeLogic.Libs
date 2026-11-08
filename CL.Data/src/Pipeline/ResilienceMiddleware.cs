@@ -19,6 +19,7 @@ namespace CL.Data.Pipeline;
 /// </summary>
 internal sealed class ResilienceMiddleware(RetryPolicy? retry, TimeProvider time) : ICommandMiddleware
 {
+    [System.Runtime.CompilerServices.AsyncMethodBuilder(typeof(System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder<>))]
     public async ValueTask<Result<T>> InvokeAsync<T>(CommandContext context, CommandNext<T> next)
     {
         if (context.InTransaction) return await next.InvokeAsync(context).ConfigureAwait(false);
