@@ -48,6 +48,7 @@ public class MySqlBenchmarks
     private static readonly CompiledQuery<BenchItem, decimal> Above = CompiledQuery.For<BenchItem, decimal>((q, min) => q.Where(i => i.Price > min).OrderBy(i => i.Id).Take(100));
 
     private Database _db = null!;
+    private Database _always = null!;
     private Database _cached = null!;
     private MySqlDataSource _source = null!;
     private long _id;
@@ -61,7 +62,13 @@ public class MySqlBenchmarks
         {
             Provider = "mysql", ConnectionString = cs, MySql = new MySqlOptions { AllowLoadLocalInfile = true },
         }).ValueOrThrow();
-        _source = new MySqlDataSource(cs);
+        // The baselines run without the driver's reset on open, like CL.Data's default (MySql.ConnectionReset = WhenDirty),
+        // so the comparison stays like-for-like. CLData_AlwaysReset_GetById shows the cost of a reset on every open.
+        _source = new MySqlDataSource(new MySqlConnectionStringBuilder(cs) { ConnectionReset = false }.ConnectionString);
+        _always = Database.Create("bench-always", MySqlDataProvider.Instance, new DataConnectionConfig
+        {
+            Provider = "mysql", ConnectionString = cs, MySql = new MySqlOptions { ConnectionReset = MySqlConnectionReset.Always },
+        }).ValueOrThrow();
         _cached = Database.Create("bench-cached", MySqlDataProvider.Instance, new DataConnectionConfig { Provider = "mysql", ConnectionString = cs },
             new DatabaseOptions { Cache = new CL.Data.Caching.DataCache(new DataCacheConfig { EntityCache = true }) }).ValueOrThrow();
         (await _db.Schema.SyncAsync<BenchItem>(new CL.Data.Schema.SchemaSyncOptions { Force = true })).ValueOrThrow();
@@ -76,6 +83,7 @@ public class MySqlBenchmarks
     public async Task Cleanup()
     {
         await _db.DisposeAsync();
+        await _always.DisposeAsync();
         await _cached.DisposeAsync();
         await _source.DisposeAsync();
     }
@@ -109,6 +117,9 @@ public class MySqlBenchmarks
 
     [Benchmark, BenchmarkCategory("GetById")]
     public async Task<BenchItem?> CLData_Compiled_GetById() => (await ById.FirstOrDefaultAsync(_db, _id)).Value;
+
+    [Benchmark, BenchmarkCategory("GetById")]
+    public async Task<BenchItem?> CLData_AlwaysReset_GetById() => (await _always.Repository<BenchItem>().GetByIdAsync(_id)).Value;
 
     [Benchmark, BenchmarkCategory("GetById")]
     public async Task<BenchItem?> CLData_Cached_GetById() => (await _cached.Repository<BenchItem>().GetByIdAsync(_id)).Value;

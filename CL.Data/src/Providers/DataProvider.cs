@@ -187,6 +187,38 @@ public abstract class DataProvider
     /// <summary>Creates the pooled data source for <paramref name="node"/>, from the connection string <see cref="BuildConnectionString"/> produced.</summary>
     public abstract DbDataSource CreateDataSource(DataConnectionConfig config, NodeEndpoint node, string connectionString);
 
+    /// <summary>
+    /// True when the driver pool of <paramref name="config"/> does not reset sessions on every open, so CL.Data resets a
+    /// connection itself (<see cref="ResetSessionAsync"/>) before it returns to the pool, and only when the connection may
+    /// have been left with session state: raw SQL that <see cref="MayChangeSession"/>, connections handed to user code,
+    /// advisory locks that were not released cleanly, interrupted commands. False (the default) leaves resets to the driver.
+    /// </summary>
+    public virtual bool ResetsDirtySessions(DataConnectionConfig config) => false;
+
+    /// <summary>
+    /// Clears the session state of the open <paramref name="connection"/> before it returns to the pool (only called when
+    /// <see cref="ResetsDirtySessions"/> is true). Throw when the reset fails: CL.Data then calls <see cref="DiscardSessionAsync"/>.
+    /// </summary>
+    /// <param name="connection">The open connection.</param>
+    /// <param name="config">The connection's settings.</param>
+    /// <param name="handedToUser">True when user code had the raw connection (it may have prepared statements, changed database, ...).</param>
+    /// <param name="ct">Cancellation (a short timeout).</param>
+    public virtual Task ResetSessionAsync(DbConnection connection, DataConnectionConfig config, bool handedToUser, CancellationToken ct) =>
+        Task.CompletedTask;
+
+    /// <summary>
+    /// Makes sure the session of <paramref name="connection"/> is not reused as it is after <see cref="ResetSessionAsync"/>
+    /// failed (for example by making the driver reset or drop it at the next open). Throwing is fine: a connection whose
+    /// session cannot be talked to any more is dropped by the driver. The default does nothing.
+    /// </summary>
+    public virtual Task DiscardSessionAsync(DbConnection connection, DataConnectionConfig config, CancellationToken ct) => Task.CompletedTask;
+
+    /// <summary>
+    /// True when the raw statement <paramref name="sql"/> may leave session state on its connection (see
+    /// <see cref="ResetsDirtySessions"/>). The default is true: any raw SQL counts. Providers narrow it with <see cref="SessionSqlRules"/>.
+    /// </summary>
+    public virtual bool MayChangeSession(string sql) => true;
+
     /// <summary>Provider-specific configuration checks; add problems to <paramref name="errors"/> under <paramref name="path"/>.</summary>
     public virtual void Validate(DataConnectionConfig config, string path, List<ConfigFieldError> errors) { }
 

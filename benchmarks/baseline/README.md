@@ -20,7 +20,7 @@ single-row scenario. Library overhead is in the tens of microseconds; the alloca
 
 ¹ Dapper executes one INSERT per row for a list; CL.Data and CL.MySQL2 send multi-row batches.
 
-## Result cache (WP-80–82)
+## Result cache
 
 Same machine, cache hits (`DatabaseOptions.Cache`, `WithCache()` / the entity cache). Each hit materializes fresh objects
 from the buffered rows, so callers can never change what is cached.
@@ -30,13 +30,31 @@ from the buffered rows, so callers can never change what is cached.
 | Get by key (entity cache) | 1,465 µs | **1.66 µs** (~880×) | 5.2 KB |
 | Filter, 100 rows (`WithCache()`) | 1,611 µs | **18.4 µs** (~87×) | 17.5 KB |
 
-## Write path and bulk copy (WP-A1)
+## Write path and bulk copy
 
 | Scenario | Before | **Now** | CL.MySQL2 4.9 |
 |---|---|---|---|
 | Insert 100 (multi-row) | 5.902 ms / 298.2 KB | **5.514 ms / 226.4 KB** | 5.533 ms / 255.9 KB |
 | Insert 5,000: `InsertMany` (multi-row) | | 62.1 ms / 11.07 MB | |
 | Insert 5,000: `Bulk<T>().InsertAsync` (MySqlBulkCopy) | | **29.7 ms / 5.3 MB** | |
+
+## Connection reset only when dirty (2026-11-08)
+
+MySqlConnector resets every pooled connection when it is opened, which is one full round trip. CL.Data now runs the pool
+without it (`mySql.connectionReset: "WhenDirty"`, the default) and resets only connections that may carry session state.
+The raw ADO.NET and Dapper baselines were switched to `ConnectionReset=false` as well, so the ratios stay like-for-like.
+Same machine and container as above; these numbers are from a run on an idle server.
+
+| Get by key | Mean | Allocated |
+|---|---:|---:|
+| Raw ADO.NET (`ConnectionReset=false`) | 582 µs | 5.3 KB |
+| Dapper (`ConnectionReset=false`) | 603 µs | 7.1 KB |
+| **CL.Data, `WhenDirty` (default)** | **622 µs** | **12.0 KB** |
+| CL.Data, compiled query | 619 µs | 9.5 KB |
+| CL.Data, `Always` (the driver's reset on every open, as before) | 1,166 µs | 13.9 KB |
+
+The reset on open cost 544 µs per lookup here (1.87×), about one round trip to Docker Desktop. Single-row operations also
+allocate about 2 KB less per call without it. Budgets in `benchmarks/budgets.json` were lowered to match.
 
 ## Findings
 
@@ -45,7 +63,7 @@ from the buffered rows, so callers can never change what is cached.
 - **Against CL.MySQL2 4.9:** 2–6% faster on single-row reads and writes (the gap is the library overhead, since the
   round trip is the same), and **20–42% less memory** per call (get by key 16.3 → 10.4–13.6 KB, filter 60.3 → 34.9–41.3 KB,
   count 18.2 → 11.8 KB).
-- **Fixed in WP-A1:** batch insert of 100 rows was 7% slower and allocated 16% more than 4.9. It is now faster than 4.9,
+- **Fixed:** batch insert of 100 rows was 7% slower and allocated 16% more than 4.9. It is now faster than 4.9,
   with 12% less memory.
 - On a remote database with a few ms of latency the time differences shrink further; on a busy server the lower
   allocations matter more than the microseconds.

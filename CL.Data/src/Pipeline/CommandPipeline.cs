@@ -24,7 +24,7 @@ public sealed class CommandContext
     internal CommandContext(Database database, CommandSpec spec, CommandKind kind, CancellationToken ct)
     {
         Database = database;
-        Spec = spec;
+        _spec = spec;
         Kind = kind;
         CancellationToken = ct;
     }
@@ -32,8 +32,34 @@ public sealed class CommandContext
     /// <summary>The database the command runs on.</summary>
     public Database Database { get; }
 
+    private CommandSpec _spec;
+
     /// <summary>SQL and parameters. Interceptors may replace it (for example to add a comment).</summary>
-    public CommandSpec Spec { get; set; }
+    public CommandSpec Spec
+    {
+        get => _spec;
+        set
+        {
+            if (!ReferenceEquals(_spec.Sql, value.Sql)) SqlRewritten = true;
+            _spec = value;
+        }
+    }
+
+    /// <summary>True when middleware or an interceptor replaced the SQL text after the command was built.</summary>
+    internal bool SqlRewritten { get; private set; }
+
+    /// <summary>
+    /// True for raw SQL from the caller (<c>SqlQueryAsync</c>, <c>ExecuteSqlAsync</c>, ...): on providers that reset dirty
+    /// sessions, the text is checked with <see cref="Providers.DataProvider.MayChangeSession"/>.
+    /// </summary>
+    internal bool RawSql { get; init; }
+
+    /// <summary>Set when the command is already known to leave session state (a raw batch item that may change it).</summary>
+    internal bool DirtiesSession { get; init; }
+
+    /// <summary>True when running the command may leave session state on its connection.</summary>
+    internal bool MayDirtySession(Providers.DataProvider provider) =>
+        DirtiesSession || ((RawSql || SqlRewritten) && provider.MayChangeSession(_spec.Sql));
 
     /// <summary>Kind of command.</summary>
     public CommandKind Kind { get; }
@@ -70,6 +96,8 @@ public sealed class CommandContext
         IsWrite = IsWrite,
         Tags = Tags,
         ReadFrom = ReadFrom,
+        RawSql = RawSql || SqlRewritten,
+        DirtiesSession = DirtiesSession,
     };
 
     /// <summary>The 1-based attempt of this command (above 1 when the resilience step retries it).</summary>

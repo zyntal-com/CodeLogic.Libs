@@ -9,6 +9,9 @@ namespace CL.Data.PostgreSql;
 public sealed class PostgreSqlSqlDialect : SqlDialect
 {
     /// <inheritdoc />
+    public override SqlLexicon Lexicon => SqlLexicon.PostgreSql;
+
+    /// <inheritdoc />
     public override void RenderFunction(SqlWriter w, FunctionExpr function)
     {
         var a = function.Arguments;

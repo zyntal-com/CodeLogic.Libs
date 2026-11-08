@@ -186,21 +186,28 @@ public sealed class DataBulk<T>
         List<SqlParameterValue?[]> chunk, BulkOptions options, CancellationToken ct)
     {
         DbConnection? owned = null;
+        DbConnection? used = null;
+        var dirty = false;
         try
         {
             var (connection, transaction) = _db.Transaction is { } tx
                 ? (tx.Handles.Connection, tx.Handles.Transaction)
                 : (owned = await _db.Primary.DataSource.OpenConnectionAsync(ct).ConfigureAwait(false), (DbTransaction?)null);
+            used = connection;
             var request = new BulkCopyRequest(_db, connection, transaction, table, columns, maps, chunk, options.KeepIdentity);
             return await copier.CopyAsync(request, ct).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
+            // Native bulk copies may change session settings while they run (MySqlBulkCopy sets sql_select_limit around
+            // its metadata query): an interrupted copy leaves the session dirty.
+            dirty = used is not null;
             return DataErrors.BulkFailed(table.Name, ex.Message, _db.Executor.Map(ex, ct));
         }
         finally
         {
-            if (owned is not null) await owned.DisposeAsync().ConfigureAwait(false);
+            if (owned is not null) await _db.Primary.ReturnAsync(owned, dirty).ConfigureAwait(false);
+            else if (dirty && used is not null && _db.Primary.TracksSessions) CL.Data.Execution.SessionTracker.MarkDirty(used);
         }
     }
 

@@ -139,6 +139,9 @@ public sealed class MySqlDataProvider : DataProvider
         builder.AllowPublicKeyRetrieval = options.AllowPublicKeyRetrieval;
         builder.AllowLoadLocalInfile = options.AllowLoadLocalInfile;
         builder.IgnorePrepare = !config.PrepareStatements;
+        // The driver's reset on every open costs a full round trip; with WhenDirty CL.Data resets only dirty sessions.
+        builder.ConnectionReset = options.ConnectionReset == MySqlConnectionReset.Always;
+        builder.ConnectionIdleTimeout = (uint)options.ConnectionIdleTimeoutSeconds;
 
         // Fixed by CL.Data: affected rows (not found rows) so insert-ignore can tell duplicates apart; GUIDs as
         // BINARY(16) in RFC byte order (time-ordered for version 7); date/times read as UTC.
@@ -162,6 +165,61 @@ public sealed class MySqlDataProvider : DataProvider
     public override DbDataSource CreateDataSource(DataConnectionConfig config, NodeEndpoint node, string connectionString) =>
         new MySqlDataSource(connectionString);
 
+    // Raw statements that leave no session state: one plain query, DML or DDL statement without user variables, executable
+    // comments, locks or temporary tables. Anything else (SET, CALL, DO, START TRANSACTION, LOCK TABLES, USE, PREPARE, HANDLER,
+    // LOAD DATA, several statements) may change the session.
+    private static readonly SessionSqlRules SessionRules = new(
+        ["SELECT", "WITH", "VALUES", "TABLE", "SHOW", "EXPLAIN", "DESCRIBE", "DESC", "INSERT", "REPLACE", "UPDATE", "DELETE",
+         "CREATE", "ALTER", "DROP", "TRUNCATE", "RENAME", "OPTIMIZE", "ANALYZE"],
+        ["GET_LOCK", "TEMPORARY", "LAST_INSERT_ID", "SQL_LOG_BIN"],
+        parameterPrefix: '@', lexicon: SqlLexicon.MySql);
+
+    /// <inheritdoc />
+    public override bool ResetsDirtySessions(DataConnectionConfig config) =>
+        config.Pooling && (config.MySql?.ConnectionReset ?? MySqlConnectionReset.WhenDirty) == MySqlConnectionReset.WhenDirty;
+
+    /// <inheritdoc />
+    public override bool MayChangeSession(string sql) => SessionRules.MayChangeSession(sql);
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// <c>COM_RESET_CONNECTION</c> (MySQL 5.7.3+, MariaDB 10.2.4+) drops user variables, temporary tables, prepared statements and
+    /// locks, rolls back an open transaction and restores session variables to the global defaults. It keeps the current
+    /// database and, unlike the driver's own reset, does not restore the connection character set: <c>SET NAMES utf8mb4</c>
+    /// follows (what the driver sends after its reset), and the database is switched back when a raw <c>USE</c> changed it.
+    /// When user code had the connection it may have prepared statements, whose handles the driver caches: switching the
+    /// database through <c>ChangeDatabase</c> makes the driver run its full reset, which clears that cache, on the next open.
+    /// </remarks>
+    public override async Task ResetSessionAsync(DbConnection connection, DataConnectionConfig config, bool handedToUser, CancellationToken ct)
+    {
+        var mysql = (MySqlConnection)connection;
+        await mysql.ResetConnectionAsync(ct).ConfigureAwait(false);
+        string? current;
+        var command = mysql.CreateCommand();
+        await using (command.ConfigureAwait(false))
+        {
+            command.CommandText = "SET NAMES utf8mb4; SELECT DATABASE()";
+            current = await command.ExecuteScalarAsync(ct).ConfigureAwait(false) as string;
+        }
+        var database = new MySqlConnectionStringBuilder(mysql.ConnectionString).Database;
+        if (string.IsNullOrEmpty(database)) return;
+        if (!string.Equals(current, database, StringComparison.Ordinal) || (handedToUser && config.PrepareStatements))
+            await mysql.ChangeDatabaseAsync(database, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// Switching the database sets the driver's database override, and MySqlConnector then runs its full reset
+    /// (<c>COM_CHANGE_USER</c>) when the session is next opened, dropping the session if that fails. (A pool-wide
+    /// <c>ClearPool</c> would not help: it does not reach the pool a <see cref="MySqlDataSource"/> owns.)
+    /// </remarks>
+    public override async Task DiscardSessionAsync(DbConnection connection, DataConnectionConfig config, CancellationToken ct)
+    {
+        var mysql = (MySqlConnection)connection;
+        var database = new MySqlConnectionStringBuilder(mysql.ConnectionString).Database;
+        await mysql.ChangeDatabaseAsync(string.IsNullOrEmpty(database) ? "information_schema" : database, ct).ConfigureAwait(false);
+    }
+
     /// <inheritdoc />
     public override object? ReadLastInsertId(DbCommand command) =>
         command is MySqlCommand { LastInsertedId: > 0 } mysql ? mysql.LastInsertedId : null;
@@ -171,6 +229,8 @@ public sealed class MySqlDataProvider : DataProvider
     {
         if (config.MySql is { CharacterSet: { Length: 0 } })
             errors.Add(new($"{path}.mySql.characterSet", "A character set is required."));
+        if (config.MySql is { ConnectionIdleTimeoutSeconds: < 1 })
+            errors.Add(new($"{path}.mySql.connectionIdleTimeoutSeconds", "The idle timeout must be at least 1 second."));
     }
 }
 

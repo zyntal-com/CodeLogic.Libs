@@ -37,6 +37,85 @@ public sealed class MySqlProviderTests
         Assert.Equal("db9", new MySqlConnectionStringBuilder(Provider.BuildConnectionString(config, replica).ValueOrThrow()).Server);
     }
 
+    [Theory]
+    [InlineData(MySqlConnectionReset.WhenDirty, false, true)]
+    [InlineData(MySqlConnectionReset.Always, true, false)]
+    [InlineData(MySqlConnectionReset.Never, false, false)]
+    public void Connection_reset_mode_decides_who_resets(MySqlConnectionReset mode, bool driverResets, bool cldataResets)
+    {
+        // The typed option wins over a ConnectionReset key in the raw connection string.
+        var config = new DataConnectionConfig
+        {
+            Provider = "mysql", ConnectionString = $"Server=db;ConnectionReset={!driverResets}",
+            MySql = new MySqlOptions { ConnectionReset = mode, ConnectionIdleTimeoutSeconds = 60 },
+        };
+        var cs = new MySqlConnectionStringBuilder(Provider.BuildConnectionString(config, NodeEndpoint.Primary(config)).ValueOrThrow());
+        Assert.Equal(driverResets, cs.ConnectionReset);
+        Assert.Equal(60u, cs.ConnectionIdleTimeout);
+        Assert.Equal(cldataResets, Provider.ResetsDirtySessions(config));
+    }
+
+    [Fact]
+    public void Defaults_reset_only_dirty_sessions_and_never_without_pooling()
+    {
+        var config = new DataConnectionConfig { Provider = "mysql", Host = "db" };
+        var cs = new MySqlConnectionStringBuilder(Provider.BuildConnectionString(config, NodeEndpoint.Primary(config)).ValueOrThrow());
+        Assert.False(cs.ConnectionReset);
+        Assert.Equal(180u, cs.ConnectionIdleTimeout);
+        Assert.True(Provider.ResetsDirtySessions(config));
+
+        config.Pooling = false;   // every open is a new session: nothing to reset
+        Assert.False(Provider.ResetsDirtySessions(config));
+    }
+
+    [Theory]
+    [InlineData("SELECT * FROM `orders` WHERE id = @p0 AND b IN (@p1, @p12)", false)]   // CL.Data's parameters, not user variables
+    [InlineData("SELECT @p0x", true)]
+    [InlineData("SELECT @p", true)]
+    [InlineData("SELECT @@session.sql_mode", true)]
+    [InlineData("SELECT @pid := 1", true)]
+    [InlineData("SELECT * FROM orders WHERE id = 1", false)]
+    [InlineData("WITH c AS (SELECT 1) SELECT * FROM c", false)]
+    [InlineData("TABLE orders", false)]
+    [InlineData("SHOW TABLES", false)]
+    [InlineData("EXPLAIN SELECT 1", false)]
+    [InlineData("INSERT INTO t (a) VALUES (1) ON DUPLICATE KEY UPDATE a = VALUES(a)", false)]
+    [InlineData("REPLACE INTO t VALUES (1)", false)]
+    [InlineData("UPDATE t SET a = 1", false)]
+    [InlineData("DELETE FROM t LIMIT 10", false)]
+    [InlineData("CREATE TABLE t (id INT)", false)]
+    [InlineData("ALTER TABLE t ADD c INT", false)]
+    [InlineData("DROP TABLE IF EXISTS t", false)]
+    [InlineData("TRUNCATE TABLE t", false)]
+    [InlineData("OPTIMIZE TABLE t", false)]
+    [InlineData("SELECT * FROM t FOR UPDATE", false)]               // row locks end with the statement or its transaction
+    [InlineData("SET NAMES latin1", true)]
+    [InlineData("SET SESSION sql_mode = ''", true)]
+    [InlineData("SET autocommit = 0", true)]
+    [InlineData("START TRANSACTION", true)]
+    [InlineData("BEGIN", true)]
+    [InlineData("CALL p()", true)]
+    [InlineData("DO GET_LOCK('a', 0)", true)]
+    [InlineData("SELECT GET_LOCK('a', 0)", true)]
+    [InlineData("SELECT `GET_LOCK`('a', 0)", true)]
+    [InlineData("SELECT `get_lock` FROM t", false)]
+    [InlineData("SELECT LAST_INSERT_ID(5)", true)]
+    [InlineData("CREATE TEMPORARY TABLE x (id INT)", true)]
+    [InlineData("LOCK TABLES t WRITE", true)]
+    [InlineData("USE other", true)]
+    [InlineData("PREPARE s FROM 'SELECT 1'", true)]
+    [InlineData("HANDLER t OPEN", true)]
+    [InlineData("LOAD DATA LOCAL INFILE 'x' INTO TABLE t", true)]
+    [InlineData("SELECT /*!40101 SQL_NO_CACHE */ 1", true)]
+    [InlineData("SELECT 1; SELECT 2", true)]
+    [InlineData("SELECT 1--1, GET_LOCK('a', 0)", true)]          // --1 is arithmetic in MySQL, not a comment
+    [InlineData("SELECT 1 -- GET_LOCK('a', 0)", false)]          // a real comment
+    [InlineData("SELECT 1 # GET_LOCK('a', 0)", false)]           // a real MySQL comment
+    [InlineData("SELECT 1 AS $x$, GET_LOCK('a', 0) AS $x$", true)]   // $x$ is an identifier in MySQL, not a dollar quote
+    [InlineData(@"SELECT 'a\'', GET_LOCK('x', 0), ''", true)]    // backslash escapes depend on sql_mode: ambiguous
+    [InlineData(@"SELECT 'C:\path'", true)]
+    public void Raw_sql_session_rules(string sql, bool dirty) => Assert.Equal(dirty, Provider.MayChangeSession(sql));
+
     [Fact]
     public void Replicas_given_a_host_inherit_the_primary_connection_string()
     {

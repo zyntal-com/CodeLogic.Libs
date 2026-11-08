@@ -35,6 +35,9 @@ All numbers are from one Windows 11 machine, with MySQL in Docker Desktop. A rou
   - Inserts and upserts go out as multi-row statements sized to the provider's parameter limit.
   - Bulk copy runs above `bulkThreshold`.
   - Changed-column updates send nothing when nothing changed.
+- **No reset round trip on MySQL:** MySqlConnector's reset on every pooled open is skipped. CL.Data resets a connection only
+  when it may carry session state (`mySql.connectionReset: "WhenDirty"`, the default; see [Providers](providers.md#mysql)),
+  which halves the latency of small queries against a remote server.
 - **Warm pools:** `minPoolSize` connections are opened at start.
 - **No `COUNT` you didn't ask for:** `ToPagedListAsync(withTotal: false)` is the default, and keyset paging (`ToCursorPageAsync`) never counts.
 - **The result cache:** microsecond hits, with exact invalidation (see [Caching](caching.md)).
