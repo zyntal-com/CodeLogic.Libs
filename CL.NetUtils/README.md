@@ -18,6 +18,7 @@ dotnet add package CodeLogic.NetUtils
 ```csharp
 using CL.NetUtils;
 using CL.NetUtils.Models;
+using CodeLogic.Core.Results;
 
 await Libraries.LoadAsync<NetUtilsLibrary>();   // register before ConfigureAsync()
 await CodeLogic.ConfigureAsync();
@@ -26,18 +27,28 @@ await CodeLogic.StartAsync();
 var net = Libraries.Get<NetUtilsLibrary>();
 
 // 1. Is this IP on a blacklist? (uses the zones from config.netutils.json)
-DnsblCheckResult check = await net.Dnsbl.CheckIpAsync("203.0.113.1");
-if (check.IsBlacklisted)
-    Console.WriteLine($"Listed by {check.MatchedService}");
-else if (check.Status == DnsblCheckStatus.Indeterminate)
-    Console.WriteLine($"Not listed by the zones that answered; unchecked: {string.Join(", ", check.FailedServices)}");
+Result<DnsblCheck> check = await net.Dnsbl.CheckIpAsync("203.0.113.1");
+Console.WriteLine(check switch
+{
+    DnsblCheck { Status: DnsblCheckStatus.Blacklisted } c   => $"Listed by {c.MatchedService}",
+    DnsblCheck { Status: DnsblCheckStatus.Indeterminate } c => $"Not listed by the zones that answered; unchecked: {string.Join(", ", c.FailedServices)}",
+    DnsblCheck                                              => "Not blacklisted",
+    ValidationError e                                       => $"Not an IP address: {e.Message}",
+    Error e                                                 => $"The check did not run: {e.Code}",   // netutils.dnsbl_disabled, netutils.cancelled, ...
+    null                                                    => "No result",
+});
 
 // 2. Where is this IP? Guard with HasGeoIp — GeoIP needs a MaxMind database.
 if (net.HasGeoIp)
 {
-    IpLocationResult geo = await net.GeoIp.LookupIpAsync("203.0.113.1");
-    if (geo.IsSuccessful)
-        Console.WriteLine($"{geo.CityName}, {geo.CountryName} ({geo.CountryCode})");
+    Result<IpLocation> geo = await net.GeoIp.LookupIpAsync("203.0.113.1");
+    Console.WriteLine(geo switch
+    {
+        IpLocation l  => $"{l.CityName}, {l.CountryName} ({l.CountryCode})",
+        NotFoundError => "Not in the database",
+        Error e       => $"Lookup failed: {e.Code}",
+        null          => "No result",
+    });
 }
 ```
 
@@ -46,14 +57,31 @@ Local and private addresses (loopback, RFC 1918, link-local, CGNAT, documentatio
 ## Features
 
 - **DNSBL checking** — query multiple blacklist zones per address family, concurrently or one at a time (`ParallelQueries`), with primary/fallback providers. A check where zones could not be queried is `Indeterminate`, never reported as clean.
-- **Per-call overrides** — `CheckIpAsync(ip, DnsblCheckRequest)` supplies your own zones, timeout, and an async allowlist predicate (called with the canonical address, so `::ffff:1.2.3.4` and `1.2.3.4` compare equal). A check cancelled by its token reports `Status = Cancelled`.
-- **Disabled is not an exception** — with `dnsbl.enabled` (or `enabled`) off, `net.Dnsbl` is still there: `IsEnabled` is `false` and every check returns `Status = Error` with "DNSBL checking is disabled". `HasDnsbl` tells you up front.
+- **Per-call overrides** — `CheckIpAsync(ip, DnsblCheckRequest)` supplies your own zones, timeout, and an async allowlist predicate (called with the canonical address, so `::ffff:1.2.3.4` and `1.2.3.4` compare equal). A check cancelled by its token fails with `netutils.cancelled`.
+- **Disabled is not an exception** — with `dnsbl.enabled` (or `enabled`) off, `net.Dnsbl` is still there: `IsEnabled` is `false` and every check fails with `netutils.dnsbl_disabled` ("DNSBL checking is disabled"). `HasDnsbl` tells you up front.
 - **Zone validation** — only well-formed DNS names are queried; a blank line, IP literal or other malformed zone is never sent to the resolver and is reported in `FailedServices`.
 - **Private-address short-circuit** — loopback and RFC 1918 / IPv6 local ranges skip DNS and return not blacklisted.
 - **IP geolocation** — country/city/coordinates/time-zone lookups (City, Enterprise), country only (Country), or autonomous system and ISP (ASN, ISP) via MaxMind GeoLite2/GeoIP2. The edition is read from the database itself.
 - **Auto-download** — fetch the `.mmdb` when it is missing, using your MaxMind `AccountId` + `LicenseKey`, only from an `https` URL on a trusted host; only the `.mmdb` is extracted and it replaces the database in one rename.
-- **Own result records** — `DnsblCheckResult` and `IpLocationResult`, each with success/error factories.
-- **Localizable messages** — log lines and result error messages come from `NetUtilsStrings` (localization section `netutils`).
+- **CodeLogic results** — `CheckIpAsync` returns `Result<DnsblCheck>` and `LookupIpAsync` returns `Result<IpLocation>`; failures carry an `Error` with a `netutils.*` code from `NetUtilsErrorCodes`.
+- **Localizable messages** — log lines and error messages come from `NetUtilsStrings` (localization section `netutils`).
+
+## Results and errors
+
+A DNSBL check that ran is a success, whatever the verdict: `DnsblCheck.Status` is `NotBlacklisted`, `Blacklisted` or
+`Indeterminate` (no zone lists the address, but some zones in `FailedServices` could not be checked). A check or lookup
+that could not run is an `Error`:
+
+| Code (`NetUtilsErrorCodes`) | Kind | When |
+|------|------|------|
+| `netutils.invalid_ip_address` (`InvalidIpAddress`) | `ValidationError` | The text is not an IP address (check or lookup). |
+| `netutils.dnsbl_disabled` (`DnsblDisabled`) | `UnavailableError` | DNSBL checking is switched off; no query was sent. |
+| `netutils.cancelled` (`Cancelled`) | `UnavailableError` | The caller's token cancelled a check or a download. |
+| `netutils.dnsbl_check_failed` (`DnsblCheckFailed`) | `InternalError` | Unexpected exception (e.g. a throwing allowlist); `Details` is the exception type, the rest is logged. |
+| `netutils.location_not_found` (`LocationNotFound`) | `NotFoundError` | The database has no entry for the address, or an entry with no country, ASN or ISP. |
+| `netutils.geoip_unavailable` (`GeoIpUnavailable`) | `UnavailableError` | The `GeoIpService` has no open database (not initialized, or disposed). |
+| `netutils.geoip_lookup_failed` (`GeoIpLookupFailed`) | `InternalError` | The MaxMind reader failed; `Details` is the exception type. |
+| `netutils.download_*`, `netutils.checksum_*`, `netutils.invalid_database` | various | GeoIP database download failures (see the configuration table). |
 
 ## Configuration
 

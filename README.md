@@ -131,7 +131,8 @@ var text = sent switch
 Operations return CodeLogic `Result` / `Result<T>` rather than throwing for expected failures. A failure
 carries an `Error` whose kind (`NotFoundError`, `ValidationError`, `TimeoutError`, ...) you can match on.
 `ValueOrThrow()` / `ThrowIfFailure()` turn a failure into an exception where that is simpler (tests, startup).
-CL.NetUtils is the exception: its lookups return their own result records (`DnsblCheckResult`, `IpLocationResult`).
+Every library works this way, CL.NetUtils included: a DNSBL check returns `Result<DnsblCheck>` and a GeoIP lookup
+`Result<IpLocation>`.
 
 ## Documentation
 

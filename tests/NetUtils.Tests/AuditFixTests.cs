@@ -5,6 +5,7 @@ using CL.NetUtils.Localization;
 using CL.NetUtils.Models;
 using CL.NetUtils.Services;
 using CodeLogic.Core.Events;
+using CodeLogic.Core.Results;
 using CodeLogic.Framework.Libraries;
 using Xunit;
 
@@ -35,10 +36,10 @@ public sealed class DnsblDisabledAndZoneTests
         var result = await checker.CheckIpAsync(Ip);
 
         Assert.False(checker.IsEnabled);
-        Assert.Equal(DnsblCheckStatus.Error, result.Status);
-        Assert.False(result.IsBlacklisted);
-        Assert.Equal(IpAddressType.IPv4, result.AddressType);
-        Assert.Equal("DNSBL checking is disabled", result.ErrorMessage);
+        Assert.True(result.IsFailure);
+        Assert.IsType<UnavailableError>(result.Error);
+        Assert.Equal(NetUtilsErrorCodes.DnsblDisabled, result.Error!.Code);
+        Assert.Equal("DNSBL checking is disabled", result.Error.Message);
     }
 
     [Fact]
@@ -59,7 +60,7 @@ public sealed class DnsblDisabledAndZoneTests
         var recorder = new Recorder();
         var checker = new DnsblChecker(new DnsblConfig(), null, recorder.ResolveAsync);
 
-        var result = await checker.CheckIpAsync(Ip, new DnsblCheckRequest { Ipv4Services = [zone], ParallelQueries = false });
+        var result = (await checker.CheckIpAsync(Ip, new DnsblCheckRequest { Ipv4Services = [zone], ParallelQueries = false })).ValueOrThrow();
 
         Assert.Empty(recorder.Lookups);
         Assert.Equal(DnsblCheckStatus.Indeterminate, result.Status);
@@ -73,7 +74,7 @@ public sealed class DnsblDisabledAndZoneTests
         var recorder = new Recorder();
         var checker = new DnsblChecker(new DnsblConfig(), null, recorder.ResolveAsync);
 
-        var result = await checker.CheckIpAsync(Ip, new DnsblCheckRequest { Ipv4Services = ["  zen.spamhaus.org. \r\n"] });
+        var result = (await checker.CheckIpAsync(Ip, new DnsblCheckRequest { Ipv4Services = ["  zen.spamhaus.org. \r\n"] })).ValueOrThrow();
 
         Assert.Equal(["7.215.184.93.zen.spamhaus.org"], recorder.Lookups);
         Assert.Equal(DnsblCheckStatus.NotBlacklisted, result.Status);
@@ -89,7 +90,9 @@ public sealed class DnsblDisabledAndZoneTests
 
         var result = await checker.CheckIpAsync("not-an-ip");
 
-        Assert.Equal("Ungueltige IP-Adresse", result.ErrorMessage);
+        Assert.IsType<ValidationError>(result.Error);
+        Assert.Equal(NetUtilsErrorCodes.InvalidIpAddress, result.Error!.Code);
+        Assert.Equal("Ungueltige IP-Adresse", result.Error.Message);
     }
 
     [Theory]
@@ -146,8 +149,8 @@ public sealed class NetUtilsDisabledDnsblTests : IAsyncLifetime
         Assert.False(lib.HasDnsbl);
         Assert.False(lib.Dnsbl.IsEnabled);
         var result = await lib.Dnsbl.CheckIpAsync("93.184.215.7");
-        Assert.Equal(DnsblCheckStatus.Error, result.Status);
-        Assert.Equal("DNSBL checking is disabled", result.ErrorMessage);
+        Assert.Equal(NetUtilsErrorCodes.DnsblDisabled, result.Error?.Code);
+        Assert.Equal("DNSBL checking is disabled", result.Error?.Message);
     }
 
     [Fact]
@@ -208,7 +211,9 @@ public sealed class GeoIpEditionTests : IDisposable
         var result = await service.LookupIpAsync("8.8.8.8");
 
         Assert.Equal(edition, service.LoadedDatabaseType);
-        Assert.Equal("Location not found", result.ErrorMessage);   // the fake database has no data; the lookup ran
+        Assert.IsType<NotFoundError>(result.Error);                   // the fake database has no data; the lookup ran
+        Assert.Equal(NetUtilsErrorCodes.LocationNotFound, result.Error!.Code);
+        Assert.Equal("Location not found", result.Error.Message);
     }
 
     [Fact]
@@ -267,9 +272,10 @@ public sealed class GeoIpEditionTests : IDisposable
     }
 
     [Fact]
-    public void Asn_results_are_successful_without_a_country()
+    public void Asn_entries_count_as_data_without_a_country()
     {
-        Assert.True(new IpLocationResult { IpAddress = "8.8.8.8", AutonomousSystemNumber = 15169 }.IsSuccessful);
-        Assert.False(new IpLocationResult { IpAddress = "8.8.8.8", AutonomousSystemNumber = 15169, ErrorMessage = "x" }.IsSuccessful);
+        Assert.True(new IpLocation { IpAddress = "8.8.8.8", AutonomousSystemNumber = 15169 }.HasData);
+        Assert.True(new IpLocation { IpAddress = "8.8.8.8", Isp = "Example ISP" }.HasData);
+        Assert.False(new IpLocation { IpAddress = "8.8.8.8", CityName = "Nowhere" }.HasData);
     }
 }

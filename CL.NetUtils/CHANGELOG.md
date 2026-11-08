@@ -16,6 +16,36 @@ All notable changes to **CodeLogic.NetUtils** are documented here. Versions foll
   4.9.x. CodeLogic 5 makes `Result<T>` / `Result` C# 15 unions and `Error` a closed record with
   kind subtypes (`NotFoundError`, `ValidationError`, ...). Results can now be matched exhaustively
   with `switch`.
+- **`DnsblCheckResult` and `IpLocationResult` are removed; DNSBL checks and GeoIP lookups return CodeLogic
+  `Result<T>`.** A check or lookup that could not run is an `Error` whose `Code` is a `NetUtilsErrorCodes`
+  constant, instead of a record with `ErrorMessage` set. This supersedes the 5.0 preview entries below that
+  mention `DnsblCheckStatus.Error`, `DnsblCheckStatus.Cancelled`, `ErrorMessage` and `IsSuccessful`.
+
+  | Old | New |
+  |---|---|
+  | `Task<DnsblCheckResult> DnsblChecker.CheckIpAsync(string, CancellationToken)` | `Task<Result<DnsblCheck>>` |
+  | `Task<DnsblCheckResult> DnsblChecker.CheckIpAsync(string, DnsblCheckRequest, CancellationToken)` | `Task<Result<DnsblCheck>>` |
+  | `Task<IpLocationResult> GeoIpService.LookupIpAsync(...)` | `Task<Result<IpLocation>>` |
+  | `DnsblCheckResult.IpAddress`, `AddressType`, `Status`, `IsBlacklisted`, `MatchedService`, `FailedServices`, `CheckedAt` | the same members on `DnsblCheck` (via `result.Value` or a `switch`); `IsBlacklisted` is now computed from `Status` |
+  | `DnsblCheckStatus.Error` (invalid address) | `ValidationError` `netutils.invalid_ip_address` |
+  | `DnsblCheckStatus.Error` (DNSBL checking disabled, also from `NetUtilsLibrary.Dnsbl` while off) | `UnavailableError` `netutils.dnsbl_disabled` |
+  | `DnsblCheckStatus.Error` (unexpected exception; `ErrorMessage` was the exception text) | `InternalError` `netutils.dnsbl_check_failed`, a fixed message and the exception type in `Details` |
+  | `DnsblCheckStatus.Cancelled` | `UnavailableError` `netutils.cancelled` (nothing is thrown, as before) |
+  | `DnsblCheckStatus.Indeterminate` with `ErrorMessage` | still a success with `Status = Indeterminate`; the zones are in `FailedServices` |
+  | `DnsblCheckResult.Blacklisted/NotBlacklisted/Indeterminate/Error/Cancelled(...)` factories | removed (the `DnsblCheck` factories are internal) |
+  | `IpLocationResult` data members | the same members on `IpLocation` |
+  | `IpLocationResult.IsSuccessful` | `result.IsSuccess` |
+  | `IpLocationResult.ErrorMessage` | `result.Error?.Message` |
+  | `IpLocationResult.NotFound(...)`, and a lookup that found an entry without country, ASN or ISP | `NotFoundError` `netutils.location_not_found` |
+  | `IpLocationResult.Error(...)` for an invalid address | `ValidationError` `netutils.invalid_ip_address` |
+  | `IpLocationResult.Error(...)` before a database is open | `UnavailableError` `netutils.geoip_unavailable` |
+  | `IpLocationResult.Error(...)` for a reader failure (exception text) | `InternalError` `netutils.geoip_lookup_failed`, a fixed message and the exception type in `Details` |
+  | `NetUtilsErrors.XxxCode` constants (public) | `NetUtilsErrorCodes.Xxx` (`DownloadRefusedCode` → `DownloadRefused`, ...); the `NetUtilsErrors` factories are internal now |
+
+  `DnsblCheckStatus` keeps only `NotBlacklisted`, `Blacklisted` and `Indeterminate`. New codes:
+  `netutils.invalid_ip_address`, `netutils.dnsbl_disabled`, `netutils.dnsbl_check_failed`,
+  `netutils.location_not_found`, `netutils.geoip_unavailable`, `netutils.geoip_lookup_failed`. New localized strings
+  `NetUtilsStrings.DnsblCheckFailed` and `NetUtilsStrings.GeoIpLookupFailed`.
 - **A DNSBL check that could not query a zone is no longer reported as clean.** Timeouts, resolver
   failures and DNSBL error answers (Spamhaus `127.255.255.x`) used to end as `NotBlacklisted`. When no
   zone lists the address but some zone failed, the result is now `Status = DnsblCheckStatus.Indeterminate`

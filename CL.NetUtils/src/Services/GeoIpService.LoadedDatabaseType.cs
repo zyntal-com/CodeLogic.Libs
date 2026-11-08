@@ -19,7 +19,7 @@ public partial class GeoIpService
     /// <summary>
     /// The <c>database_type</c> of the open database (e.g. <c>GeoLite2-City</c>, <c>GeoLite2-Country</c>,
     /// <c>GeoLite2-ASN</c>), or <see langword="null"/> before <see cref="InitializeAsync"/>. It decides which
-    /// <see cref="IpLocationResult"/> fields a lookup fills.
+    /// <see cref="IpLocation"/> fields a lookup fills.
     /// </summary>
     public string? LoadedDatabaseType
     {
@@ -123,8 +123,16 @@ public partial class GeoIpService
     /// </summary>
     /// <param name="ipAddress">IPv4 or IPv6 address string.</param>
     /// <param name="cancellationToken">Optional cancellation token (reserved for future async lookup).</param>
-    /// <returns>An <see cref="IpLocationResult"/> with location data or an error description.</returns>
-    public Task<IpLocationResult> LookupIpAsync(string ipAddress, CancellationToken cancellationToken = default)
+    /// <returns>
+    /// The location data, or an error: a <see cref="ValidationError"/> for text that is not an IP address, a
+    /// <see cref="NotFoundError"/> when the database has no usable entry for the address, an
+    /// <see cref="UnavailableError"/> when no database is open, an <see cref="InternalError"/> when the reader fails.
+    /// The codes are in <see cref="NetUtilsErrorCodes"/>.
+    /// </returns>
+    public Task<Result<IpLocation>> LookupIpAsync(string ipAddress, CancellationToken cancellationToken = default) =>
+        Task.FromResult(LookupIp(ipAddress));
+
+    private Result<IpLocation> LookupIp(string ipAddress)
     {
         var strings = Strings();
         var shown = InputText.ForLog(ipAddress);
@@ -133,7 +141,7 @@ public partial class GeoIpService
             if (!IPAddress.TryParse(ipAddress, out var ip))
             {
                 _logger?.Warning(InputText.Format(strings.InvalidIpAddress, shown));
-                return Task.FromResult(IpLocationResult.Error(ipAddress, strings.InvalidIpAddressFormat));
+                return NetUtilsErrors.InvalidIpAddress(strings.InvalidIpAddressFormat);
             }
 
             // Snapshot under the lock, look up outside it: lookups run concurrently and a swap never waits for them.
@@ -149,37 +157,43 @@ public partial class GeoIpService
             if (reader is null)
             {
                 _logger?.Warning("GeoIP database reader not initialized");
-                return Task.FromResult(IpLocationResult.Error(ipAddress, strings.GeoIpNotInitialized));
+                return NetUtilsErrors.GeoIpUnavailable(strings.GeoIpNotInitialized);
             }
 
-            return Task.FromResult(Lookup(reader, kind, ip, ipAddress));
+            var location = Lookup(reader, kind, ip, ipAddress);
+            if (!location.HasData)
+            {
+                _logger?.Debug($"GeoIP entry for '{shown}' holds no usable data");
+                return NetUtilsErrors.LocationNotFound(strings.LocationNotFound);
+            }
+            return location;
         }
         catch (AddressNotFoundException)
         {
             _logger?.Debug($"IP address '{shown}' not found in GeoIP database");
-            return Task.FromResult(IpLocationResult.NotFound(ipAddress, strings.LocationNotFound));
+            return NetUtilsErrors.LocationNotFound(strings.LocationNotFound);
         }
         catch (GeoIP2Exception ex)
         {
             _logger?.Warning($"GeoIP2 error for {shown}: {ex.Message}");
-            return Task.FromResult(IpLocationResult.Error(ipAddress, ex.Message));
+            return NetUtilsErrors.GeoIpLookupFailed(strings.GeoIpLookupFailed, ex);
         }
         catch (Exception ex)
         {
             _logger?.Error($"Error during GeoIP lookup for {shown}", ex);
-            return Task.FromResult(IpLocationResult.Error(ipAddress, ex.Message));
+            return NetUtilsErrors.GeoIpLookupFailed(strings.GeoIpLookupFailed, ex);
         }
     }
 
     /// <summary>Runs the lookup that matches the edition and maps the response.</summary>
-    private static IpLocationResult Lookup(DatabaseReader reader, GeoIpDatabaseKind kind, IPAddress ip, string ipAddress)
+    private static IpLocation Lookup(DatabaseReader reader, GeoIpDatabaseKind kind, IPAddress ip, string ipAddress)
     {
         switch (kind)
         {
             case GeoIpDatabaseKind.City:
             {
                 var r = reader.City(ip);
-                return new IpLocationResult
+                return new IpLocation
                 {
                     IpAddress = ipAddress,
                     CountryName = r.Country?.Name,
@@ -198,7 +212,7 @@ public partial class GeoIpService
             case GeoIpDatabaseKind.Enterprise:
             {
                 var r = reader.Enterprise(ip);
-                return new IpLocationResult
+                return new IpLocation
                 {
                     IpAddress = ipAddress,
                     CountryName = r.Country?.Name,
@@ -217,7 +231,7 @@ public partial class GeoIpService
             case GeoIpDatabaseKind.Country:
             {
                 var r = reader.Country(ip);
-                return new IpLocationResult
+                return new IpLocation
                 {
                     IpAddress = ipAddress,
                     CountryName = r.Country?.Name,
@@ -227,7 +241,7 @@ public partial class GeoIpService
             case GeoIpDatabaseKind.Asn:
             {
                 var r = reader.Asn(ip);
-                return new IpLocationResult
+                return new IpLocation
                 {
                     IpAddress = ipAddress,
                     AutonomousSystemNumber = r.AutonomousSystemNumber,
@@ -237,7 +251,7 @@ public partial class GeoIpService
             case GeoIpDatabaseKind.Isp:
             {
                 var r = reader.Isp(ip);
-                return new IpLocationResult
+                return new IpLocation
                 {
                     IpAddress = ipAddress,
                     Isp = r.Isp,
