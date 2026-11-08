@@ -5,11 +5,6 @@ All notable changes to **CodeLogic.SystemStats** are documented here. Versions f
 
 ## 5.0 (unreleased)
 
-### Audit completion (2026-11-07)
-
-- Make synchronous disposal nonblocking and serialize Windows counter disposal against sampling.
-
-
 ### Breaking
 
 - Targets **.NET 11** (`net11.0`) and requires **CodeLogic 5.0** (`[5.0.0, 6.0.0)`). On .NET 10, stay on
@@ -26,8 +21,10 @@ All notable changes to **CodeLogic.SystemStats** are documented here. Versions f
 
 ### Changed
 
+- Make synchronous disposal nonblocking and serialize Windows counter disposal against sampling.
+
 - `System.Diagnostics.PerformanceCounter` 11.0 (RC3 until .NET 11 GA).
-- **`System.Management` dependency removed** (audit 2026-11-01): nothing used it.
+- **`System.Management` dependency removed**: nothing used it.
 - `GetSystemSnapshotAsync()` is composed by `SystemStatsService` (fresh CPU, memory and uptime, the top
   `MaxTopProcesses` processes) instead of the provider's `GetSystemSnapshotAsync`, so it honours the switches below.
 - Windows per-core CPU counters are created once and read after the sampling interval; before, each core got a
@@ -39,22 +36,22 @@ All notable changes to **CodeLogic.SystemStats** are documented here. Versions f
 
 ### Fixed
 
-- **`EnableProcessMonitoring` is honoured** (audit 2026-11-01). It was never read. With it off, the process calls
+- **`EnableProcessMonitoring` is honoured**. It was never read. With it off, the process calls
   fail with an unavailable error `systemstats.process_monitoring_disabled` without touching any process, and
   snapshots have empty process lists.
-- **`EnableTemperatureMonitoring` is honoured** (audit 2026-11-01): it gates the new `GetTemperaturesAsync()`
+- **`EnableTemperatureMonitoring` is honoured**: it gates the new `GetTemperaturesAsync()`
   (`systemstats.temperature_monitoring_disabled`).
-- **`CpuSamplesForAverage` is honoured** (audit 2026-11-01). It was never read. A CPU reading (and the
+- **`CpuSamplesForAverage` is honoured**. It was never read. A CPU reading (and the
   `HighCpuUsageEvent` threshold check) now uses the average of the last N samples, overall and per core; `1` gives
   raw samples.
-- **Windows `CpuInfo` is real data** (audit 2026-11-01). It reported `Vendor = "Windows"`, `MaxSpeedMHz = 0` and the
+- **Windows `CpuInfo` is real data**. It reported `Vendor = "Windows"`, `MaxSpeedMHz = 0` and the
   logical count as the physical core count. Vendor and nominal clock now come from the registry, physical cores and
   logical processors from `GetLogicalProcessorInformationEx`.
-- **Linux `PhysicalCoreCount` counts cores, not sockets** (audit 2026-11-01): the distinct
+- **Linux `PhysicalCoreCount` counts cores, not sockets**: the distinct
   `(physical id, core id)` pairs of `/proc/cpuinfo`. `MaxSpeedMHz` prefers `cpufreq/cpuinfo_max_freq` over the
   current `cpu MHz`, and ARM model/vendor lines are recognised.
 - The Linux `GetProcessStatsAsync` disposes the `Process` it opens.
-- **CPU samplings never overlap** (audit 2026-11). `GetSystemSnapshotAsync` samples CPU directly (bypassing the
+- **CPU samplings never overlap**. `GetSystemSnapshotAsync` samples CPU directly (bypassing the
   cache refresh that `GetCpuStatsAsync` shares), so a snapshot and a CPU read, or several snapshots, ran
   `PerformanceCounter.NextValue()` concurrently and corrupted each other's readings. `SystemStatsService` and the
   Windows provider now serialise CPU sampling; overlapping calls take their samples one after the other.
@@ -67,6 +64,10 @@ All notable changes to **CodeLogic.SystemStats** are documented here. Versions f
 
 - Configuration examples in the README and the docs use the camelCase keys the CodeLogic loader reads.
   The PascalCase keys shown before are matched case-sensitively and were ignored, leaving defaults active.
+- The guide shows the models as plain (unsealed) records and the MiB helpers (`TotalMiB`, `UsedMiB`,
+  `WorkingSetMiB`) as `double`, as in the code. The quick-start examples add the `CL.SystemStats.Models` and
+  `CodeLogic.Core.Results` usings they need.
+- The README's last line, a relative link that broke on nuget.org, is removed.
 
 ## 2026-10-24
 

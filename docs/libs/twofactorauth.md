@@ -19,6 +19,8 @@ dotnet add package CodeLogic.TwoFactorAuth
 
 ```csharp
 using CL.TwoFactorAuth;
+using CL.TwoFactorAuth.Models;   // TwoFactorKey, TotpMatch, TwoFactorAuthErrorCodes
+using CodeLogic.Core.Results;
 
 await Libraries.LoadAsync<TwoFactorAuthLibrary>();   // register before ConfigureAsync()
 await CodeLogic.ConfigureAsync();
@@ -63,11 +65,11 @@ if (qr.IsSuccess)
 ### 3. Verify the first code
 
 ```csharp
-TotpValidationResult check = tfa.ValidateTotp("123456", key.SecretKey);
-if (check.IsValid)
+Result<TotpMatch> check = tfa.ValidateTotp("123456", key.SecretKey);
+if (check.Value is { } match)
 {
     // Mark 2FA as enabled for this user.
-    // check.MatchedWindow is the absolute time step that matched; check.WindowOffset is the drift in steps.
+    // match.MatchedWindow is the absolute time step that matched; match.WindowOffset is the drift in steps.
 }
 ```
 
@@ -77,9 +79,9 @@ After enrolment, every sign-in re-runs step 3 against the stored secret. Pass th
 protection and attaches the user to the published `TotpValidatedEvent`.
 
 ```csharp
-TotpValidationResult result = tfa.LoginGuard.Validate(userTypedCode, storedSecret, userId: "alice");
-if (!result.IsValid)
-    return Unauthorized("Invalid authentication code.");   // same answer for a wrong, replayed or unparsable code
+Result<TotpMatch> result = tfa.LoginGuard.Validate(userTypedCode, storedSecret, userId: "alice");
+if (result.IsFailure)
+    return Unauthorized(result.Error!.Message);   // "Invalid code": the same 2fa.invalid_code for a wrong, replayed or unparsable code
 ```
 
 Whitespace in the typed code is ignored, so `"123 456"` (how most apps display it) validates as `"123456"`.
@@ -100,8 +102,8 @@ Whitespace in the typed code is ignored, so `"123 456"` (how most apps display i
 
 A code stays valid for its whole time step (and for the drift window around it), so without a check a code that
 was intercepted or submitted twice validates again. With a `userId`, `ValidateTotp` refuses a code whose
-time step is not greater than the last step accepted for that user, returning `IsValid = false` and
-`ErrorMessage = TotpValidationResult.ReplayedCodeMessage` ("This code has already been used."). The comparison
+time step is not greater than the last step accepted for that user, returning an `UnauthorizedError` coded
+`TwoFactorAuthErrorCodes.CodeAlreadyUsed` (`2fa.code_already_used`, "This code has already been used."). The comparison
 and the update are one atomic operation in the `ITotpUsedStepStore`, so two concurrent requests cannot both accept
 the same code; a wrong code consumes nothing.
 
@@ -115,7 +117,7 @@ last_step < @step`, a compare-and-set in a cache) and constructs the authenticat
 var auth = new TwoFactorAuthenticator(config, logger, events, usedSteps: new SqlTotpStepStore(db));
 ```
 
-Without a `userId` the code is only checked against the secret; `MatchedWindow` (the absolute time step that
+Without a `userId` the code is only checked against the secret; `TotpMatch.MatchedWindow` (the absolute time step that
 matched, Unix time divided by `TimeStepSeconds`, the same unit as `GetCurrentTimeWindow()`) lets you do the
 tracking yourself.
 
@@ -131,10 +133,10 @@ The library exposes two services plus convenience pass-throughs for the most com
 |--------|---------|---------|
 | `Authenticator` | `TwoFactorAuthenticator` | TOTP generation / validation service |
 | `QrCode` | `QrCodeGenerator` | QR-code rendering service |
+| `LoginGuard` | `TotpLoginGuard` | Sign-in validation with replay protection and attempt limits (see [Login attempt guard](#login-attempt-guard)) |
 | `GenerateSecretKey()` | `string` | New Base32 secret |
 | `GenerateNewKey(issuer, user)` | `TwoFactorKey` | New key + provisioning URI |
-| `GenerateTotpCode(secret)` | `Result<string>` | Current 6-digit code for a secret |
-| `ValidateTotp(code, secret, userId?)` | `TotpValidationResult` | Verify a 6-digit code; with a user id, refuse a replay |
+| `ValidateTotp(code, secret, userId?)` | `Result<TotpMatch>` | Verify a 6-digit code; with a user id, refuse a replay |
 | `GenerateQrCodeDataUri(key)` | `Result<string>` | `data:image/png;base64,…` URI |
 
 ### TwoFactorAuthenticator
@@ -142,9 +144,9 @@ The library exposes two services plus convenience pass-throughs for the most com
 ```csharp
 var auth = tfa.Authenticator;   // or new TwoFactorAuthenticator(config, logger, events, usedSteps)
 
-string secret              = auth.GenerateSecretKey();
-Result<string> code        = auth.GenerateTotpCode(secret);
-TotpValidationResult check = auth.ValidateTotp("123456", secret, userId: "alice");
+string secret           = auth.GenerateSecretKey();
+Result<string> code     = auth.GenerateTotpCode(secret);
+Result<TotpMatch> check = auth.ValidateTotp("123456", secret, userId: "alice");
 
 int  secondsLeft = auth.GetSecondsUntilExpiry();   // seconds until the current code rolls over
 long window      = auth.GetCurrentTimeWindow();     // current TOTP time-step index
@@ -185,25 +187,44 @@ public record TwoFactorKey(string SecretKey, string IssuerName, string UserName,
 `period` parameter makes the authenticator app use the same step as the server. When you rebuild a key from a stored
 secret with a non-default step, pass the period too.
 
-## TotpValidationResult
+## Validation results and errors
+
+`ValidateTotp` and `LoginGuard.Validate` return `Result<TotpMatch>`:
 
 ```csharp
-public record TotpValidationResult
+public sealed record TotpMatch
 {
-    public bool IsValid { get; }
-    public long? MatchedWindow { get; }   // absolute time step that matched (Unix time / TimeStepSeconds), null if invalid
-    public int? WindowOffset { get; }     // drift: matched step minus the current step (0, -1, +1, ...), null if invalid
-    public string? ErrorMessage { get; }  // "Invalid code", ReplayedCodeMessage, or ValidationErrorMessage
+    public required long MatchedWindow { get; init; }  // absolute time step that matched (Unix time / TimeStepSeconds)
+    public required int WindowOffset { get; init; }    // drift: matched step minus the current step (0, -1, +1, ...)
 }
 ```
 
-`ErrorMessage` never carries exception text. A code used before gives `TotpValidationResult.ReplayedCodeMessage`
-("This code has already been used."); a malformed secret gives the generic
-`TotpValidationResult.ValidationErrorMessage` ("The code could not be validated."), and the exception is logged.
-`GenerateTotpCode` likewise returns `2fa.generate_failed` with a generic message. Show the user one message for all
-of them.
+A refused code is an `Error` with a `TwoFactorAuthErrorCodes` code. The message never carries exception text, so it
+is safe to show:
 
-`TotpValidatedEvent.MatchedWindow` carries the same absolute step (`long?`).
+| Code | Constant | Kind | Message / when |
+|------|----------|------|----------------|
+| `2fa.invalid_code` | `InvalidCode` | `UnauthorizedError` | "Invalid code": the code does not match. `LoginGuard` returns this for every refusal. |
+| `2fa.code_already_used` | `CodeAlreadyUsed` | `UnauthorizedError` | "This code has already been used.": the step was already accepted for the user. |
+| `2fa.validation_failed` | `ValidationFailed` | `InternalError` | "The code could not be validated.": e.g. a malformed secret; `Details` is the exception type and the exception is logged. |
+| `2fa.generate_failed` | `GenerateFailed` | `InternalError` | `GenerateTotpCode` with an invalid secret. |
+| `2fa.qr_png_failed`, `2fa.qr_bmp_failed`, `2fa.qr_save_failed` | `QrPngFailed`, `QrBmpFailed`, `QrSaveFailed` | `InternalError` | Rendering or writing a QR code failed. |
+| `2fa.qr_invalid_path` | `QrInvalidPath` | `ValidationError` | `SaveQrCodeToFile` path is not fully qualified or not `.png`. |
+
+```csharp
+var text = tfa.ValidateTotp(code, storedSecret, userId: "alice") switch
+{
+    TotpMatch                                                             => "Verified",
+    UnauthorizedError { Code: TwoFactorAuthErrorCodes.CodeAlreadyUsed } e => e.Message,
+    UnauthorizedError e                                                   => e.Message,
+    Error e                                                               => e.Message,   // validation could not run
+    null                                                                  => "No result",
+};
+```
+
+At sign-in, show the user one message for all of them (or use `LoginGuard`, which already does).
+
+`TotpValidatedEvent.MatchedWindow` carries the same absolute step (`long?`, `null` for a refused code).
 
 ## Configuration
 
@@ -236,8 +257,8 @@ Both events implement `IEvent` and are published to the CodeLogic event bus.
 
 | Event | Published when |
 |-------|----------------|
-| `SecretKeyGeneratedEvent` | A new secret/key is generated. |
-| `TotpValidatedEvent` | `ValidateTotp` runs with a `userId` supplied (carries the user id and outcome; a replayed code is `IsValid = false`). |
+| `SecretKeyGeneratedEvent` | `GenerateNewKey` creates a key (carries issuer and user name). `GenerateSecretKey` alone publishes nothing. |
+| `TotpValidatedEvent` | `ValidateTotp` runs with a `userId` supplied (carries the user id and outcome; a replayed code is `IsValid = false` on the event). |
 
 ## Health check
 
@@ -258,7 +279,7 @@ var status = await tfa.HealthCheckAsync();
 
 Use `library.LoginGuard.Validate(code, storedSecret, userId)` at sign-in to combine replay checks with attempt limits.
 The default guard permits five attempts per user in a five-minute fixed window, clears the count only after a valid unused
-code, and returns the same generic invalid result for wrong, replayed and locked-out codes. Low-level `ValidateTotp` keeps
+code, and returns the same `UnauthorizedError` `2fa.invalid_code` for wrong, replayed and locked-out codes. Low-level `ValidateTotp` keeps
 its existing behavior and does not throttle attempts.
 
 For application-owned limits:

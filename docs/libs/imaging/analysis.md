@@ -14,7 +14,7 @@ bool hollow = ImageAnalysis.IsMostlyTransparent(doc, threshold: 0.9);
 ```
 
 The palette uses median cut to seed clusters and k-means to refine them; transparent pixels are ignored. `Color` is
-an 8-bit sRGB record with `ToHex()` / `TryParseHex`.
+an 8-bit sRGB `record struct` with `ToHex()` / `TryParseHex`.
 
 ## BlurHash
 

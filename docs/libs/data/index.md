@@ -40,8 +40,8 @@ await Libraries.LoadAsync<MySqlDataLibrary>();   // registers the provider durin
 await CodeLogic.CodeLogic.ConfigureAsync();
 await CodeLogic.CodeLogic.StartAsync();
 
-var data = Libraries.Get<DataLibrary>();
-var db = data.Db().ValueOrThrow();               // the DefaultConnection; data.Db("reports") for another
+var data = Libraries.Get<DataLibrary>()!;
+var db = data.Db().ValueOrThrow();               // the defaultConnection; data.Db("reports") for another
 ```
 
 **Without the runtime** (tests, tools, other hosts):
@@ -85,7 +85,7 @@ await using var db = Database.Create("main", MySqlDataProvider.Instance, new Dat
 |---|---|
 | Target | `provider`, `connectionString` or `host`/`port`/`database`/`username`/`password`, `failoverHosts`, `sslMode` |
 | Pool & timeouts | `minPoolSize` (opened at start), `maxPoolSize`, `connectTimeoutSeconds`, `commandTimeoutSeconds` |
-| Schema | `syncMode` (`Developer`, `Production`, `Migration`), `schemaSyncLevel` override, `createDatabaseIfMissing`, `namingPolicy` |
+| Schema | `syncMode` (`Developer`, `Production`, `Migration`), `schemaSyncLevel` override, `createDatabaseIfMissing`, `namingPolicy`, `backupDirectory` |
 | Performance | `maxBatchSize`, `bulkThreshold`, `prepareStatements`, `cacheEnabled` (per-connection cache override) |
 | Diagnostics | `slowQueryThresholdMs`, `captureExplainOnSlowQuery`, `nPlusOneThreshold`, `publishQueryEvents` |
 | Resilience | `retryCount`, `retryBaseDelayMs`, `circuitBreakerThreshold`, `circuitBreakSeconds` |
@@ -120,7 +120,7 @@ public sealed class Product
 | Purpose | Attributes |
 |---|---|
 | Tables and columns | `[Table]`, `[Column]` (`Primary`, `AutoIncrement`, `KeyOrder` for composite keys, `Size`, `Precision`/`Scale`, `DataType`, `Converter`, `PreviousName` for renames), `[Ignore]` |
-| Indexes and keys | `[Index]`, `[CompositeIndex]`, `[ForeignKey]` |
+| Indexes and keys | `[Index]`, `[CompositeIndex]`, `[ForeignKey]`, `[ForeignKey<TEntity>]` |
 | Behaviour | `[SoftDelete]`, `[ConcurrencyToken]`, `[CreatedAt]`, `[UpdatedAt]`, `[CreatedBy]`, `[UpdatedBy]`, `[TenantKey]`, `[RetainDays]` |
 | Provider hints | `[MySqlTable]`/`[MySqlColumn]`, `[PostgresTable]`/`[PostgresColumn]`, `[SqlServerTable]`/`[SqlServerColumn]`, `[SqliteTable]`/`[SqliteColumn]` |
 | Read-only rows | `[DataRow]` (query results that are not tables) |
@@ -130,6 +130,8 @@ public sealed class Product
 A custom type (a typed ID, a value object) is stored through a value converter. Use `[Column(Converter = typeof(...))]` on one column, or register it for every column of that type:
 
 ```csharp
+using CL.Data.Mapping.Conversion;
+
 public readonly record struct CustomerId(long Value);
 
 sealed class CustomerIdConverter : ValueConverter<CustomerId, long>
@@ -151,7 +153,13 @@ ValueConverters.Register(new CustomerIdConverter());     // at startup
 
 ```csharp
 var products = db.Repository<Product>();
-var created = (await products.InsertAsync(new Product { Sku = "A-1", Price = 9.95m })).ValueOrThrow();
+var message = await products.InsertAsync(new Product { Sku = "A-1", Price = 9.95m }) switch
+{
+    Product p       => $"created {p.Id}",
+    ConflictError e => $"conflict: {e.Code}",      // data.duplicate_key, data.concurrency, data.deadlock, ...
+    Error e         => e.Message,
+    null            => "no result",
+};
 
 var cheap = await db.Query<Product>()
     .Where(p => p.Price < 20m && p.Status == ProductStatus.Active)
@@ -159,10 +167,11 @@ var cheap = await db.Query<Product>()
     .Take(50)
     .ToListAsync();                                  // Result<List<Product>>
 
-if (cheap.IsFailure) logger.Warning(cheap.Error!.Message);
+if (cheap is Error error) logger.Warning(error.Message);
 ```
 
 **Errors and values:**
-- Every operation returns `Result` or `Result<T>`. Check `IsFailure`, or call `ValueOrThrow()` / `ThrowIfFailure()` where a failure is a bug.
+- Every operation returns `Result` or `Result<T>` (C# 15 unions from `CodeLogic.Core.Results`). Switch over them, test `is Error e` or `IsFailure`, or call `ValueOrThrow()` / `ThrowIfFailure()` where a failure is a bug.
+- Each code maps to an `Error` kind: conflicts (duplicate key, concurrency, deadlock) are `ConflictError`, timeouts `TimeoutError`, unreachable nodes and cancellation `UnavailableError`, translation and validation failures `ValidationError`.
 - Error codes are stable (`data.duplicate_key`, `data.concurrency`, `data.not_found`, `data.timeout`, ...).
 - Captured values always become parameters, never SQL text.

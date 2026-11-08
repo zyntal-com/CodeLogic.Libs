@@ -31,9 +31,9 @@ string k64 = Encryption.GenerateKey(length: 64);
 | Member | Returns | Purpose |
 |--------|---------|---------|
 | `EncryptAes(plainText, password)` | `string` | AES-GCM encrypt; Base64 (version + salt + nonce + tag + ciphertext). |
-| `DecryptAes(cipher, password)` | `string` | Decrypt a value produced by `EncryptAes`. |
+| `DecryptAes(cipherText, password)` | `string` | Decrypt a value produced by `EncryptAes`. |
 | `EncryptBytes(data, password)` | `byte[]` | Byte-array variant of `EncryptAes`. |
-| `DecryptBytes(data, password)` | `byte[]` | Byte-array variant of `DecryptAes`. |
+| `DecryptBytes(encryptedData, password)` | `byte[]` | Byte-array variant of `DecryptAes`. |
 | `GenerateKey(length = 32)` | `string` | Random key of `length` bytes, Base64-encoded. |
 
 > The salt and nonce are generated fresh for every call, so encrypting the same plaintext twice yields different ciphertext — this is intended.
@@ -101,17 +101,19 @@ string sort  = IdGenerator.Sortable();           // lexicographically sortable
 
 | Member | Returns | Purpose |
 |--------|---------|---------|
-| `NewGuid()` | `string` | GUID with dashes. |
+| `NewGuid()` | `string` | GUID with dashes, lowercase. |
 | `NewGuidNoDashes()` | `string` | GUID as 32-char hex. |
-| `Sequential()` | `long` | Monotonic numeric id. |
-| `Timestamp()` | `string` | Timestamp-derived id. |
-| `TimestampWithPrefix(prefix)` | `string` | Timestamp id with a leading prefix. |
+| `Sequential()` | `long` | Monotonic numeric id; per process, restarts at 1. |
+| `Timestamp()` | `string` | Current UTC ticks. |
+| `TimestampWithPrefix(prefix)` | `string` | `{prefix}_{ticks}`. |
 | `Random(length = 16)` | `string` | Random alphanumeric. |
 | `RandomHex(length = 32)` | `string` | Random hex string; `length` must be positive. |
 | `RandomBase64(byteLength = 24)` | `string` | Random Base64 from N bytes. |
 | `UrlSafe(length = 22)` | `string` | URL-safe random id. |
 | `NanoId(length = 21)` | `string` | NanoID — compact, URL-safe, collision-resistant. |
-| `Sortable()` | `string` | Lexicographically sortable id. |
+| `Sortable()` | `string` | `{ticks:D20}_{8 hex chars}`; sorts by creation time. |
+
+`Random`, `RandomHex`, `UrlSafe` and `NanoId` throw `ArgumentOutOfRangeException` for a zero or negative length.
 
 ## Generators — PasswordGenerator
 
@@ -133,8 +135,8 @@ PasswordStrength s = PasswordGenerator.CalculateStrength(pw);
 | Member | Returns | Purpose |
 |--------|---------|---------|
 | `Generate(length = 16, includeLowercase = true, includeUppercase = true, includeDigits = true, includeSpecial = true)` | `string` | Random password from the selected character classes. |
-| `GenerateStrong(length = 16)` | `string` | Password using strong defaults. |
-| `GeneratePassphrase(wordCount = 4, separator = "-", capitalize = true)` | `string` | Word-based passphrase. |
+| `GenerateStrong(length = 16)` | `string` | At least one lowercase, uppercase, digit and special character; lengths below 12 become 12. |
+| `GeneratePassphrase(wordCount = 4, separator = "-", capitalize = true)` | `string` | Word-based passphrase; at least 2 words. |
 | `GeneratePin(length = 6)` | `string` | Numeric PIN. |
 | `CalculateStrength(password)` | `PasswordStrength` | Strength estimate. |
 
@@ -189,16 +191,16 @@ AOT analyzers point at every call that still needs them.
 
 | Member | Returns | Purpose |
 |--------|---------|---------|
-| `Serialize<T>(value, indented = false)` | `Result<string>` | Object → JSON. |
-| `Deserialize<T>(json)` | `Result<T>` | JSON → object. |
-| `SerializeToFile<T>(value, filePath, indented = true)` | `Task<Result>` | Write JSON to a file. |
-| `DeserializeFromFile<T>(filePath)` | `Task<Result<T>>` | Read JSON from a file. |
+| `Serialize<T>(obj, indented = false)` | `Result<string>` | Object → JSON. |
+| `Deserialize<T>(json)` | `Result<T>` | JSON → object. JSON `null` is a failure. |
+| `SerializeToFile<T>(obj, filePath, indented = true)` | `Task<Result>` | Write JSON to a file. |
+| `DeserializeFromFile<T>(filePath)` | `Task<Result<T>>` | Read JSON from a file; a missing file is `io.file_not_found` (`NotFoundError`). |
 | `IsValidJson(json)` | `bool` | Whether the input parses as JSON. |
-| `Merge(baseJson, overlayJson)` | `Result<string>` | Overlay one document onto another. |
-| `GetProperty(json, propertyName)` | `Result<string>` | Extract a property as a JSON string. |
-| `Serialize<T>(value, JsonTypeInfo<T> \| JsonSerializerContext)` | `Result<string>` | AOT-safe serialize. A context without metadata for `T` gives `not_supported`. |
+| `Merge(baseJson, overlayJson)` | `Result<string>` | Shallow merge of two JSON objects: top-level overlay properties replace base ones. Output is indented. |
+| `GetProperty(json, propertyName)` | `Result<string>` | Raw JSON of a top-level property (case-sensitive); a missing one is `not_found`. |
+| `Serialize<T>(obj, JsonTypeInfo<T> \| JsonSerializerContext)` | `Result<string>` | AOT-safe serialize. A context without metadata for `T` gives `not_supported`. |
 | `Deserialize<T>(json, JsonTypeInfo<T> \| JsonSerializerContext)` | `Result<T>` | AOT-safe deserialize. |
-| `SerializeToFile<T>(value, filePath, typeInfo, ct)` / `DeserializeFromFile<T>(filePath, typeInfo, ct)` | `Task<Result>` / `Task<Result<T>>` | AOT-safe file round-trip (streams, cancellable). |
+| `SerializeToFile<T>(obj, filePath, typeInfo, ct)` / `DeserializeFromFile<T>(filePath, typeInfo, ct)` | `Task<Result>` / `Task<Result<T>>` | AOT-safe file round-trip (streams, cancellable; cancellation is `cancelled`, an `UnavailableError`). |
 
 ## Conversion — TypeConverter
 
@@ -217,12 +219,15 @@ Result<DayOfWeek> day = TypeConverter.ToEnum<DayOfWeek>("Monday");
 
 // Generic / try pattern
 Result<decimal> amount = TypeConverter.Convert<decimal>("19.99");
-if (TypeConverter.TryConvert<long>("1000", out long? value)) { /* ... */ }
+if (TypeConverter.TryConvert<long>("1000", out long value)) { /* ... */ }
 ```
+
+Failures are `ValidationError`s: the typed `ToXxx` helpers return `validation.invalid_format`; `Convert<T>` returns
+`invalid_argument` (also for `null`).
 
 | Member | Returns | Purpose |
 |--------|---------|---------|
-| `Convert<T>(value)` | `Result<T>` | Convert any object to `T`. |
+| `Convert<T>(value)` | `Result<T>` | Convert an `IConvertible` value to `T` (`System.Convert.ChangeType`, invariant culture). |
 | `TryConvert<T>(value, out result)` | `bool` | Non-throwing try-convert. |
 | `ToInt` / `ToLong` / `ToDouble` / `ToDecimal` / `ToBool` / `ToDateTime` / `ToGuid(string)` | `Result<...>` | Typed string conversions. |
 | `ToEnum<T>(string)` *(where `T : struct, Enum`)* | `Result<T>` | Parse an enum value. |
@@ -256,11 +261,12 @@ Result<byte[]> small = CompressionHelper.DecompressGzip(untrusted, maxOutputByte
 | `CompressZstandard(data)` / `DecompressZstandard(data, maxOutputBytes?)` | `Result<byte[]>` | Zstandard codec (built-in `System.IO.Compression.ZstandardStream`, .NET 11). Reads any standard zstd frame. |
 | `CompressLz4(data)` / `DecompressLz4(data, maxOutputBytes?)` | `Result<byte[]>` | LZ4 codec (via K4os). |
 | `CompressString(text)` | `Result<string>` | GZip + Base64 in one step. |
-| `DecompressString(text, maxOutputBytes?)` | `Result<string>` | Reverse of `CompressString`. |
+| `DecompressString(compressed, maxOutputBytes?)` | `Result<string>` | Reverse of `CompressString`. |
 
 Every `Decompress*` method stops once the output passes `maxOutputBytes` (default `DefaultMaxDecompressedBytes`,
 100 MiB) and fails with `compression.output_limit_exceeded` (`CompressionHelper.OutputLimitExceededCode`), so a
-small "decompression bomb" cannot exhaust memory.
+small "decompression bomb" cannot exhaust memory. Other failures, such as corrupt input, are `InternalError`s with a
+per-codec code (`compression.gzip_decompress_failed`, `compression.lz4_compress_failed`, …).
 
 > Pick the codec for the job: Brotli tends to compress smallest, GZip is the safe interop default, Zstandard compresses almost as well as Brotli at much higher speed (a good default for new formats), and LZ4 is the fastest for hot paths where size matters less than throughput.
 

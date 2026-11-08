@@ -47,7 +47,7 @@ public sealed class QrCodeGenerator
         catch (Exception ex)
         {
             _logger?.Error($"Failed to generate PNG QR code: {ex.Message}", ex);
-            return Result<byte[]>.Failure(Error.Internal("2fa.qr_png_failed", "The QR code could not be generated.", ex.GetType().Name));
+            return Result<byte[]>.Failure(TwoFactorAuthErrors.QrPngFailed(ex));
         }
     }
 
@@ -86,7 +86,7 @@ public sealed class QrCodeGenerator
     /// Generates a QR code as a BMP byte array for the given <see cref="TwoFactorKey"/>.
     /// </summary>
     /// <param name="key">The two-factor key whose provisioning URI will be encoded.</param>
-    /// <returns>A <see cref="Result{T}"/> containing the BMP bytes, or <c>2fa.qr_bmp_failed</c>.</returns>
+    /// <returns>A <see cref="Result{T}"/> containing the BMP bytes, or <see cref="TwoFactorAuthErrorCodes.QrBmpFailed"/>.</returns>
     public Result<byte[]> GenerateQrCodeBmp(TwoFactorKey key)
     {
         try
@@ -101,7 +101,7 @@ public sealed class QrCodeGenerator
         catch (Exception ex)
         {
             _logger?.Error($"Failed to generate BMP QR code: {ex.Message}", ex);
-            return Result<byte[]>.Failure(Error.Internal("2fa.qr_bmp_failed", "The QR code could not be generated.", ex.GetType().Name));
+            return Result<byte[]>.Failure(TwoFactorAuthErrors.QrBmpFailed(ex));
         }
     }
 
@@ -110,10 +110,10 @@ public sealed class QrCodeGenerator
     /// </summary>
     /// <param name="key">The two-factor key whose provisioning URI will be encoded.</param>
     /// <param name="filePath">
-    /// Fully qualified path of the file to write, ending in <c>.png</c>; anything else is a <c>2fa.qr_invalid_path</c>
+    /// Fully qualified path of the file to write, ending in <c>.png</c>; anything else is a <see cref="TwoFactorAuthErrorCodes.QrInvalidPath"/>
     /// validation error and nothing is written. The directory must exist.
     /// </param>
-    /// <returns>A <see cref="Result"/> indicating success, <c>2fa.qr_invalid_path</c>, or <c>2fa.qr_save_failed</c>.</returns>
+    /// <returns>A <see cref="Result"/> indicating success, <see cref="TwoFactorAuthErrorCodes.QrInvalidPath"/>, or <see cref="TwoFactorAuthErrorCodes.QrSaveFailed"/>.</returns>
     public Result SaveQrCodeToFile(TwoFactorKey key, string filePath)
     {
         if (ValidateSavePath(filePath) is { } invalid)
@@ -132,7 +132,7 @@ public sealed class QrCodeGenerator
         catch (Exception ex)
         {
             _logger?.Error($"Failed to save QR code to file '{filePath}': {ex.Message}", ex);
-            return Result.Failure(Error.Internal("2fa.qr_save_failed", "The QR code could not be saved.", ex.GetType().Name));
+            return Result.Failure(TwoFactorAuthErrors.QrSaveFailed(ex));
         }
     }
 
@@ -142,9 +142,9 @@ public sealed class QrCodeGenerator
     private static Error? ValidateSavePath(string? filePath)
     {
         if (string.IsNullOrWhiteSpace(filePath) || filePath.Contains('\0') || !Path.IsPathFullyQualified(filePath))
-            return Error.Validation("2fa.qr_invalid_path", "The QR code file path must be a fully qualified path.");
+            return TwoFactorAuthErrors.QrInvalidPath("The QR code file path must be a fully qualified path.");
         if (!string.Equals(Path.GetExtension(filePath), ".png", StringComparison.OrdinalIgnoreCase))
-            return Error.Validation("2fa.qr_invalid_path", "The QR code file path must end in .png.");
+            return TwoFactorAuthErrors.QrInvalidPath("The QR code file path must end in .png.");
         return null;
     }
 

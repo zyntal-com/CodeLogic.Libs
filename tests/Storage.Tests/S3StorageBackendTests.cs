@@ -27,7 +27,7 @@ public sealed class S3StorageBackendTests
             multipartPartSizeBytes: PartSize,
             multipartThresholdBytes: PartSize)
         {
-            // Forwarding the headers is the Enforced behaviour; under Auto they are sent only after the probe (needs-review R4-B24).
+            // Forwarding the headers is the Enforced behaviour; under Auto they are sent only after the probe.
             ConditionalRequests = S3ConditionalRequestSupport.Enforced
         };
         var content = Enumerable.Range(0, PartSize + 17).Select(index => (byte)(index % 251)).ToArray();
@@ -217,7 +217,7 @@ public sealed class S3StorageBackendTests
             VersionId = "version-current",
             ContentLength = 1
         };
-        // Forwarding the guards is the Enforced behaviour; under Auto they are sent only after the probe (needs-review R4-B24).
+        // Forwarding the guards is the Enforced behaviour; under Auto they are sent only after the probe.
         await using var backend = new S3StorageBackend("S3", client, "bucket") { ConditionalRequests = S3ConditionalRequestSupport.Enforced };
 
         var uploaded = await backend.UploadBytesAsync("item.bin", [1], new StorageUploadOptions

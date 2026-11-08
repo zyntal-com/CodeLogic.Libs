@@ -12,7 +12,7 @@ using Xunit;
 
 namespace Storage.Tests;
 
-/// <summary>Security audit 2026-11-01: path control characters, reserved names, secret fields and lock markers.</summary>
+/// <summary>Security: path control characters, reserved names, secret fields and lock markers.</summary>
 public sealed class SecurityHardeningTests
 {
     private static LocalStorageBackend Local(string root) => new("local", new LocalConnectionConfig { RootPath = root });

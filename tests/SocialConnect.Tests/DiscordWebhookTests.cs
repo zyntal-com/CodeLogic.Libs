@@ -82,7 +82,8 @@ public sealed class DiscordWebhookTests
             var result = await service.SendMessageAsync("hello");
 
             Assert.True(result.IsFailure);
-            Assert.Equal("social.discord.delivery_failed", result.Error!.Code);
+            Assert.Equal(SocialConnectErrorCodes.DiscordDeliveryFailed, result.Error!.Code);
+            Assert.Equal("Webhook delivery failed: HTTP 302", result.Error.Message);
             Assert.Single(discord.Requests);
             Assert.All(discord.Requests, r => Assert.Equal("discord.com", r.RequestUri!.Host));
             var sent = Assert.Single(events);
@@ -112,7 +113,7 @@ public sealed class DiscordWebhookTests
         {
             var result = await service.SendMessageAsync("hello", "https://discord.com/api/webhooks/7/" + Token);
 
-            Assert.Equal("social.discord.delivery_failed", result.Error!.Code);
+            Assert.Equal(SocialConnectErrorCodes.DiscordDeliveryFailed, result.Error!.Code);
             var sent = Assert.Single(events);
             Assert.Equal("https://discord.com/api/webhooks/7/***", sent.WebhookUrl);
             Assert.Equal("7", sent.WebhookId);
@@ -132,7 +133,7 @@ public sealed class DiscordWebhookTests
             var result = await service.SendMessageAsync("hello", cancellationToken: cts.Token);
 
             Assert.IsType<UnavailableError>(result.Error);
-            Assert.Equal("social.discord.cancelled", result.Error!.Code);
+            Assert.Equal(SocialConnectErrorCodes.DiscordCancelled, result.Error!.Code);
             Assert.False(Assert.Single(events).Success);
         }
     }
@@ -145,7 +146,7 @@ public sealed class DiscordWebhookTests
         {
             var result = await service.SendMessageAsync("hello");
             Assert.IsType<TimeoutError>(result.Error);
-            Assert.Equal("social.discord.timeout", result.Error!.Code);
+            Assert.Equal(SocialConnectErrorCodes.DiscordTimeout, result.Error!.Code);
         }
     }
 }

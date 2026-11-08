@@ -64,7 +64,7 @@ public sealed class S3CopyLiveTests
         Assert.True((await storage.UploadBytesAsync("large.bin", new byte[7 * MiB])).IsSuccess);
 
         Assert.True((await storage.UploadBytesAsync("empty.bin", [])).IsSuccess);
-        // needs-review A10: copies below the single-request limit are one CopyObject, whose If-None-Match some
+        // Copies below the single-request limit are one CopyObject, whose If-None-Match some
         // servers (MinIO) ignore; the connection reports that honestly, and only there the race is not refused.
         var singleRequest = await ((CL.Storage.Abstractions.IStorageConditionEnforcementSource)storage)
             .GetEnforcementAsync(CL.Storage.Abstractions.StorageConditionKind.CreateOnly, serverSideCopy: true, default);

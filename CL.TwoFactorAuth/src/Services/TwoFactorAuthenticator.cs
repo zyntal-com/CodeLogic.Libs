@@ -96,7 +96,7 @@ public sealed class TwoFactorAuthenticator
         {
             // Details (which may describe the secret) go to the log only.
             _logger?.Error($"Failed to generate TOTP code: {ex.Message}", ex);
-            return Result<string>.Failure(Error.Internal("2fa.generate_failed", "Failed to generate TOTP code: the secret key is invalid."));
+            return Result<string>.Failure(TwoFactorAuthErrors.GenerateFailed());
         }
     }
 
@@ -105,21 +105,25 @@ public sealed class TwoFactorAuthenticator
     /// (<c>"123 456"</c> is <c>"123456"</c>).
     /// <para>
     /// With a <paramref name="userId"/>, a code whose time step is not newer than the last step accepted for that
-    /// user is refused with <see cref="TotpValidationResult.ReplayedCodeMessage"/> (the check is atomic in the
+    /// user is refused with <see cref="TwoFactorAuthErrorCodes.CodeAlreadyUsed"/> (the check is atomic in the
     /// <see cref="ITotpUsedStepStore"/>), and a <see cref="TotpValidatedEvent"/> is published. Without one the code is
     /// only checked against the secret: the caller must then do its own replay tracking with
-    /// <see cref="TotpValidationResult.MatchedWindow"/>.
+    /// <see cref="TotpMatch.MatchedWindow"/>.
     /// </para>
     /// </summary>
     /// <param name="code">The 6-digit TOTP code to validate.</param>
     /// <param name="secretKey">The Base32-encoded TOTP secret key.</param>
     /// <param name="userId">The user the code belongs to: enables replay protection and event publishing.</param>
     /// <returns>
-    /// A <see cref="TotpValidationResult"/> indicating success or failure. On success
-    /// <see cref="TotpValidationResult.MatchedWindow"/> is the absolute time step for replay tracking and
-    /// <see cref="TotpValidationResult.WindowOffset"/> the drift in steps.
+    /// The accepted <see cref="TotpMatch"/>: <see cref="TotpMatch.MatchedWindow"/> is the absolute time step for replay
+    /// tracking and <see cref="TotpMatch.WindowOffset"/> the drift in steps. Otherwise an error coded with
+    /// <see cref="TwoFactorAuthErrorCodes"/>: an <see cref="UnauthorizedError"/>
+    /// (<see cref="TwoFactorAuthErrorCodes.InvalidCode"/> for a code that does not match,
+    /// <see cref="TwoFactorAuthErrorCodes.CodeAlreadyUsed"/> for a replayed one), or an <see cref="InternalError"/>
+    /// (<see cref="TwoFactorAuthErrorCodes.ValidationFailed"/>) when validation could not run. Messages never contain
+    /// exception text.
     /// </returns>
-    public TotpValidationResult ValidateTotp(string code, string secretKey, string? userId = null) =>
+    public Result<TotpMatch> ValidateTotp(string code, string secretKey, string? userId = null) =>
         ValidateTotp(code, secretKey, DateTime.UtcNow, userId);
 
     /// <summary>
@@ -130,8 +134,8 @@ public sealed class TwoFactorAuthenticator
     /// <param name="secretKey">The Base32-encoded TOTP secret key.</param>
     /// <param name="timestampUtc">The moment to validate at (UTC).</param>
     /// <param name="userId">The user the code belongs to: enables replay protection and event publishing.</param>
-    /// <returns>A <see cref="TotpValidationResult"/> indicating success or failure.</returns>
-    public TotpValidationResult ValidateTotp(string code, string secretKey, DateTime timestampUtc, string? userId = null)
+    /// <returns>The accepted <see cref="TotpMatch"/>, or an error; see <see cref="ValidateTotp(string, string, string?)"/>.</returns>
+    public Result<TotpMatch> ValidateTotp(string code, string secretKey, DateTime timestampUtc, string? userId = null)
     {
         try
         {
@@ -142,27 +146,27 @@ public sealed class TwoFactorAuthenticator
             var window = new VerificationWindow(previous: _config.WindowSize, future: _config.WindowSize);
             var isValid = totp.VerifyTotp(timestampUtc, normalizedCode, out long matchedWindow, window);
 
-            TotpValidationResult result;
+            Result<TotpMatch> result;
             if (isValid && userId is not null && !_usedSteps.TryUse(userId, matchedWindow))
             {
                 // The code matched, but this step (or a later one) was already accepted for the user.
                 isValid = false;
-                result = TotpValidationResult.Invalid(TotpValidationResult.ReplayedCodeMessage);
+                result = TwoFactorAuthErrors.CodeAlreadyUsed();
                 _logger?.Warning($"TOTP code refused for user '{userId}': time step {matchedWindow} was already used");
             }
             else if (isValid)
             {
                 var currentStep = new DateTimeOffset(DateTime.SpecifyKind(timestampUtc, DateTimeKind.Utc)).ToUnixTimeSeconds()
                     / _config.TimeStepSeconds;
-                result = TotpValidationResult.Valid(matchedWindow, checked((int)(matchedWindow - currentStep)));
+                result = new TotpMatch { MatchedWindow = matchedWindow, WindowOffset = checked((int)(matchedWindow - currentStep)) };
             }
             else
             {
-                result = TotpValidationResult.Invalid();
+                result = TwoFactorAuthErrors.InvalidCode();
             }
 
             if (userId is not null)
-                _events?.Publish(new TotpValidatedEvent(userId, isValid, result.MatchedWindow, DateTime.UtcNow));
+                _events?.Publish(new TotpValidatedEvent(userId, isValid, isValid ? matchedWindow : null, DateTime.UtcNow));
 
             _logger?.Debug(isValid
                 ? $"TOTP validation succeeded (window: {matchedWindow})"
@@ -174,7 +178,7 @@ public sealed class TwoFactorAuthenticator
         {
             // The exception text can describe the secret or the code; log it, return a generic message.
             _logger?.Error($"TOTP validation error: {ex.Message}", ex);
-            return TotpValidationResult.Invalid(TotpValidationResult.ValidationErrorMessage);
+            return TwoFactorAuthErrors.ValidationFailed(ex);
         }
     }
 

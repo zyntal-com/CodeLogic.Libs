@@ -1,5 +1,6 @@
 using CL.TwoFactorAuth.Models;
 using CL.TwoFactorAuth.Services;
+using CodeLogic.Core.Results;
 using Xunit;
 
 namespace TwoFactorAuth.Tests;
@@ -46,7 +47,7 @@ public class TwoFactorAuthenticatorTests
         Assert.False(string.IsNullOrWhiteSpace(code.Value));
 
         var result = auth.ValidateTotp(code.Value!, secret);
-        Assert.True(result.IsValid);
+        Assert.True(result.IsSuccess);
     }
 
     [Fact]
@@ -61,7 +62,7 @@ public class TwoFactorAuthenticatorTests
         // Pick a code guaranteed to differ from the real one.
         var wrong = code.Value == "000000" ? "111111" : "000000";
         var result = auth.ValidateTotp(wrong, secret);
-        Assert.False(result.IsValid);
+        Assert.False(result.IsSuccess);
     }
 
     [Fact]
@@ -75,7 +76,7 @@ public class TwoFactorAuthenticatorTests
         Assert.True(codeA.IsSuccess);
 
         var result = auth.ValidateTotp(codeA.Value!, secretB);
-        Assert.False(result.IsValid);
+        Assert.False(result.IsSuccess);
     }
 
     [Fact]
@@ -110,9 +111,8 @@ public class TotpWindowAndProvisioningTests
     public void Matched_window_is_the_absolute_time_step_and_offset_is_zero_in_the_current_step()
     {
         var auth = new TwoFactorAuthenticator(new TwoFactorAuthConfig());
-        var result = auth.ValidateTotp("081804", RfcSecret, RfcTime);
+        var result = auth.ValidateTotp("081804", RfcSecret, RfcTime).ValueOrThrow();
 
-        Assert.True(result.IsValid);
         Assert.Equal(RfcStep, result.MatchedWindow);
         Assert.Equal(0, result.WindowOffset);
     }
@@ -123,22 +123,22 @@ public class TotpWindowAndProvisioningTests
     public void Offset_reports_drift_while_matched_window_stays_absolute(int shiftSeconds, int expectedOffset)
     {
         var auth = new TwoFactorAuthenticator(new TwoFactorAuthConfig { WindowSize = 1 });
-        var result = auth.ValidateTotp("081804", RfcSecret, RfcTime.AddSeconds(shiftSeconds));
+        var result = auth.ValidateTotp("081804", RfcSecret, RfcTime.AddSeconds(shiftSeconds)).ValueOrThrow();
 
-        Assert.True(result.IsValid);
         Assert.Equal(RfcStep, result.MatchedWindow);
         Assert.Equal(expectedOffset, result.WindowOffset);
     }
 
     [Fact]
-    public void Outside_the_window_is_rejected_with_no_window()
+    public void Outside_the_window_is_rejected_as_an_invalid_code()
     {
         var auth = new TwoFactorAuthenticator(new TwoFactorAuthConfig { WindowSize = 0 });
         var result = auth.ValidateTotp("081804", RfcSecret, RfcTime.AddSeconds(30));
 
-        Assert.False(result.IsValid);
-        Assert.Null(result.MatchedWindow);
-        Assert.Null(result.WindowOffset);
+        Assert.True(result.IsFailure);
+        var error = Assert.IsType<UnauthorizedError>(result.Error);
+        Assert.Equal(TwoFactorAuthErrorCodes.InvalidCode, error.Code);
+        Assert.Equal("Invalid code", error.Message);
     }
 
     [Fact]
@@ -149,9 +149,8 @@ public class TotpWindowAndProvisioningTests
         var code = new OtpNet.Totp(OtpNet.Base32Encoding.ToBytes(RfcSecret), step: 1).ComputeTotp(at);
         var auth = new TwoFactorAuthenticator(new TwoFactorAuthConfig { TimeStepSeconds = 1, WindowSize = 0 });
 
-        var result = auth.ValidateTotp(code, RfcSecret, at);
+        var result = auth.ValidateTotp(code, RfcSecret, at).ValueOrThrow();
 
-        Assert.True(result.IsValid);
         var expected = new DateTimeOffset(at).ToUnixTimeSeconds();
         Assert.True(expected > int.MaxValue);
         Assert.Equal(expected, result.MatchedWindow);
@@ -196,8 +195,11 @@ public class TotpWindowAndProvisioningTests
         var auth = new TwoFactorAuthenticator(new TwoFactorAuthConfig());
         var result = auth.ValidateTotp("123456", "not-base32!!");
 
-        Assert.False(result.IsValid);
-        Assert.Equal(TotpValidationResult.ValidationErrorMessage, result.ErrorMessage);
+        Assert.True(result.IsFailure);
+        var error = Assert.IsType<InternalError>(result.Error);
+        Assert.Equal(TwoFactorAuthErrorCodes.ValidationFailed, error.Code);
+        Assert.Equal("The code could not be validated.", error.Message);
+        Assert.DoesNotContain("Base32", error.ToString());
     }
 
     [Fact]
@@ -207,7 +209,8 @@ public class TotpWindowAndProvisioningTests
         var result = auth.GenerateTotpCode("not-base32!!");
 
         Assert.True(result.IsFailure);
-        Assert.DoesNotContain("Base32", result.Error!.Message);
+        Assert.Equal(TwoFactorAuthErrorCodes.GenerateFailed, result.Error!.Code);
+        Assert.DoesNotContain("Base32", result.Error.Message);
         Assert.Null(result.Error.Details);
     }
 }
@@ -234,30 +237,30 @@ public class TotpReplayAndNormalisationTests
         var first = auth.ValidateTotp(RfcCode, RfcSecret, RfcTime, userId: "alice");
         var second = auth.ValidateTotp(RfcCode, RfcSecret, RfcTime, userId: "alice");
 
-        Assert.True(first.IsValid);
-        Assert.False(second.IsValid);
-        Assert.Equal(TotpValidationResult.ReplayedCodeMessage, second.ErrorMessage);
-        Assert.Null(second.MatchedWindow);
+        Assert.True(first.IsSuccess);
+        Assert.True(second.IsFailure);
+        var error = Assert.IsType<UnauthorizedError>(second.Error);
+        Assert.Equal(TwoFactorAuthErrorCodes.CodeAlreadyUsed, error.Code);
+        Assert.Equal("This code has already been used.", error.Message);
     }
 
     [Fact]
     public void Replay_within_the_drift_window_is_refused_too()
     {
         var auth = Auth(window: 1);
-        Assert.True(auth.ValidateTotp(RfcCode, RfcSecret, RfcTime, "alice").IsValid);
+        Assert.True(auth.ValidateTotp(RfcCode, RfcSecret, RfcTime, "alice").IsSuccess);
         // Same code, presented 20 s later: still inside the window, same step, refused.
         var again = auth.ValidateTotp(RfcCode, RfcSecret, RfcTime.AddSeconds(20), "alice");
-        Assert.False(again.IsValid);
-        Assert.Equal(TotpValidationResult.ReplayedCodeMessage, again.ErrorMessage);
+        Assert.Equal(TwoFactorAuthErrorCodes.CodeAlreadyUsed, again.Error?.Code);
     }
 
     [Fact]
     public void A_different_user_is_unaffected()
     {
         var auth = Auth();
-        Assert.True(auth.ValidateTotp(RfcCode, RfcSecret, RfcTime, "alice").IsValid);
-        Assert.True(auth.ValidateTotp(RfcCode, RfcSecret, RfcTime, "bob").IsValid);
-        Assert.False(auth.ValidateTotp(RfcCode, RfcSecret, RfcTime, "bob").IsValid);
+        Assert.True(auth.ValidateTotp(RfcCode, RfcSecret, RfcTime, "alice").IsSuccess);
+        Assert.True(auth.ValidateTotp(RfcCode, RfcSecret, RfcTime, "bob").IsSuccess);
+        Assert.False(auth.ValidateTotp(RfcCode, RfcSecret, RfcTime, "bob").IsSuccess);
     }
 
     [Fact]
@@ -267,20 +270,18 @@ public class TotpReplayAndNormalisationTests
         var nextCode = CodeAt(NextStepTime);
 
         // Accept the newer step first (validated at its own time), then the previous step's code within the window.
-        Assert.True(auth.ValidateTotp(nextCode, RfcSecret, NextStepTime, "alice").IsValid);
+        Assert.True(auth.ValidateTotp(nextCode, RfcSecret, NextStepTime, "alice").IsSuccess);
         var older = auth.ValidateTotp(RfcCode, RfcSecret, NextStepTime, "alice");
 
-        Assert.False(older.IsValid);
-        Assert.Equal(TotpValidationResult.ReplayedCodeMessage, older.ErrorMessage);
+        Assert.Equal(TwoFactorAuthErrorCodes.CodeAlreadyUsed, older.Error?.Code);
     }
 
     [Fact]
     public void Newer_step_is_accepted_after_an_older_one()
     {
         var auth = Auth(window: 1);
-        Assert.True(auth.ValidateTotp(RfcCode, RfcSecret, RfcTime, "alice").IsValid);
-        var next = auth.ValidateTotp(CodeAt(NextStepTime), RfcSecret, NextStepTime, "alice");
-        Assert.True(next.IsValid);
+        Assert.True(auth.ValidateTotp(RfcCode, RfcSecret, RfcTime, "alice").IsSuccess);
+        var next = auth.ValidateTotp(CodeAt(NextStepTime), RfcSecret, NextStepTime, "alice").ValueOrThrow();
         Assert.Equal(1111111109 / 30 + 1, next.MatchedWindow);
     }
 
@@ -288,16 +289,16 @@ public class TotpReplayAndNormalisationTests
     public void Without_a_user_id_the_same_code_validates_again()
     {
         var auth = Auth();
-        Assert.True(auth.ValidateTotp(RfcCode, RfcSecret, RfcTime).IsValid);
-        Assert.True(auth.ValidateTotp(RfcCode, RfcSecret, RfcTime).IsValid);
+        Assert.True(auth.ValidateTotp(RfcCode, RfcSecret, RfcTime).IsSuccess);
+        Assert.True(auth.ValidateTotp(RfcCode, RfcSecret, RfcTime).IsSuccess);
     }
 
     [Fact]
     public void A_wrong_code_does_not_consume_a_step()
     {
         var auth = Auth();
-        Assert.False(auth.ValidateTotp("000000", RfcSecret, RfcTime, "alice").IsValid);
-        Assert.True(auth.ValidateTotp(RfcCode, RfcSecret, RfcTime, "alice").IsValid);
+        Assert.Equal(TwoFactorAuthErrorCodes.InvalidCode, auth.ValidateTotp("000000", RfcSecret, RfcTime, "alice").Error?.Code);
+        Assert.True(auth.ValidateTotp(RfcCode, RfcSecret, RfcTime, "alice").IsSuccess);
     }
 
     [Fact]
@@ -323,8 +324,8 @@ public class TotpReplayAndNormalisationTests
         var a = Auth(store);
         var b = Auth(store);
 
-        Assert.True(a.ValidateTotp(RfcCode, RfcSecret, RfcTime, "alice").IsValid);
-        Assert.False(b.ValidateTotp(RfcCode, RfcSecret, RfcTime, "alice").IsValid);
+        Assert.True(a.ValidateTotp(RfcCode, RfcSecret, RfcTime, "alice").IsSuccess);
+        Assert.False(b.ValidateTotp(RfcCode, RfcSecret, RfcTime, "alice").IsSuccess);
         Assert.Equal(1, store.Count);
     }
 
@@ -353,7 +354,7 @@ public class TotpReplayAndNormalisationTests
     {
         var auth = Auth();
         var result = auth.ValidateTotp(typed, RfcSecret, RfcTime);
-        Assert.True(result.IsValid, typed);
+        Assert.True(result.IsSuccess, typed);
     }
 
     [Theory]
@@ -364,7 +365,7 @@ public class TotpReplayAndNormalisationTests
     public void Empty_or_short_codes_are_invalid_without_throwing(string? typed)
     {
         var auth = Auth();
-        Assert.False(auth.ValidateTotp(typed!, RfcSecret, RfcTime).IsValid);
+        Assert.False(auth.ValidateTotp(typed!, RfcSecret, RfcTime).IsSuccess);
     }
 }
 
@@ -451,8 +452,8 @@ public class QrCodeGeneratorTests
             Assert.Equal(nameof(ArgumentNullException), error.Details);
             Assert.DoesNotContain("Parameter", error.ToString());
         }
-        Assert.Equal("2fa.qr_png_failed", png.Error!.Code);
-        Assert.Equal("2fa.qr_bmp_failed", bmp.Error!.Code);
+        Assert.Equal(TwoFactorAuthErrorCodes.QrPngFailed, png.Error!.Code);
+        Assert.Equal(TwoFactorAuthErrorCodes.QrBmpFailed, bmp.Error!.Code);
     }
 
     [Theory]
@@ -465,7 +466,7 @@ public class QrCodeGeneratorTests
         var (_, qr, key) = Setup();
         var result = qr.SaveQrCodeToFile(key, path);
         Assert.IsType<CodeLogic.Core.Results.ValidationError>(result.Error);
-        Assert.Equal("2fa.qr_invalid_path", result.Error!.Code);
+        Assert.Equal(TwoFactorAuthErrorCodes.QrInvalidPath, result.Error!.Code);
         Assert.False(File.Exists(path));
     }
 
@@ -479,7 +480,7 @@ public class QrCodeGeneratorTests
         var (_, qr, key) = Setup();
         var path = Path.Combine(Path.GetTempPath(), "cl_2fa_" + Guid.NewGuid().ToString("N") + "_" + name);
         var result = qr.SaveQrCodeToFile(key, path);
-        Assert.Equal("2fa.qr_invalid_path", result.Error!.Code);
+        Assert.Equal(TwoFactorAuthErrorCodes.QrInvalidPath, result.Error!.Code);
         Assert.False(File.Exists(path.Replace("\0", "")));
     }
 
@@ -509,7 +510,7 @@ public class QrCodeGeneratorTests
         var result = qr.SaveQrCodeToFile(key, missingDir);
 
         Assert.True(result.IsFailure);
-        Assert.Equal("2fa.qr_save_failed", result.Error!.Code);
+        Assert.Equal(TwoFactorAuthErrorCodes.QrSaveFailed, result.Error!.Code);
         Assert.Equal("The QR code could not be saved.", result.Error.Message);
         Assert.DoesNotContain("cl_2fa_missing_", result.Error.ToString());
         Assert.Equal(nameof(DirectoryNotFoundException), result.Error.Details);

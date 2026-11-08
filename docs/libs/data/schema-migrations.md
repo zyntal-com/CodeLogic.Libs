@@ -15,8 +15,8 @@ var plan = (await db.Schema.PlanAsync<Product>()).ValueOrThrow();   // what woul
 
 **How sync works:**
 - **Comparison:** sync reads the live table (introspection), compares it with the model, and applies what the sync level allows. Everything else is reported as drift through `SchemaDriftDetectedEvent`.
-- **Unchanged models:** a CRC of the normalized model is stored in `cl_data_schema`, so an unchanged model costs one lookup.
-- **One node at a time:** sync takes an advisory lock, so only one node syncs a table at a time.
+- **Unchanged models:** a fingerprint (hash) of the normalized model is stored in `cl_data_schema`, so an unchanged model costs one lookup.
+- **One node at a time:** sync takes an advisory lock, so only one node syncs a table at a time. SQLite has no advisory locks, so run sync from one process there.
 
 **Sync levels** (`syncMode` sets one; `schemaSyncLevel` overrides it):
 
@@ -34,7 +34,8 @@ var plan = (await db.Schema.PlanAsync<Product>()).ValueOrThrow();   // what woul
 - **MySQL** applies `[MySqlTable]`/`[MySqlColumn]` engine, charset and collation.
 - **SQL Server** adds `ISJSON` checks to JSON columns.
 
-**Backup before altering:** set `backupDirectory`, and sync writes a backup of a table before altering it.
+**Backup before altering:** set `backupDirectory`, and sync writes a backup of a table before a change that can lose data
+(dropping or altering a column). If the backup fails, nothing is changed.
 
 **NOT NULL on existing data:** making a column NOT NULL first replaces its NULLs with the column's default (or an
 implicit one: `''`, `0`, the epoch), in the same plan.
@@ -90,7 +91,7 @@ var result = (await seeds.RunAsync()).ValueOrThrow();   // Applied / UpToDate
 **How seeds run:**
 - **Idempotent:** row seeds upsert, so a seed can run on every start.
 - **Tracking:** seeds are recorded in `cl_data_seeds` by id and version. Bump the version to run a seed again.
-- **Order:** seeds run by `order`.
+- **Order:** seeds run by `Order`, then by id.
 
 ## Administration
 
@@ -136,7 +137,7 @@ For a `[TenantKey]` entity, a purge from a tenant view (`db.ForTenant(id).Retent
 
 | Table | Holds |
 |---|---|
-| `cl_data_schema` | model CRC per synced table |
+| `cl_data_schema` | model fingerprint per synced table |
 | `cl_data_migrations` | applied migrations, with checksums |
 | `cl_data_seeds` | applied seeds, with versions |
 | `cl_data_cache_bus` | cross-node cache invalidations (only with the `Database` bus) |

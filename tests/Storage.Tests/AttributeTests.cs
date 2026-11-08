@@ -193,7 +193,7 @@ public sealed class NativeFolderMoveTests
 
         Assert.True(ftp.Capabilities.Supports(nativeFolderMove));
         Assert.True(sftp.Capabilities.Supports(nativeFolderMove));
-        // needs-review B18: a WebDAV collection MOVE may be done member by member (207 Multi-Status): not atomic.
+        // A WebDAV collection MOVE may be done member by member (207 Multi-Status): not atomic.
         Assert.True(webDav.Capabilities.Supports(StorageFeature.DirectoryMove | StorageFeature.ServerSideMove));
         Assert.False(webDav.Capabilities.Supports(StorageFeature.AtomicMove));
     }

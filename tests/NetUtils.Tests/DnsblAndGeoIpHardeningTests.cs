@@ -65,7 +65,7 @@ public sealed class DnsblCheckerResolverTests
     public async Task ParallelQueries_true_queries_zones_concurrently()
     {
         var resolver = new FakeResolver(_ => Task.FromException<IPAddress[]>(NxDomain()));
-        var result = await Checker(resolver).CheckIpAsync(Ip, Request(true, ["a.test", "b.test", "c.test"]));
+        var result = (await Checker(resolver).CheckIpAsync(Ip, Request(true, ["a.test", "b.test", "c.test"]))).ValueOrThrow();
 
         Assert.Equal(DnsblCheckStatus.NotBlacklisted, result.Status);
         Assert.Equal(3, resolver.Lookups.Count);
@@ -78,7 +78,7 @@ public sealed class DnsblCheckerResolverTests
         var resolver = new FakeResolver(zone => zone == "b.test"
             ? Task.FromResult(new[] { Listed })
             : Task.FromException<IPAddress[]>(NxDomain()));
-        var result = await Checker(resolver).CheckIpAsync(Ip, Request(false, ["a.test", "b.test", "c.test"]));
+        var result = (await Checker(resolver).CheckIpAsync(Ip, Request(false, ["a.test", "b.test", "c.test"]))).ValueOrThrow();
 
         Assert.Equal(DnsblCheckStatus.Blacklisted, result.Status);
         Assert.Equal("b.test", result.MatchedService);
@@ -95,7 +95,7 @@ public sealed class DnsblCheckerResolverTests
     {
         var resolver = new FakeResolver(_ => Task.FromException<IPAddress[]>(NxDomain()));
 
-        var result = await Checker(resolver).CheckIpAsync(input, Request(false, ["a.test"]));
+        var result = (await Checker(resolver).CheckIpAsync(input, Request(false, ["a.test"]))).ValueOrThrow();
 
         Assert.Equal(DnsblCheckStatus.NotBlacklisted, result.Status);
         Assert.Equal([Reversed + ".a.test"], resolver.Lookups);
@@ -116,7 +116,7 @@ public sealed class DnsblCheckerResolverTests
     {
         var resolver = new FakeResolver(_ => Task.FromException<IPAddress[]>(NxDomain()));
         var config = new DnsblConfig { Ipv4Services = ["a.test", "b.test", "c.test"], Ipv4FallbackServices = [], ParallelQueries = parallel };
-        var result = await new DnsblChecker(config, null, resolver.ResolveAsync).CheckIpAsync(Ip);
+        var result = (await new DnsblChecker(config, null, resolver.ResolveAsync).CheckIpAsync(Ip)).ValueOrThrow();
 
         Assert.Equal(DnsblCheckStatus.NotBlacklisted, result.Status);
         Assert.Equal(parallel, resolver.MaxConcurrent > 1);
@@ -130,19 +130,18 @@ public sealed class DnsblCheckerResolverTests
         var resolver = new FakeResolver(zone => zone == "broken.test"
             ? Task.FromException<IPAddress[]>(new SocketException((int)SocketError.TryAgain))
             : Task.FromException<IPAddress[]>(NxDomain()));
-        var result = await Checker(resolver).CheckIpAsync(Ip, Request(parallel, ["ok.test", "broken.test"]));
+        var result = (await Checker(resolver).CheckIpAsync(Ip, Request(parallel, ["ok.test", "broken.test"]))).ValueOrThrow();
 
         Assert.Equal(DnsblCheckStatus.Indeterminate, result.Status);
         Assert.False(result.IsBlacklisted);
         Assert.Equal(["broken.test"], result.FailedServices);
-        Assert.NotNull(result.ErrorMessage);
     }
 
     [Fact]
     public async Task Timeout_is_indeterminate()
     {
         var resolver = new FakeResolver(async _ => { await Task.Delay(Timeout.Infinite); return []; });
-        var result = await Checker(resolver).CheckIpAsync(Ip, Request(true, ["slow.test"], timeout: TimeSpan.FromMilliseconds(100)));
+        var result = (await Checker(resolver).CheckIpAsync(Ip, Request(true, ["slow.test"], timeout: TimeSpan.FromMilliseconds(100)))).ValueOrThrow();
 
         Assert.Equal(DnsblCheckStatus.Indeterminate, result.Status);
         Assert.Equal(["slow.test"], result.FailedServices);
@@ -152,7 +151,7 @@ public sealed class DnsblCheckerResolverTests
     public async Task Dnsbl_error_answer_is_indeterminate()
     {
         var resolver = new FakeResolver(_ => Task.FromResult(new[] { SpamhausError }));
-        var result = await Checker(resolver).CheckIpAsync(Ip, Request(true, ["zen.test"]));
+        var result = (await Checker(resolver).CheckIpAsync(Ip, Request(true, ["zen.test"]))).ValueOrThrow();
 
         Assert.Equal(DnsblCheckStatus.Indeterminate, result.Status);
         Assert.Equal(["zen.test"], result.FailedServices);
@@ -162,11 +161,10 @@ public sealed class DnsblCheckerResolverTests
     public async Task Nxdomain_everywhere_is_clean()
     {
         var resolver = new FakeResolver(_ => Task.FromException<IPAddress[]>(NxDomain()));
-        var result = await Checker(resolver).CheckIpAsync(Ip, Request(true, ["a.test"], ["fb.test"]));
+        var result = (await Checker(resolver).CheckIpAsync(Ip, Request(true, ["a.test"], ["fb.test"]))).ValueOrThrow();
 
         Assert.Equal(DnsblCheckStatus.NotBlacklisted, result.Status);
         Assert.Empty(result.FailedServices);
-        Assert.Null(result.ErrorMessage);
         Assert.Equal(2, resolver.Lookups.Count);   // fallback consulted because no primary listed
     }
 
@@ -178,7 +176,7 @@ public sealed class DnsblCheckerResolverTests
             "listed.test" => Task.FromResult(new[] { Listed }),
             _ => Task.FromException<IPAddress[]>(new SocketException((int)SocketError.TryAgain)),
         });
-        var result = await Checker(resolver).CheckIpAsync(Ip, Request(true, ["broken.test", "listed.test"], ["fb.test"]));
+        var result = (await Checker(resolver).CheckIpAsync(Ip, Request(true, ["broken.test", "listed.test"], ["fb.test"]))).ValueOrThrow();
 
         Assert.Equal(DnsblCheckStatus.Blacklisted, result.Status);
         Assert.Equal("listed.test", result.MatchedService);
@@ -265,7 +263,7 @@ public sealed class GeoIpDownloadTests : IDisposable
         return output.ToArray();
     }
 
-    // These tests exercise the archive handling; the checksum round trip has its own tests (AuditRound5Tests).
+    // These tests exercise the archive handling.
     private static GeoIpConfig Config(string? url = null, List<string>? hosts = null) => new()
     {
         AccountId = 42,
@@ -399,8 +397,8 @@ public sealed class GeoIpDownloadTests : IDisposable
 
         Assert.Equal(FakeMmdb("v1"), await File.ReadAllBytesAsync(service.DatabasePath));
         Assert.Equal("v1", service.OpenDatabaseDescription);             // the reader was never closed
-        Assert.Equal("Invalid IP address format", (await service.LookupIpAsync("nope")).ErrorMessage);
-        Assert.NotEqual("GeoIP service not initialized", (await service.LookupIpAsync("8.8.8.8")).ErrorMessage);   // still serving
+        Assert.Equal(NetUtilsErrorCodes.InvalidIpAddress, (await service.LookupIpAsync("nope")).Error?.Code);
+        Assert.NotEqual(NetUtilsErrorCodes.GeoIpUnavailable, (await service.LookupIpAsync("8.8.8.8")).Error?.Code);   // still serving
     }
 
     [Fact]

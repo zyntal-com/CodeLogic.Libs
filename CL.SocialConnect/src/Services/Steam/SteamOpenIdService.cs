@@ -152,7 +152,7 @@ public sealed partial class SteamOpenIdService : IDisposable
     /// </summary>
     /// <param name="queryString">The raw query string of the callback request (with or without the leading <c>?</c>).</param>
     /// <param name="expectedReturnTo">The exact <c>return_to</c> this browser was sent to Steam with.</param>
-    /// <param name="cancellationToken">Cancels the verification request (<c>social.steam.cancelled</c>).</param>
+    /// <param name="cancellationToken">Cancels the verification request (<see cref="SocialConnectErrorCodes.SteamCancelled"/>).</param>
     /// <returns>A <see cref="Result{T}"/> with the verified <see cref="SteamOpenIdResult"/>, or why it was refused.</returns>
     public Task<Result<SteamOpenIdResult>> VerifyAsync(string queryString, string expectedReturnTo, CancellationToken cancellationToken = default) =>
         VerifyAsync(ParseQuery(queryString ?? string.Empty), expectedReturnTo, cancellationToken);
@@ -162,16 +162,16 @@ public sealed partial class SteamOpenIdService : IDisposable
     /// <para>
     /// Local checks first (mode, namespace, provider endpoint, <c>return_to</c>, claimed id = identity,
     /// a well-formed SteamID64, the required fields signed, no repeated <c>openid.*</c> parameters, a well-formed
-    /// <c>response_nonce</c> no older than <c>OpenIdNonceMaxAgeSeconds</c> (<c>social.steam.openid_expired</c>)
+    /// <c>response_nonce</c> no older than <c>OpenIdNonceMaxAgeSeconds</c> (<see cref="SocialConnectErrorCodes.SteamOpenIdExpired"/>)
     /// and not dated more than a minute ahead), then the nonce is recorded in the <see cref="IOpenIdNonceStore"/>
-    /// (a nonce seen before is <c>social.steam.openid_replayed</c>), after Steam answers
+    /// (a nonce seen before is <see cref="SocialConnectErrorCodes.SteamOpenIdReplayed"/>), after Steam answers
     /// <c>is_valid:true</c> to <c>check_authentication</c>. Failed confirmations consume no replay entries. At most 32 verifications run concurrently;
-    /// excess requests fail closed with <c>social.steam.openid_busy</c>.
+    /// excess requests fail closed with <see cref="SocialConnectErrorCodes.SteamOpenIdBusy"/>.
     /// </para>
     /// </summary>
     /// <param name="parameters">The callback's query parameters (decoded). Non-<c>openid.*</c> parameters are ignored.</param>
     /// <param name="expectedReturnTo">The exact <c>return_to</c> this browser was sent to Steam with.</param>
-    /// <param name="cancellationToken">Cancels the verification request (<c>social.steam.cancelled</c>).</param>
+    /// <param name="cancellationToken">Cancels the verification request (<see cref="SocialConnectErrorCodes.SteamCancelled"/>).</param>
     /// <returns>A <see cref="Result{T}"/> with the verified <see cref="SteamOpenIdResult"/>, or why it was refused.</returns>
     public async Task<Result<SteamOpenIdResult>> VerifyAsync(IEnumerable<KeyValuePair<string, string>> parameters, string expectedReturnTo, CancellationToken cancellationToken = default)
     {
@@ -185,45 +185,45 @@ public sealed partial class SteamOpenIdService : IDisposable
                 continue;
             // The parameter name is caller input: sanitised and truncated before it reaches a log line or an event.
             if (!fields.TryAdd(key, value ?? string.Empty))
-                return Refuse("social.steam.openid_invalid", $"Parameter '{InputText.ForLog(key)}' appears more than once", verifiedAt);
+                return Refuse(SocialConnectErrorCodes.SteamOpenIdInvalid, $"Parameter '{InputText.ForLog(key)}' appears more than once", verifiedAt);
         }
 
         string Get(string name) => fields.TryGetValue("openid." + name, out var v) ? v : string.Empty;
 
         var mode = Get("mode");
         if (mode == "cancel")
-            return Refuse("social.steam.openid_cancelled", "The Steam sign-in was cancelled", verifiedAt);
+            return Refuse(SocialConnectErrorCodes.SteamOpenIdCancelled, "The Steam sign-in was cancelled", verifiedAt);
         if (mode != "id_res")
-            return Refuse("social.steam.openid_invalid", "Not a positive Steam assertion", verifiedAt);
+            return Refuse(SocialConnectErrorCodes.SteamOpenIdInvalid, "Not a positive Steam assertion", verifiedAt);
         if (Get("ns") != OpenIdNs || Get("op_endpoint") != Endpoint)
-            return Refuse("social.steam.openid_invalid", "The response did not come from Steam's OpenID endpoint", verifiedAt);
+            return Refuse(SocialConnectErrorCodes.SteamOpenIdInvalid, "The response did not come from Steam's OpenID endpoint", verifiedAt);
         if (string.IsNullOrEmpty(expectedReturnTo) || !string.Equals(Get("return_to"), expectedReturnTo, StringComparison.Ordinal))
-            return Refuse("social.steam.openid_return_to", "The response was not meant for this sign-in (return_to mismatch)", verifiedAt);
+            return Refuse(SocialConnectErrorCodes.SteamOpenIdReturnTo, "The response was not meant for this sign-in (return_to mismatch)", verifiedAt);
 
         var claimedId = Get("claimed_id");
         var match = ClaimedIdPattern().Match(claimedId);
         if (!match.Success || !string.Equals(Get("identity"), claimedId, StringComparison.Ordinal))
-            return Refuse("social.steam.openid_identity", "Steam returned an unexpected identity", verifiedAt);
+            return Refuse(SocialConnectErrorCodes.SteamOpenIdIdentity, "Steam returned an unexpected identity", verifiedAt);
 
         var signed = Get("signed").Split(',', StringSplitOptions.TrimEntries);
         if (string.IsNullOrEmpty(Get("sig")) || RequiredSigned.Any(f => !signed.Contains(f, StringComparer.Ordinal)))
-            return Refuse("social.steam.openid_invalid", "The assertion does not sign the required fields", verifiedAt);
+            return Refuse(SocialConnectErrorCodes.SteamOpenIdInvalid, "The assertion does not sign the required fields", verifiedAt);
 
         // OpenID 2.0 response_nonce: "yyyy-MM-ddTHH:mm:ssZ" followed by up to 235 unique characters.
         var nonce = Get("response_nonce");
         if (!TryParseNonceTime(nonce, out var issuedAt))
-            return Refuse("social.steam.openid_invalid", "The assertion's response_nonce is malformed", verifiedAt);
+            return Refuse(SocialConnectErrorCodes.SteamOpenIdInvalid, "The assertion's response_nonce is malformed", verifiedAt);
         if (issuedAt > verifiedAt + MaxFutureSkew)
-            return Refuse("social.steam.openid_invalid", "The assertion's response_nonce is dated in the future", verifiedAt);
+            return Refuse(SocialConnectErrorCodes.SteamOpenIdInvalid, "The assertion's response_nonce is dated in the future", verifiedAt);
         if (_maxNonceAge is { } maxAge && verifiedAt - issuedAt > maxAge)
-            return Refuse("social.steam.openid_expired", $"The assertion is older than {(int)maxAge.TotalSeconds} seconds", verifiedAt);
+            return Refuse(SocialConnectErrorCodes.SteamOpenIdExpired, $"The assertion is older than {(int)maxAge.TotalSeconds} seconds", verifiedAt);
 
         var steamId = match.Groups[1].Value;
 
         // Bound remote verification work, without reserving attacker-supplied nonces before authentication.
         if (cancellationToken.IsCancellationRequested) return Cancelled(verifiedAt);
         if (!_verificationSlots.Wait(0))
-            return Result<SteamOpenIdResult>.Failure(Error.Unavailable("social.steam.openid_busy", "Steam sign-in is busy; try again later."));
+            return Result<SteamOpenIdResult>.Failure(Error.Unavailable(SocialConnectErrorCodes.SteamOpenIdBusy, "Steam sign-in is busy; try again later."));
 
         // Ask Steam whether it really issued this assertion.
         var verify = fields.Select(f => new KeyValuePair<string, string>(f.Key, f.Key == "openid.mode" ? "check_authentication" : f.Value)).ToList();
@@ -238,7 +238,7 @@ public sealed partial class SteamOpenIdService : IDisposable
                 .Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
                 .Any(line => string.Equals(line, "is_valid:true", StringComparison.Ordinal));
             if (!valid)
-                return Refuse("social.steam.openid_rejected", "Steam did not confirm the sign-in", verifiedAt, steamId);
+                return Refuse(SocialConnectErrorCodes.SteamOpenIdRejected, "Steam did not confirm the sign-in", verifiedAt, steamId);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -246,17 +246,17 @@ public sealed partial class SteamOpenIdService : IDisposable
         }
         catch (OperationCanceledException ex)
         {
-            var errMsg = $"[{SocialError.Timeout}] Steam OpenID verification timed out: {ex.Message}";
+            var errMsg = $"Steam OpenID verification timed out: {ex.Message}";
             _logger?.Warning(errMsg);
             _events?.Publish(new SteamOpenIdVerifiedEvent(string.Empty, false, verifiedAt, errMsg));
-            return Result<SteamOpenIdResult>.Failure(Error.Timeout("social.steam.openid_timeout", errMsg));
+            return Result<SteamOpenIdResult>.Failure(Error.Timeout(SocialConnectErrorCodes.SteamOpenIdTimeout, errMsg));
         }
         catch (HttpRequestException ex)
         {
-            var errMsg = $"[{SocialError.NetworkError}] Steam could not be reached to verify the sign-in: {ex.Message}";
+            var errMsg = $"Steam could not be reached to verify the sign-in: {ex.Message}";
             _logger?.Warning(errMsg);
             _events?.Publish(new SteamOpenIdVerifiedEvent(string.Empty, false, verifiedAt, errMsg));
-            return Result<SteamOpenIdResult>.Failure(Error.Unavailable("social.steam.openid_unavailable", errMsg));
+            return Result<SteamOpenIdResult>.Failure(Error.Unavailable(SocialConnectErrorCodes.SteamOpenIdUnavailable, errMsg));
         }
 
         finally
@@ -270,7 +270,7 @@ public sealed partial class SteamOpenIdService : IDisposable
         try
         {
             if (!await _nonces.TryUseAsync(nonce, forgetAt, cancellationToken).ConfigureAwait(false))
-                return Refuse("social.steam.openid_replayed", "The assertion was already used or replay protection is at capacity", verifiedAt, steamId);
+                return Refuse(SocialConnectErrorCodes.SteamOpenIdReplayed, "The assertion was already used or replay protection is at capacity", verifiedAt, steamId);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -303,10 +303,9 @@ public sealed partial class SteamOpenIdService : IDisposable
 
     private Result<SteamOpenIdResult> Refuse(string code, string message, DateTime verifiedAt, string? steamId = null)
     {
-        var errMsg = $"[{SocialError.AuthenticationFailed}] {message}";
         _logger?.Warning($"Steam OpenID sign-in refused: {message}");
-        _events?.Publish(new SteamOpenIdVerifiedEvent(steamId ?? string.Empty, false, verifiedAt, errMsg));
-        return Result<SteamOpenIdResult>.Failure(Error.Unauthorized(code, errMsg));
+        _events?.Publish(new SteamOpenIdVerifiedEvent(steamId ?? string.Empty, false, verifiedAt, message));
+        return Result<SteamOpenIdResult>.Failure(Error.Unauthorized(code, message));
     }
 
     private Result<SteamOpenIdResult> Cancelled(DateTime verifiedAt)
@@ -314,7 +313,7 @@ public sealed partial class SteamOpenIdService : IDisposable
         const string errMsg = "Steam OpenID verification was cancelled";
         _logger?.Warning(errMsg);
         _events?.Publish(new SteamOpenIdVerifiedEvent(string.Empty, false, verifiedAt, errMsg));
-        return Result<SteamOpenIdResult>.Failure(Error.Unavailable("social.steam.cancelled", errMsg));
+        return Result<SteamOpenIdResult>.Failure(Error.Unavailable(SocialConnectErrorCodes.SteamCancelled, errMsg));
     }
 
     private static Uri AbsoluteHttpUrl(string value, string paramName)

@@ -6,8 +6,9 @@ _layout: landing
   <img src="images/logo.svg" alt="CodeLogic Libraries logo" />
   <h1>CodeLogic Libraries</h1>
   <p class="lead">
-    Fifteen production-ready .NET 11 libraries for the
-    <a href="https://github.com/zyntal-com/CodeLogic">CodeLogic 5</a> framework.
+    Twelve .NET 11 libraries for the
+    <a href="https://github.com/zyntal-com/CodeLogic">CodeLogic 5</a> framework,
+    published as sixteen packages (CL.Data has four provider packages).
     Databases, email, storage, security, monitoring, and more — each a self-contained
     <code>ILibrary</code> that manages its own configuration, lifecycle, and health checks.
   </p>
@@ -108,17 +109,21 @@ var mail = Libraries.Get<CL.Mail.MailLibrary>();
   </a>
 </div>
 
+<div class="cl-group">Media</div>
+<div class="lib-grid">
+  <a class="lib-card" href="libs/imaging/index.md">
+    <div class="lib-name">CL.Imaging</div>
+    <div class="lib-pkg">CodeLogic.Imaging</div>
+    <p class="lib-desc">Image editing on SkiaSharp: fluent pipeline, safe uploads, EXIF metadata, responsive variants, BlurHash and perceptual hashes.</p>
+  </a>
+</div>
+
 <div class="cl-group">Utilities</div>
 <div class="lib-grid">
   <a class="lib-card" href="libs/common/index.md">
     <div class="lib-name">CL.Common</div>
     <div class="lib-pkg">CodeLogic.Common</div>
     <p class="lib-desc">A utility toolkit: encryption, hashing, ID/password generation, JSON, cron, networking, caching, resilience, scheduling, and more.</p>
-  </a>
-  <a class="lib-card" href="libs/imaging/index.md">
-    <div class="lib-name">CL.Imaging</div>
-    <div class="lib-pkg">CodeLogic.Imaging</div>
-    <p class="lib-desc">Image editing on SkiaSharp: fluent pipeline, safe uploads, EXIF metadata, responsive variants, BlurHash and perceptual hashes.</p>
   </a>
 </div>
 

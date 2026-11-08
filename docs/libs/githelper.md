@@ -20,6 +20,8 @@ dotnet add package CodeLogic.GitHelper
 ```csharp
 using CL.GitHelper;
 using CL.GitHelper.Errors;       // GitErrors code constants
+using CL.GitHelper.Models;       // RepositoryInfo, GitDiagnostics, option models
+using CL.GitHelper.Services;     // GitRepository, GitManager
 using CodeLogic.Core.Results;    // Result<T>, Result, Error kinds
 
 await Libraries.LoadAsync<GitHelperLibrary>();   // register before ConfigureAsync()
@@ -247,12 +249,13 @@ A failure's `Error` has a kind (its subtype) and a stable `Code`; the codes are 
 
 ```csharp
 Result<GitDiagnostics> pull = await repo.PullAsync();
-var line = pull.Error switch
+var line = pull switch
 {
-    null                => $"Pulled in {pull.Value!.Duration?.TotalSeconds:F2}s",
-    UnauthorizedError   => "Check the repository's PAT",
-    NotFoundError e     => $"Missing: {e.Message} ({e.Code})",
-    var e               => $"Pull failed: {e.Message} ({e.Details})"
+    GitDiagnostics d  => $"Pulled in {d.Duration?.TotalSeconds:F2}s",
+    UnauthorizedError => "Check the repository's PAT",
+    NotFoundError e   => $"Missing: {e.Message} ({e.Code})",
+    Error e           => $"Pull failed: {e.Message} ({e.Details})",
+    null              => "Empty result"
 };
 ```
 
@@ -382,7 +385,7 @@ The library writes `config.githelper.json` (section `githelper`) with defaults o
 
 ### Changing config while running
 
-Config changes apply live: `config.githelper.json` applies live when changed through `Libraries.UpdateConfigAsync`, `Libraries.ReloadConfigAsync`, or the config file watcher. Only the repositories that changed are touched:
+`config.githelper.json` applies live when changed through `Libraries.UpdateConfigAsync`, `Libraries.ReloadConfigAsync`, or the config file watcher. Only the repositories that changed are touched:
 
 - **Changed or removed repository**: dropped from the cache. Its old `GitRepository` is disposed once the git operation running on it finishes, and the next `GetRepositoryAsync` opens it with the new settings. Call `GetRepositoryAsync` again rather than keeping an old instance.
 - **Added repository**: available at once.

@@ -3,13 +3,14 @@ using CodeLogic.Core.Events;
 using CodeLogic.Framework.Libraries;
 using CL.NetUtils.Models;
 using CL.NetUtils.Services;
+using CodeLogic.Core.Results;
 using Xunit;
 
 namespace NetUtils.Tests;
 
 // ── CL.NetUtils tests ─────────────────────────────────────────────────────────────
 // HYBRID strategy:
-//   • The result models / factory methods and the IP-type enum are pure, in-memory
+//   • The DnsblCheck / IpLocation records and the IP-type enum are pure, in-memory
 //     values — exercised directly with no network or external file.
 //   • The DnsblChecker's local/private-IP short-circuit is a real behavior that runs
 //     entirely offline (it returns "not blacklisted" before touching DNS), so it is
@@ -17,89 +18,61 @@ namespace NetUtils.Tests;
 //   • Live DNSBL lookups need DNS, and GeoIP lookups need a MaxMind .mmdb file, so
 //     those two tests are env-gated and SKIP unless their opt-in variables are set.
 
-// ── DnsblCheckResult factory methods (offline) ────────────────────────────────────
+// ── DnsblCheck factory methods (offline) ─────────────────────────────────────────
 
-public sealed class DnsblCheckResultTests
+public sealed class DnsblCheckTests
 {
     [Fact]
-    public void Blacklisted_sets_flag_and_matched_service()
+    public void Blacklisted_sets_the_status_and_service()
     {
-        var r = DnsblCheckResult.Blacklisted("1.2.3.4", IpAddressType.IPv4, "zen.spamhaus.org");
+        var r = DnsblCheck.Blacklisted("1.2.3.4", IpAddressType.IPv4, "zen.spamhaus.org", []);
 
+        Assert.Equal(DnsblCheckStatus.Blacklisted, r.Status);
         Assert.True(r.IsBlacklisted);
         Assert.Equal("zen.spamhaus.org", r.MatchedService);
         Assert.Equal("1.2.3.4", r.IpAddress);
         Assert.Equal(IpAddressType.IPv4, r.AddressType);
-        Assert.Null(r.ErrorMessage);
     }
 
     [Fact]
-    public void NotBlacklisted_clears_flag_and_service()
+    public void NotBlacklisted_has_no_service_and_no_failed_zones()
     {
-        var r = DnsblCheckResult.NotBlacklisted("1.2.3.4", IpAddressType.IPv4);
+        var r = DnsblCheck.NotBlacklisted("1.2.3.4", IpAddressType.IPv4);
 
+        Assert.Equal(DnsblCheckStatus.NotBlacklisted, r.Status);
         Assert.False(r.IsBlacklisted);
         Assert.Null(r.MatchedService);
-        Assert.Null(r.ErrorMessage);
+        Assert.Empty(r.FailedServices);
         Assert.Equal(IpAddressType.IPv4, r.AddressType);
     }
 
     [Fact]
-    public void Error_carries_error_message_and_is_not_blacklisted()
+    public void Indeterminate_is_not_blacklisted_and_lists_the_failed_zones()
     {
-        var r = DnsblCheckResult.Error("bogus", IpAddressType.Unknown, "Invalid IP address format");
+        var r = DnsblCheck.Indeterminate("1.2.3.4", IpAddressType.IPv4, ["a.test"]);
 
+        Assert.Equal(DnsblCheckStatus.Indeterminate, r.Status);
         Assert.False(r.IsBlacklisted);
-        Assert.Equal("Invalid IP address format", r.ErrorMessage);
-        Assert.Equal(IpAddressType.Unknown, r.AddressType);
+        Assert.Equal(["a.test"], r.FailedServices);
     }
 }
 
-// ── IpLocationResult factory methods + IsSuccessful (offline) ──────────────────────
+// ── IpLocation data check (offline) ──────────────────────────────────────────────
 
-public sealed class IpLocationResultTests
+public sealed class IpLocationTests
 {
     [Fact]
-    public void NotFound_is_not_successful_and_has_error()
+    public void A_country_code_counts_as_data()
     {
-        var r = IpLocationResult.NotFound("8.8.8.8");
+        var r = new IpLocation { IpAddress = "8.8.8.8", CountryName = "United States", CountryCode = "US" };
 
-        Assert.False(r.IsSuccessful);
-        Assert.False(string.IsNullOrEmpty(r.ErrorMessage));
-        Assert.Equal("8.8.8.8", r.IpAddress);
-    }
-
-    [Fact]
-    public void Error_is_not_successful_and_carries_message()
-    {
-        var r = IpLocationResult.Error("8.8.8.8", "boom");
-
-        Assert.False(r.IsSuccessful);
-        Assert.Equal("boom", r.ErrorMessage);
-    }
-
-    [Fact]
-    public void Manually_built_success_is_successful()
-    {
-        var r = new IpLocationResult
-        {
-            IpAddress = "8.8.8.8",
-            CountryCode = "US",
-            CountryName = "United States",
-            ErrorMessage = null
-        };
-
-        Assert.True(r.IsSuccessful);
+        Assert.True(r.HasData);
         Assert.Equal("US", r.CountryCode);
     }
 
     [Fact]
-    public void Missing_country_code_is_not_successful()
-    {
-        var r = new IpLocationResult { IpAddress = "8.8.8.8" };
-
-        Assert.False(r.IsSuccessful);
-    }
+    public void An_entry_without_country_asn_or_isp_has_no_data() =>
+        Assert.False(new IpLocation { IpAddress = "8.8.8.8" }.HasData);
 }
 
 // ── IpAddressType enum (offline) ──────────────────────────────────────────────────
@@ -130,10 +103,9 @@ public sealed class DnsblCheckerLocalShortCircuitTests
     [InlineData("172.16.0.1", IpAddressType.IPv4)]
     public async Task Private_ipv4_short_circuits_to_not_blacklisted(string ip, IpAddressType expectedType)
     {
-        var result = await NewChecker().CheckIpAsync(ip, CancellationToken.None);
+        var result = (await NewChecker().CheckIpAsync(ip, CancellationToken.None)).ValueOrThrow();
 
-        Assert.False(result.IsBlacklisted);
-        Assert.Null(result.ErrorMessage);
+        Assert.Equal(DnsblCheckStatus.NotBlacklisted, result.Status);
         Assert.Equal(ip, result.IpAddress);
         Assert.Equal(expectedType, result.AddressType);
     }
@@ -141,10 +113,9 @@ public sealed class DnsblCheckerLocalShortCircuitTests
     [Fact]
     public async Task Ipv6_loopback_short_circuits_to_not_blacklisted()
     {
-        var result = await NewChecker().CheckIpAsync("::1", CancellationToken.None);
+        var result = (await NewChecker().CheckIpAsync("::1", CancellationToken.None)).ValueOrThrow();
 
-        Assert.False(result.IsBlacklisted);
-        Assert.Null(result.ErrorMessage);
+        Assert.Equal(DnsblCheckStatus.NotBlacklisted, result.Status);
         Assert.Equal(IpAddressType.IPv6, result.AddressType);
     }
 
@@ -175,10 +146,9 @@ public sealed class DnsblCheckerLocalShortCircuitTests
             IsAllowedAsync = (_, _) => { allowlistAsked = true; return Task.FromResult(true); }
         };
 
-        var result = await NewChecker().CheckIpAsync(ip, request);
+        var result = (await NewChecker().CheckIpAsync(ip, request)).ValueOrThrow();
 
-        Assert.False(result.IsBlacklisted);
-        Assert.Null(result.ErrorMessage);
+        Assert.Equal(DnsblCheckStatus.NotBlacklisted, result.Status);
         Assert.False(allowlistAsked);   // short-circuited before the allowlist and any DNS query
     }
 
@@ -214,13 +184,14 @@ public sealed class DnsblCheckerLocalShortCircuitTests
             DnsblChecker.ReverseLookupLabel(System.Net.IPAddress.Parse("2001:db8::1")));
 
     [Fact]
-    public async Task Invalid_ip_returns_error_result()
+    public async Task Invalid_ip_returns_a_validation_error()
     {
         var result = await NewChecker().CheckIpAsync("not-an-ip", CancellationToken.None);
 
-        Assert.False(result.IsBlacklisted);
-        Assert.False(string.IsNullOrEmpty(result.ErrorMessage));
-        Assert.Equal(IpAddressType.Unknown, result.AddressType);
+        Assert.True(result.IsFailure);
+        var error = Assert.IsType<ValidationError>(result.Error);
+        Assert.Equal(NetUtilsErrorCodes.InvalidIpAddress, error.Code);
+        Assert.False(string.IsNullOrEmpty(error.Message));
     }
 }
 
@@ -247,9 +218,8 @@ public sealed class LiveDnsblTests
         var checker = new DnsblChecker(new DnsblConfig(), logger: null);
 
         // 8.8.8.8 (Google public DNS) is a clean public IP — expected NOT blacklisted.
-        var result = await checker.CheckIpAsync("8.8.8.8", CancellationToken.None);
+        var result = (await checker.CheckIpAsync("8.8.8.8", CancellationToken.None)).ValueOrThrow();
 
-        Assert.Null(result.ErrorMessage);
         Assert.False(result.IsBlacklisted);
         Assert.Equal(IpAddressType.IPv4, result.AddressType);
     }
@@ -269,9 +239,8 @@ public sealed class LiveGeoIpTests
 
         await service.InitializeAsync(CancellationToken.None);
 
-        var result = await service.LookupIpAsync("8.8.8.8", CancellationToken.None);
+        var result = (await service.LookupIpAsync("8.8.8.8", CancellationToken.None)).ValueOrThrow();
 
-        Assert.True(result.IsSuccessful, result.ErrorMessage);
         Assert.False(string.IsNullOrEmpty(result.CountryCode));
     }
 }
@@ -331,5 +300,51 @@ public sealed class NetUtilsHealthTests : IAsyncLifetime
 
         Assert.Equal(HealthStatusLevel.Degraded, health.Status);
         Assert.StartsWith("DNSBL on, GeoIP failed: ", health.Message);
+    }
+}
+
+// ── Error results: unexpected failures and a GeoIP service without a database (offline) ─
+
+public sealed class NetUtilsErrorResultTests
+{
+    [Fact]
+    public async Task An_unexpected_exception_is_an_internal_error_without_the_exception_text()
+    {
+        var checker = new DnsblChecker(new DnsblConfig(), logger: null);
+        var request = new DnsblCheckRequest
+        {
+            Ipv4Services = ["a.test"],
+            IsAllowedAsync = (_, _) => throw new InvalidOperationException("secret connection string")
+        };
+
+        var result = await checker.CheckIpAsync("93.184.215.7", request);
+
+        var error = Assert.IsType<InternalError>(result.Error);
+        Assert.Equal(NetUtilsErrorCodes.DnsblCheckFailed, error.Code);
+        Assert.Equal("The DNSBL check failed", error.Message);
+        Assert.Equal(nameof(InvalidOperationException), error.Details);
+        Assert.DoesNotContain("secret", error.ToString());
+    }
+
+    [Fact]
+    public async Task A_lookup_before_initialization_is_unavailable()
+    {
+        using var service = new GeoIpService(new GeoIpConfig { DatabasePath = "missing.mmdb" });
+
+        var result = await service.LookupIpAsync("8.8.8.8");
+
+        var error = Assert.IsType<UnavailableError>(result.Error);
+        Assert.Equal(NetUtilsErrorCodes.GeoIpUnavailable, error.Code);
+    }
+
+    [Fact]
+    public async Task A_lookup_of_text_that_is_not_an_address_is_a_validation_error()
+    {
+        using var service = new GeoIpService(new GeoIpConfig { DatabasePath = "missing.mmdb" });
+
+        var result = await service.LookupIpAsync("nope");
+
+        var error = Assert.IsType<ValidationError>(result.Error);
+        Assert.Equal(NetUtilsErrorCodes.InvalidIpAddress, error.Code);
     }
 }

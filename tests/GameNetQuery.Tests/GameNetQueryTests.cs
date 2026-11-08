@@ -270,7 +270,7 @@ public class GameNetQueryLibraryTests
     public void Manifest_identifies_the_library()
     {
         var lib = new GameNetQueryLibrary();
-        Assert.Equal("cl.gamenetquery", lib.Manifest.Id);
+        Assert.Equal("CL.GameNetQuery", lib.Manifest.Id);
         Assert.Equal("CL.GameNetQuery", lib.Manifest.Name);
     }
 }

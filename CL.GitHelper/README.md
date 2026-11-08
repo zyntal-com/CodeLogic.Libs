@@ -18,6 +18,7 @@ dotnet add package CodeLogic.GitHelper
 ```csharp
 using CL.GitHelper;
 using CL.GitHelper.Errors;
+using CL.GitHelper.Models;
 using CodeLogic.Core.Results;
 
 await Libraries.LoadAsync<GitHelperLibrary>();   // register before ConfigureAsync()
@@ -94,7 +95,7 @@ Each repository entry: `Id`, `Name`, `RepositoryUrl` (required), `LocalPath` (re
 
 ### Changing config while running
 
-With CodeLogic 4.9+, `config.githelper.json` applies live when changed through `Libraries.UpdateConfigAsync`, `Libraries.ReloadConfigAsync`, or the config file watcher. Only the repositories that changed are touched:
+`config.githelper.json` applies live when changed through `Libraries.UpdateConfigAsync`, `Libraries.ReloadConfigAsync`, or the config file watcher. Only the repositories that changed are touched:
 
 - **Changed or removed repository**: dropped from the cache. Its old `GitRepository` is disposed once the git operation running on it finishes, and the next `GetRepositoryAsync` opens it with the new settings. Call `GetRepositoryAsync` again rather than keeping an old instance.
 - **Added repository**: available at once.
@@ -117,5 +118,3 @@ Full guide: **[CL.GitHelper documentation](https://zyntal-com.github.io/CodeLogi
 ## License
 
 MIT — see [LICENSE](https://github.com/zyntal-com/CodeLogic.Libs/blob/main/LICENSE).
-
-Audit completion notes and current limits are in [the guide](../docs/libs/githelper.md).

@@ -89,7 +89,7 @@ public sealed class NativeWatchThroughProxyTests
             }
             catch (OperationCanceledException) { }
         });
-        // needs-review E: the watcher starts in the background, so instead of guessing how long that takes, a
+        // The watcher starts in the background, so instead of guessing how long that takes, a
         // rename is made again until one is seen (polling never reports renames, so any one proves native watching).
         for (var i = 0; !watching.IsCompleted && i < 100; i++)
         {
@@ -249,7 +249,7 @@ public sealed class TlsDiagnosisTests
         var recorder = new ServerIdentityRecorder();
         var started = DateTimeOffset.UtcNow;
         recorder.RecordClientCertificateRequest();
-        // needs-review A27: only a connection that was asked and then failed before the server accepted counts.
+        // Only a connection that was asked and then failed before the server accepted counts.
         recorder.RecordClientCertificateRefusal();
 
         var enriched = TlsDiagnosis.Enrich(StorageErrors.ConnectionLost("lost", "httpStatus=0"), recorder, started);

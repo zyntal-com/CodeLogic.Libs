@@ -59,7 +59,7 @@ internal static class StorageContract
     public static async Task DirectoryMoveAsync(IStorageBackend storage, bool atomic = true)
     {
         Assert.True(storage.Capabilities.Supports(StorageFeature.DirectoryMove));
-        // needs-review B18: WebDAV may move a collection member by member (207 Multi-Status), so it is not atomic.
+        // WebDAV may move a collection member by member (207 Multi-Status), so it is not atomic.
         Assert.Equal(atomic, storage.Capabilities.Supports(StorageFeature.AtomicMove));
         var dir = $"cl-move-{Guid.NewGuid():N}";
         try
@@ -78,7 +78,7 @@ internal static class StorageContract
             var blocked = await storage.MoveAsync($"{dir}/renamed", $"{dir}/other", new StorageTransferOptions { Overwrite = false });
             Assert.Equal(StorageErrors.ConflictCode, blocked.Error?.Code);
 
-            // needs-review A3: an existing directory is never replaced (that would delete what it holds), overwrite or not.
+            // An existing directory is never replaced (that would delete what it holds), overwrite or not.
             var replaced = await storage.MoveAsync($"{dir}/renamed", $"{dir}/other", new StorageTransferOptions { Overwrite = true });
             Assert.Equal(StorageErrors.ConflictCode, replaced.Error?.Code);
             Assert.True((await storage.ExistsAsync($"{dir}/other/x.txt")).Value);

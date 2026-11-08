@@ -44,7 +44,7 @@ await Libraries.LoadAsync<CommonLibrary>();   // register before ConfigureAsync(
 await CodeLogic.ConfigureAsync();
 await CodeLogic.StartAsync();
 
-var common = Libraries.Get<CommonLibrary>();
+var common = Libraries.Get<CommonLibrary>()!;   // null when not loaded
 ```
 
 ## How it's organized

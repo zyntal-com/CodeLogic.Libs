@@ -19,6 +19,8 @@ dotnet add package CodeLogic.SystemStats
 
 ```csharp
 using CL.SystemStats;
+using CL.SystemStats.Models;     // CpuStats, MemoryStats, ProcessStats, ...
+using CodeLogic.Core.Results;    // Result<T>
 
 await Libraries.LoadAsync<SystemStatsLibrary>();   // register before ConfigureAsync()
 await CodeLogic.ConfigureAsync();
@@ -73,7 +75,7 @@ Each `GetCpuStatsAsync()` reading is the average of the last `CpuSamplesForAvera
 `CpuInfo.PhysicalCoreCount` counts physical cores: on Linux the distinct `(physical id, core id)` pairs in `/proc/cpuinfo` (every processor when the kernel reports no topology, as on many ARM boards); on Windows the processor-core records of `GetLogicalProcessorInformationEx`. `LogicalCoreCount` counts hardware threads. `MaxSpeedMHz` is the registry's nominal clock on Windows and `cpuinfo_max_freq` on Linux (the highest current `cpu MHz` when cpufreq is absent).
 
 ```csharp
-public sealed record CpuInfo(
+public record CpuInfo(
     string ModelName,
     int    PhysicalCoreCount,
     int    LogicalCoreCount,
@@ -81,7 +83,7 @@ public sealed record CpuInfo(
     double MaxSpeedMHz,
     string Architecture);
 
-public sealed record CpuStats(
+public record CpuStats(
     double                OverallUsagePercent,
     IReadOnlyList<double> PerCoreUsagePercent,
     DateTime              SampledAt);
@@ -96,19 +98,19 @@ Result<MemoryInfo>  info = await sys.GetMemoryInfoAsync();
 Result<MemoryStats> mem  = await sys.GetMemoryStatsAsync();
 
 if (info.IsSuccess) Console.WriteLine($"Installed: {info.Value!.TotalGiB:F1} GiB");
-if (mem.IsSuccess)  Console.WriteLine($"Used: {mem.Value!.UsedMiB} MiB ({mem.Value.UsagePercent:F1}%)");
+if (mem.IsSuccess)  Console.WriteLine($"Used: {mem.Value!.UsedMiB:F0} MiB ({mem.Value.UsagePercent:F1}%)");
 ```
 
 `GetMemoryStatsAsync()` publishes `HighMemoryUsageEvent` when `UsagePercent` reaches `HighMemoryThresholdPercent`.
 
 ```csharp
-public sealed record MemoryInfo(long TotalBytes)
+public record MemoryInfo(long TotalBytes)
 {
-    public long   TotalMiB { get; }   // helper
+    public double TotalMiB { get; }   // helper
     public double TotalGiB { get; }   // helper
 }
 
-public sealed record MemoryStats(
+public record MemoryStats(
     long     TotalBytes,
     long     AvailableBytes,
     long     UsedBytes,
@@ -117,7 +119,7 @@ public sealed record MemoryStats(
     double   UsagePercent,
     DateTime SampledAt)
 {
-    public long   UsedMiB      { get; }   // helper
+    public double UsedMiB      { get; }   // helper
     public double TotalGiB     { get; }   // helper
     public double AvailableGiB { get; }   // helper
 }
@@ -148,11 +150,11 @@ if (one.IsFailure)
 
 if (topMem.IsSuccess)
     foreach (var p in topMem.Value!)
-        Console.WriteLine($"{p.Name} (pid {p.ProcessId}) — {p.WorkingSetMiB} MiB");
+        Console.WriteLine($"{p.Name} (pid {p.ProcessId}) — {p.WorkingSetMiB:F0} MiB");
 ```
 
 ```csharp
-public sealed record ProcessStats(
+public record ProcessStats(
     int       ProcessId,
     string    Name,
     long      WorkingSetBytes,
@@ -163,7 +165,7 @@ public sealed record ProcessStats(
     TimeSpan? TotalCpuTime,
     string    PriorityClass)
 {
-    public long WorkingSetMiB { get; }   // helper
+    public double WorkingSetMiB { get; }   // helper
 }
 ```
 
@@ -202,7 +204,7 @@ if (snap.IsSuccess)
 ```
 
 ```csharp
-public sealed record SystemSnapshot(
+public record SystemSnapshot(
     CpuStats                    CpuStats,
     MemoryStats                 MemoryStats,
     TimeSpan                    Uptime,
