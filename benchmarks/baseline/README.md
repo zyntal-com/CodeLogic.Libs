@@ -56,6 +56,34 @@ Same machine and container as above; these numbers are from a run on an idle ser
 The reset on open cost 544 µs per lookup here (1.87×), about one round trip to Docker Desktop. Single-row operations also
 allocate about 2 KB less per call without it. Budgets in `benchmarks/budgets.json` were lowered to match.
 
+## Second round (2026-11-08): lean execution, per-row cache eviction, PostgreSQL reset
+
+Same machine and containers; the "before" column is the run just before these changes (with the connection-reset change
+already in). Times through Docker Desktop vary by a few percent between runs, so single-call times within ~5% are ties;
+allocations are exact.
+
+| Scenario | Before | **After** |
+|---|---:|---:|
+| MySQL get by key | 642 µs / 11.9 KB | **614 µs / 8.9 KB** (raw ADO.NET 594 µs / 5.3 KB, Dapper 590 µs / 7.1 KB) |
+| MySQL get by key, entity cache hit | 2.19 µs / 3.95 KB | **0.79 µs / 1.63 KB** |
+| 95% lookups / 5% updates, entity cache (per operation) | 767 µs / 14.7 KB | **191 µs / 2.4 KB** |
+| Insert one row | 3.73 ms / 11.5 KB | **2.98 ms / 9.8 KB** |
+| Update one row | 3.41 ms / 11.1 KB | **3.33 ms / 10.3 KB** |
+| Count (LINQ / compiled) | 698 µs / 10.1 KB | 708 µs / 9.8 KB; **compiled 695 µs / 6.2 KB** |
+| 32 workers: get by key (per operation) | 55.3 µs / 11.7 KB | **53.7 µs / 7.6 KB** (Dapper 51.9 µs / 6.8 KB) |
+| 32 workers: filter 100 rows | 82.9 µs / 39.4 KB | **75.7 µs / 37.9 KB** |
+| 32 workers: insert | 256 µs / 11.2 KB | **223 µs / 8.9 KB** |
+| PostgreSQL get by key | 639 µs / 8.3 KB | **550 µs / 4.8 KB** (raw Npgsql: 632 µs with reset on close, 592 µs without) |
+
+- **Key lookups** build their SQL once per entity; **per-row eviction** keeps the rest of the entity cache through updates
+  by key; the **per-command path** uses pooled async state machines, no closures and cached converter lookups; insert
+  column lists are cached.
+- **PostgreSQL** skips Npgsql's reset on close and resets only dirty sessions, like MySQL.
+- **Measured and not adopted:** preparing CL.Data's own key lookups on MySQL (597 µs prepared against 596 µs unprepared,
+  same allocations), which would also have made every dirty reset more expensive.
+- **LINQ queries** still build an expression tree (the C# compiler does) and render their SQL on every call; compiled
+  queries avoid both.
+
 ## Findings
 
 - **CL.Data runs at the speed of hand-written ADO.NET and Dapper** (within 1–2%) in every scenario; the database round
