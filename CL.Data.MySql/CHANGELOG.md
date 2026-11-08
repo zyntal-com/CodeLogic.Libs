@@ -17,6 +17,6 @@
 
 ### Fixed
 
-- The package depends on CodeLogic `[5.0.33-preview, 6.0.0)`; the old `[5.0.0-preview, 6.0.0)` floor let NuGet pick the unsigned 5.0.28-preview (CS0012).
+- The package depends on CodeLogic `[5.0.35-preview, 6.0.0)`; the old `[5.0.0-preview, 6.0.0)` floor let NuGet pick the unsigned 5.0.28-preview (CS0012).
 - `OptimizeTableAsync` and `AnalyzeTableAsync` run on the primary as a side effect (`SqlIntent.SideEffect`). Before, they went through the read path and could be sent to a replica or retried.
 - The schema introspector always reads the primary.

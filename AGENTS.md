@@ -23,7 +23,7 @@ you are working on before changing anything.
 > **Current state (2026-11-01):** `main` is the 5.x line (net11, CodeLogic 5 `Result`/`Error`). CL.Data, the
 > redesigned database framework, is on `main` (PR #37). The 5.x libraries are published as previews
 > (`CodeLogic.Data`, `CodeLogic.Common`, `CodeLogic.Storage` and the rest at `5.0.115-preview` and later) and
-> build against CodeLogic `5.0.33-preview` (`CodeLogicPackageVersion` in `Directory.Build.props`). Published
+> build against CodeLogic `5.0.35-preview` (`CodeLogicPackageVersion` in `Directory.Build.props`). Published
 > nuspecs depend on CodeLogic `[<CodeLogicPackageVersion>, 6.0.0)`: the release workflow uses the pinned build version
 > as the floor (older 5.0 previews are unsigned and miss APIs, which broke consumers with CS0012). The `Deploy Documentation`
 > workflow is **disabled**, so the public docs site keeps showing 4.9 until the 5.x libraries are released
