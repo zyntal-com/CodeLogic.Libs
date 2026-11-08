@@ -14,7 +14,7 @@ public sealed class CommonLibrary : ILibrary
     /// <inheritdoc/>
     public LibraryManifest Manifest { get; } = new()
     {
-        Id          = "cl.common",
+        Id          = "CL.Common",
         Name        = "CL.Common",
         Version     = CL.Internal.InternalLibraryVersion.Current,
         Description = "General-purpose utility toolkit — security, generators, caching, resilience, scheduling, hashing, and more",

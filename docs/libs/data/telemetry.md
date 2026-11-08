@@ -18,7 +18,7 @@ builder.Services.AddOpenTelemetry()
 |---|---|
 | `db.system.name` | `mysql`, `postgresql`, `microsoft.sql_server`, `sqlite` |
 | `db.namespace` | connection name |
-| `db.operation.name` / `db.collection.name` | `select`, `insert`, `update`, `delete`, `upsert`, `raw` / main table |
+| `db.operation.name` / `db.collection.name` | `select`, `insert`, `update`, `delete`, `upsert`, `batch`, `raw` / main table |
 | `db.query.text` | the parameterized SQL (placeholders only, never values) |
 | `server.address`, `server.port`, `cl.data.node` | the node that served the command (primary or replica name) |
 | `db.response.returned_rows` | rows read or affected |
@@ -34,7 +34,7 @@ builder.Services.AddOpenTelemetry()
 | `db.client.operation.duration` | s | histogram; tags `db.system.name`, `db.namespace`, `db.operation.name`, `db.collection.name`, `error.type` |
 | `cl.data.rows` | {row} | rows read or affected |
 | `cl.data.retries` | {retry} | tagged with the error that caused the retry |
-| `cl.data.cache.hits` / `cl.data.cache.misses` | | result cache |
+| `cl.data.cache.hits` / `cl.data.cache.misses` | {hit} / {miss} | result cache |
 | `cl.data.circuit.opened` | {event} | per node |
 | `cl.data.replica.lag` | ms | observable gauge per replica |
 
@@ -46,9 +46,9 @@ Connection-pool metrics come from the drivers' own meters: MySqlConnector, Npgsq
 |---|---|---|
 | `slowQueryThresholdMs` (default 1000) | `SlowQueryEvent` | Commands slower than the threshold are reported with their SQL and duration. |
 | `captureExplainOnSlowQuery` | `SlowQueryEvent.Plan` | For slow reads outside transactions, the plan is captured on a separate connection in the background, without running the statement. Only a single plain read is explained: batches and raw statements that are not plain `SELECT`s get no plan, since putting `EXPLAIN` in front would run the rest again. The caller never waits for it. |
-| `nPlusOneThreshold` | `NPlusOneDetectedEvent` | The same parameterized query running this many times within a second is reported once per window. |
+| `nPlusOneThreshold` (default 0, off) | `NPlusOneDetectedEvent` | The same parameterized query running this many times within a second is reported once per window. |
 | `publishQueryEvents` | `QueryExecutedEvent` | Every command is reported, with operation, table, duration, rows and success. This is frequent, so it's off by default. |
-| `data.cache.publishEvents` | `CacheHitEvent` / `CacheMissEvent` | Every cached read is reported. |
+| `publishEvents` (`config.data.cache.json`) | `CacheHitEvent` / `CacheMissEvent` | Every cached read is reported. |
 
 **Plan formats:**
 - MySQL: `EXPLAIN FORMAT=TREE`.

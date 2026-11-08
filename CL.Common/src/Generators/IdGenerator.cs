@@ -22,7 +22,7 @@ public static class IdGenerator
     /// <summary>
     /// Generates a new <see cref="Guid"/> as a standard formatted string (e.g., <c>"a1b2c3d4-e5f6-..."</c>).
     /// </summary>
-    /// <returns>A new uppercase GUID string with dashes.</returns>
+    /// <returns>A new lowercase GUID string with dashes.</returns>
     public static string NewGuid() => Guid.NewGuid().ToString();
 
     /// <summary>

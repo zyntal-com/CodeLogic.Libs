@@ -14,7 +14,7 @@ public sealed class SteamOpenIdResult
     /// <summary>
     /// The assertion's <c>openid.response_nonce</c>, unique per assertion Steam issues. <c>VerifyAsync</c> records it
     /// in its <see cref="Services.Steam.IOpenIdNonceStore"/> and refuses a nonce it has verified before
-    /// (<c>social.steam.openid_replayed</c>), so an application needs its own tracking only when it runs several
+    /// (<see cref="SocialConnectErrorCodes.SteamOpenIdReplayed"/>), so an application needs its own tracking only when it runs several
     /// servers without a shared store.
     /// </summary>
     public required string ResponseNonce { get; init; }

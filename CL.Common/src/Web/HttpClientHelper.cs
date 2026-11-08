@@ -28,13 +28,50 @@ public static class HttpClientHelper
     /// </summary>
     public const int MaxErrorBodyLength = 256;
 
+    /// <summary>
+    /// The error code of a non-success response: <c>http.</c> plus the status code (for example <c>http.404</c>).
+    /// </summary>
+    public static string StatusErrorCode(int statusCode) => string.Create(System.Globalization.CultureInfo.InvariantCulture, $"http.{statusCode}");
+
+    /// <summary>
+    /// The error for a non-success response. The kind follows the status: 400/422 validation, 401/403 unauthorized,
+    /// 404/410 not found, 409/412 conflict, 408/504 timeout, 429/502/503 unavailable, anything else internal. The code is
+    /// <see cref="StatusErrorCode"/>; the message is <c>HTTP {status}: {body}</c> with the body cut to
+    /// <see cref="MaxErrorBodyLength"/> characters.
+    /// </summary>
     private static Error HttpFailure(HttpResponseMessage response, string body)
     {
         var excerpt = body.Length <= MaxErrorBodyLength
             ? body
             : string.Concat(body.AsSpan(0, MaxErrorBodyLength), $"... ({body.Length} chars)");
-        return Error.Internal(ErrorCode.Internal, $"HTTP {(int)response.StatusCode}: {excerpt}");
+        var status = (int)response.StatusCode;
+        var code = StatusErrorCode(status);
+        var message = $"HTTP {status}: {excerpt}";
+        return status switch
+        {
+            400 or 422 => Error.Validation(code, message),
+            401 or 403 => Error.Unauthorized(code, message),
+            404 or 410 => Error.NotFound(code, message),
+            409 or 412 => Error.Conflict(code, message),
+            408 or 504 => Error.Timeout(code, message),
+            429 or 502 or 503 => Error.Unavailable(code, message),
+            _ => Error.Internal(code, message),
+        };
     }
+
+    /// <summary>
+    /// The error for a request that got no response: a timeout (<c>connection.timeout</c>), a transport failure
+    /// (unavailable, <c>connection.failed</c>), a request that could not be built (invalid URL or header: validation,
+    /// <c>invalid_argument</c>), or anything else (internal, <c>connection.failed</c>).
+    /// </summary>
+    private static Error RequestFailure(string method, Exception ex) => ex switch
+    {
+        TaskCanceledException or TimeoutException => Error.Timeout(ErrorCode.ConnectionTimeout, $"{method} request timed out", ex.Message),
+        HttpRequestException => Error.Unavailable(ErrorCode.ConnectionFailed, $"{method} request failed", ex.Message),
+        FormatException or ArgumentException or InvalidOperationException =>
+            Error.Validation(ErrorCode.InvalidArgument, $"{method} request is not valid", ex.Message),
+        _ => Error.Internal(ErrorCode.ConnectionFailed, $"{method} request failed", ex.Message),
+    };
 
     // ── GET ───────────────────────────────────────────────────────────────────
 
@@ -51,7 +88,7 @@ public static class HttpClientHelper
                 return HttpFailure(response, body);
             return body;
         }
-        catch (Exception ex) { return Error.Internal(ErrorCode.ConnectionFailed, "GET request failed", ex.Message); }
+        catch (Exception ex) { return RequestFailure("GET", ex); }
     }
 
     /// <summary>Sends a GET request and deserializes the JSON response to <typeparamref name="T"/>.</summary>
@@ -89,7 +126,7 @@ public static class HttpClientHelper
                 return HttpFailure(response, responseBody);
             return responseBody;
         }
-        catch (Exception ex) { return Error.Internal(ErrorCode.ConnectionFailed, "POST request failed", ex.Message); }
+        catch (Exception ex) { return RequestFailure("POST", ex); }
     }
 
     /// <summary>Sends a POST request and deserializes the JSON response.</summary>
@@ -127,7 +164,7 @@ public static class HttpClientHelper
                 return HttpFailure(response, responseBody);
             return responseBody;
         }
-        catch (Exception ex) { return Error.Internal(ErrorCode.ConnectionFailed, "PUT request failed", ex.Message); }
+        catch (Exception ex) { return RequestFailure("PUT", ex); }
     }
 
     // ── DELETE ────────────────────────────────────────────────────────────────
@@ -147,7 +184,7 @@ public static class HttpClientHelper
             }
             return Result.Success();
         }
-        catch (Exception ex) { return Error.Internal(ErrorCode.ConnectionFailed, "DELETE request failed", ex.Message); }
+        catch (Exception ex) { return RequestFailure("DELETE", ex); }
     }
 
     // -- Source-generated JSON (trim / Native AOT safe) ----------------------------
@@ -228,7 +265,7 @@ public static class HttpClientHelper
                 return HttpFailure(response, responseBody);
             return responseBody;
         }
-        catch (Exception ex) { return Error.Internal(ErrorCode.ConnectionFailed, $"{method} request failed", ex.Message); }
+        catch (Exception ex) { return RequestFailure(method.Method, ex); }
     }
 
     private static Result<T> DeserializeBody<T>(string body, JsonTypeInfo<T> typeInfo)

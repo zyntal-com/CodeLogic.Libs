@@ -5,10 +5,9 @@ All notable changes to **CodeLogic.NetUtils** are documented here. Versions foll
 
 ## 5.0 (unreleased)
 
-### Audit completion (2026-11-07)
+### Changed
 
 - Propagate cancellation and timeout through archive extraction reads; share bounded single-line log formatting across libraries.
-
 
 ### Breaking
 
@@ -16,6 +15,36 @@ All notable changes to **CodeLogic.NetUtils** are documented here. Versions foll
   4.9.x. CodeLogic 5 makes `Result<T>` / `Result` C# 15 unions and `Error` a closed record with
   kind subtypes (`NotFoundError`, `ValidationError`, ...). Results can now be matched exhaustively
   with `switch`.
+- **`DnsblCheckResult` and `IpLocationResult` are removed; DNSBL checks and GeoIP lookups return CodeLogic
+  `Result<T>`.** A check or lookup that could not run is an `Error` whose `Code` is a `NetUtilsErrorCodes`
+  constant, instead of a record with `ErrorMessage` set. This supersedes the 5.0 preview entries below that
+  mention `DnsblCheckStatus.Error`, `DnsblCheckStatus.Cancelled`, `ErrorMessage` and `IsSuccessful`.
+
+  | Old | New |
+  |---|---|
+  | `Task<DnsblCheckResult> DnsblChecker.CheckIpAsync(string, CancellationToken)` | `Task<Result<DnsblCheck>>` |
+  | `Task<DnsblCheckResult> DnsblChecker.CheckIpAsync(string, DnsblCheckRequest, CancellationToken)` | `Task<Result<DnsblCheck>>` |
+  | `Task<IpLocationResult> GeoIpService.LookupIpAsync(...)` | `Task<Result<IpLocation>>` |
+  | `DnsblCheckResult.IpAddress`, `AddressType`, `Status`, `IsBlacklisted`, `MatchedService`, `FailedServices`, `CheckedAt` | the same members on `DnsblCheck` (via `result.Value` or a `switch`); `IsBlacklisted` is now computed from `Status` |
+  | `DnsblCheckStatus.Error` (invalid address) | `ValidationError` `netutils.invalid_ip_address` |
+  | `DnsblCheckStatus.Error` (DNSBL checking disabled, also from `NetUtilsLibrary.Dnsbl` while off) | `UnavailableError` `netutils.dnsbl_disabled` |
+  | `DnsblCheckStatus.Error` (unexpected exception; `ErrorMessage` was the exception text) | `InternalError` `netutils.dnsbl_check_failed`, a fixed message and the exception type in `Details` |
+  | `DnsblCheckStatus.Cancelled` | `UnavailableError` `netutils.cancelled` (nothing is thrown, as before) |
+  | `DnsblCheckStatus.Indeterminate` with `ErrorMessage` | still a success with `Status = Indeterminate`; the zones are in `FailedServices` |
+  | `DnsblCheckResult.Blacklisted/NotBlacklisted/Indeterminate/Error/Cancelled(...)` factories | removed (the `DnsblCheck` factories are internal) |
+  | `IpLocationResult` data members | the same members on `IpLocation` |
+  | `IpLocationResult.IsSuccessful` | `result.IsSuccess` |
+  | `IpLocationResult.ErrorMessage` | `result.Error?.Message` |
+  | `IpLocationResult.NotFound(...)`, and a lookup that found an entry without country, ASN or ISP | `NotFoundError` `netutils.location_not_found` |
+  | `IpLocationResult.Error(...)` for an invalid address | `ValidationError` `netutils.invalid_ip_address` |
+  | `IpLocationResult.Error(...)` before a database is open | `UnavailableError` `netutils.geoip_unavailable` |
+  | `IpLocationResult.Error(...)` for a reader failure (exception text) | `InternalError` `netutils.geoip_lookup_failed`, a fixed message and the exception type in `Details` |
+  | `NetUtilsErrors.XxxCode` constants (public) | `NetUtilsErrorCodes.Xxx` (`DownloadRefusedCode` → `DownloadRefused`, ...); the `NetUtilsErrors` factories are internal now |
+
+  `DnsblCheckStatus` keeps only `NotBlacklisted`, `Blacklisted` and `Indeterminate`. New codes:
+  `netutils.invalid_ip_address`, `netutils.dnsbl_disabled`, `netutils.dnsbl_check_failed`,
+  `netutils.location_not_found`, `netutils.geoip_unavailable`, `netutils.geoip_lookup_failed`. New localized strings
+  `NetUtilsStrings.DnsblCheckFailed` and `NetUtilsStrings.GeoIpLookupFailed`.
 - **A DNSBL check that could not query a zone is no longer reported as clean.** Timeouts, resolver
   failures and DNSBL error answers (Spamhaus `127.255.255.x`) used to end as `NotBlacklisted`. When no
   zone lists the address but some zone failed, the result is now `Status = DnsblCheckStatus.Indeterminate`
@@ -27,7 +56,7 @@ All notable changes to **CodeLogic.NetUtils** are documented here. Versions foll
   validation fails.
 - **SharpCompress dependency removed.** The GeoIP archive is read with the built-in `System.Formats.Tar`
   and `System.IO.Compression` (`tar.gz` and `zip`).
-- **`GeoIpService.DownloadDatabaseAsync` returns `Result`** (audit round 5). It used to swallow every failure into a
+- **`GeoIpService.DownloadDatabaseAsync` returns `Result`**. It used to swallow every failure into a
   log line; it now reports a `netutils.*` error (`NetUtilsErrors`: `download_refused`, `download_failed`,
   `download_timeout`, `download_too_large`, `checksum_unavailable`, `checksum_mismatch`, `invalid_database`,
   `cancelled`). `await`-ing it as before still compiles.
@@ -59,7 +88,7 @@ All notable changes to **CodeLogic.NetUtils** are documented here. Versions foll
   `DnsblCheckResult.FailedServices` and `DnsblCheckResult.Indeterminate(...)`.
 - `DnsblCheckRequest.ParallelQueries` (default `true`).
 - `GeoIpConfig.TrustedDownloadHosts` and `GeoIpConfig.TryGetTrustedDownloadUri(...)`.
-- **`NetUtilsLibrary` implements `IConfigReloadable`** (audit round 5): a change to `config.netutils.json` (admin UI,
+- **`NetUtilsLibrary` implements `IConfigReloadable`**: a change to `config.netutils.json` (admin UI,
   `LibraryManager.UpdateConfigAsync`, reload, file watcher) is applied without a restart. DNSBL settings replace
   `Dnsbl` at once; GeoIP settings build a new `GeoIpService` (downloading when needed) and swap it in, the old one
   closing after a grace period; a GeoIP configuration that fails to initialize keeps the previous database serving
@@ -72,7 +101,7 @@ All notable changes to **CodeLogic.NetUtils** are documented here. Versions foll
 
 ### Fixed
 
-- **`DnsblCheckRequest.IsAllowedAsync` receives the canonical address** (audit round 5). It was given the caller's
+- **`DnsblCheckRequest.IsAllowedAsync` receives the canonical address**. It was given the caller's
   text, so an allowlist holding `1.2.3.4` did not match a check for `::ffff:1.2.3.4` or `0x01.0x02.0x03.0x04`; it now
   gets `ip.ToString()` of the parsed (IPv4-unmapped) address. `DnsblCheckResult.IpAddress` still echoes the input.
 - **Caller cancellation of a DNSBL check is no longer reported as `Status = Error`**; see `DnsblCheckStatus.Cancelled`.
@@ -82,14 +111,14 @@ All notable changes to **CodeLogic.NetUtils** are documented here. Versions foll
 - `NetUtilsLibrary` awaits the GeoIP initialization with `ConfigureAwait(false)` and a token that is cancelled when
   the library stops, so a download still running at shutdown gives up instead of outliving the library.
 
-- **`NetUtilsLibrary.Dnsbl` no longer throws when DNSBL checking is disabled** (audit 2026-11-01). The docs
+- **`NetUtilsLibrary.Dnsbl` no longer throws when DNSBL checking is disabled**. The docs
   said it is always available, but with `dnsbl.enabled` (or `enabled`) off it threw `InvalidOperationException`.
   It now returns a checker whose checks answer `Status = Error` with "DNSBL checking is disabled", without a
   DNS query. It still throws before the library has initialized.
-- **GeoIP is no longer City-only** (audit 2026-11-01). `DatabaseType` was documented as any edition, but only a
+- **GeoIP is no longer City-only**. `DatabaseType` was documented as any edition, but only a
   City database installed and every lookup called `City()`. A downloaded database must now be of the same kind
   as `DatabaseType` (a Country download never replaces a City database).
-- **`NetUtilsStrings` is used** (audit 2026-11-01). The localization model was registered but nothing read it.
+- **`NetUtilsStrings` is used**. The localization model was registered but nothing read it.
   Lifecycle and DNSBL/GeoIP log lines, and the error messages in `DnsblCheckResult` / `IpLocationResult`
   (invalid address, DNSBL disabled, GeoIP not initialized, location not found), now come from it; new strings
   `InvalidIpAddressFormat`, `DnsblDisabled`, `GeoIpNotInitialized`, `LocationNotFound`. The English defaults
@@ -123,6 +152,10 @@ All notable changes to **CodeLogic.NetUtils** are documented here. Versions foll
 
 - Configuration examples use the camelCase keys the CodeLogic loader reads (PascalCase keys were ignored).
 - The DNSBL guide describes the actual query order, fallback rule and failure handling.
+- The guide lists `DnsblCheckStatus.Cancelled` and the `Cancelled` factory, shows `DnsblCheckResult` and
+  `IpLocationResult` as plain (unsealed) records, as in the code, and its status switch handles `Cancelled`.
+  The setup examples add the `CL.NetUtils.Models` using they need.
+- The README's last line, a relative link that broke on nuget.org, is removed.
 
 ## 2026-10-30
 

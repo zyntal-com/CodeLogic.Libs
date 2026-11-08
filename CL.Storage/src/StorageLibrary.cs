@@ -29,7 +29,7 @@ public sealed partial class StorageLibrary : ILibrary, IAsyncDisposable
 {
     private readonly Lock _stateGate = new();
     private readonly Lock _registryGate = new();
-    // Transfer queues opened from this library; stopping the library stops them first (B43).
+    // Transfer queues opened from this library; stopping the library stops them first.
     private readonly List<Queue.StorageTransferQueue> _queues = [];
     private readonly SemaphoreSlim _mutationGate = new(1, 1);
     private readonly Dictionary<string, BackendEntry> _registry = [with(StringComparer.OrdinalIgnoreCase)];

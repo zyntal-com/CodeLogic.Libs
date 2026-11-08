@@ -17,6 +17,8 @@ dotnet add package CodeLogic.SystemStats
 
 ```csharp
 using CL.SystemStats;
+using CL.SystemStats.Models;
+using CodeLogic.Core.Results;
 
 await Libraries.LoadAsync<SystemStatsLibrary>();   // register before ConfigureAsync()
 await CodeLogic.ConfigureAsync();
@@ -31,7 +33,7 @@ if (cpu.IsSuccess)
 
 Result<MemoryStats> mem = await sys.GetMemoryStatsAsync();
 if (mem.IsSuccess)
-    Console.WriteLine($"RAM: {mem.Value!.UsagePercent:F1}% ({mem.Value.UsedMiB} MiB used)");
+    Console.WriteLine($"RAM: {mem.Value!.UsagePercent:F1}% ({mem.Value.UsedMiB:F0} MiB used)");
 
 // One combined reading: CPU + memory + uptime + top processes.
 Result<SystemSnapshot> snap = await sys.GetSystemSnapshotAsync();
@@ -91,5 +93,3 @@ Full guide: **[CL.SystemStats documentation](https://zyntal-com.github.io/CodeLo
 ## License
 
 MIT — see [LICENSE](https://github.com/zyntal-com/CodeLogic.Libs/blob/main/LICENSE).
-
-Audit completion notes and current limits are in [the guide](../docs/libs/systemstats.md).

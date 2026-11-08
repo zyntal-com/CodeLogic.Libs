@@ -34,7 +34,7 @@ public sealed class TransferQueueTests
         Assert.All(queue.Jobs, job => Assert.NotNull(job.LastReport));
     }
 
-    // needs-review E: three connections allow six jobs under the per-connection limit, so the global limit of four is what binds.
+    // Three connections allow six jobs under the per-connection limit, so the global limit of four is what binds.
     [Fact]
     public async Task Concurrency_never_exceeds_the_configured_limits()
     {
@@ -216,7 +216,7 @@ public sealed class TransferQueueTests
         Assert.Equal(StorageTransferState.NeedsReconciliation, job.State);
         Assert.True(job.LastReport!.DestinationCommitted);
 
-        // needs-review E: the retried job runs, and with the source deletable now the move completes.
+        // The retried job runs, and with the source deletable now the move completes.
         Volatile.Write(ref deletable, true);
         Assert.True((await queue.RetryAsync(job.Id)).IsSuccess);
         await queue.WaitForIdleAsync().WaitAsync(Wait);
@@ -331,7 +331,7 @@ public sealed class TransferQueueTests
         var lease = await store.TryClaimAsync("shared", "other-worker", revision, TimeSpan.FromMinutes(5), default);
         Assert.NotNull(lease);
 
-        // needs-review E: no fixed delay; a job leased elsewhere leaves the queue idle without starting it.
+        // No fixed delay; a job leased elsewhere leaves the queue idle without starting it.
         var starts = 0;
         await using var second = await fixture.OpenAsync(new StorageTransferQueueOptions { Store = store, StartPaused = true });
         second.JobChanged += job => { if (job.State == StorageTransferState.Running) Interlocked.Increment(ref starts); };
@@ -388,7 +388,7 @@ public sealed class TransferQueueTests
             await queue.WaitForIdleAsync().WaitAsync(Wait);
         }
 
-        // needs-review E: the oldest two leave the store too, each announced once.
+        // The oldest two leave the store too, each announced once.
         await Eventually(() => { lock (removed) return removed.Count == 2; });
         Assert.Equal(["j2", "j3"], queue.Jobs.Select(job => job.Id).Order());
         Assert.Equal(["j2", "j3"], (await store.LoadAsync(default)).Select(record => record.Id).Order());
@@ -408,7 +408,7 @@ public sealed class TransferQueueTests
 
         Assert.Equal(4, queue.ConcurrencyLimit);
 
-        // needs-review E: a transient failure halves the limit.
+        // A transient failure halves the limit.
         var busy = new FakeStorageBackend(
             "Busy",
             capabilities: new StorageCapabilities(StorageFeature.FileCopy | StorageFeature.ServerSideCopy),

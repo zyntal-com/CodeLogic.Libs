@@ -3,8 +3,8 @@ using CodeLogic.Core.Localization;
 namespace CL.NetUtils.Localization;
 
 /// <summary>
-/// Localized string resources for the CL.NetUtils library: the library's log messages and the error messages it puts
-/// in <see cref="Models.DnsblCheckResult.ErrorMessage"/> and <see cref="Models.IpLocationResult.ErrorMessage"/>.
+/// Localized string resources for the CL.NetUtils library: the library's log messages and the
+/// <see cref="CodeLogic.Core.Results.Error.Message"/> of the errors a DNSBL check or a GeoIP lookup returns.
 /// Templates use <see cref="string.Format(string, object?[])"/> placeholders.
 /// </summary>
 [LocalizationSection("netutils")]
@@ -46,9 +46,15 @@ public class NetUtilsStrings : LocalizationModelBase
     [LocalizedString(Description = "Error message of a DNSBL check that the caller cancelled before it finished")]
     public string DnsblCancelled { get; set; } = "The DNSBL check was cancelled";
 
+    [LocalizedString(Description = "Error message of a DNSBL check that failed on an unexpected exception (the details are in the log)")]
+    public string DnsblCheckFailed { get; set; } = "The DNSBL check failed";
+
     [LocalizedString(Description = "Error message of a GeoIP lookup before a database is open")]
     public string GeoIpNotInitialized { get; set; } = "GeoIP service not initialized";
 
     [LocalizedString(Description = "Error message of a GeoIP lookup for an address the database does not contain")]
     public string LocationNotFound { get; set; } = "Location not found";
+
+    [LocalizedString(Description = "Error message of a GeoIP lookup that failed inside the database reader (the details are in the log)")]
+    public string GeoIpLookupFailed { get; set; } = "The GeoIP lookup failed";
 }

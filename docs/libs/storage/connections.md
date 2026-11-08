@@ -296,9 +296,8 @@ Do not dispose reusable clients returned by `GetNativeClient`; dispose session l
 
 ### Editing the config while running
 
-The same rules apply when a `config.storage*.json` section is changed outside the library (CodeLogic
-4.9+) — through `Libraries.UpdateConfigAsync`, `Libraries.ReloadConfigAsync`, or the config file
-watcher:
+The same rules apply when a `config.storage*.json` section is changed outside the library — through
+`Libraries.UpdateConfigAsync`, `Libraries.ReloadConfigAsync`, or the config file watcher:
 
 - **Changed or added connection**: built and health-checked, then swapped in; the connection it
   replaces finishes its in-flight operations and leases before it is disposed.
@@ -368,7 +367,7 @@ if (!report.Succeeded && report.ServerIdentity is { Kind: "tls-certificate" } ce
 ## Diagnosing a live connection
 
 ```csharp
-var diagnostics = (await storage.GetConnectionDiagnosticsAsync("partner")).Value!;
+var diagnostics = (await storage.GetConnectionDiagnosticsAsync("partner")).ValueOrThrow();
 Console.WriteLine($"{diagnostics.Host}:{diagnostics.Port} over {diagnostics.Security}");
 Console.WriteLine($"{diagnostics.ServerSoftware} ({diagnostics.ServerSystem})");
 ```

@@ -33,7 +33,7 @@ public sealed class TwoFactorAuthLibrary : ILibrary
         Id = "CL.TwoFactorAuth",
         Name = "Two-Factor Auth Library",
         Version = CL.Internal.InternalLibraryVersion.Current,
-        Description = "TOTP two-factor authentication with QR code generation for CodeLogic 4 applications",
+        Description = "TOTP two-factor authentication with QR code generation for CodeLogic 5 applications",
         Author = "Zyntal.com",
         Tags = ["security", "2fa", "totp", "qrcode", "authentication"]
     };
@@ -178,7 +178,11 @@ public sealed class TwoFactorAuthLibrary : ILibrary
     /// <param name="code">The 6-digit TOTP code to validate (whitespace is ignored).</param>
     /// <param name="secretKey">The Base32-encoded TOTP secret key.</param>
     /// <param name="userId">The user the code belongs to; <c>null</c> checks the code only.</param>
-    public TotpValidationResult ValidateTotp(string code, string secretKey, string? userId = null) => Authenticator.ValidateTotp(code, secretKey, userId);
+    /// <returns>
+    /// The accepted <see cref="TotpMatch"/>, or an error coded with <see cref="TwoFactorAuthErrorCodes"/>; see
+    /// <see cref="TwoFactorAuthenticator.ValidateTotp(string, string, string?)"/>.
+    /// </returns>
+    public Result<TotpMatch> ValidateTotp(string code, string secretKey, string? userId = null) => Authenticator.ValidateTotp(code, secretKey, userId);
 
     /// <summary>
     /// Generates a QR code data URI for embedding in HTML.

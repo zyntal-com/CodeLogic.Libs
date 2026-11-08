@@ -55,5 +55,3 @@ Encoding writes only pixels unless asked otherwise:
 - `StripMetadata()` in the pipeline overrides both options.
 
 `ImageTools.ProcessUpload` always strips, which removes GPS positions from user uploads.
-
-Pooled encoded-image streams acquire references atomically: concurrent final disposal cannot resurrect a buffer already returned to the pool. An acquisition that loses that race throws `ObjectDisposedException`.

@@ -41,7 +41,7 @@ public sealed class ResumeTests
 
         Assert.True(resumed.IsSuccess, resumed.Error?.ToString());
         Assert.Equal(Full, (await storage.DownloadBytesAsync("big.bin")).Value);
-        // needs-review E: only the tail was read; a full re-upload would read all 20 bytes.
+        // Only the tail was read; a full re-upload would read all 20 bytes.
         Assert.Equal(Full.Length - 7, source.BytesRead);
     }
 

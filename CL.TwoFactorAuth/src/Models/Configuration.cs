@@ -86,65 +86,26 @@ public enum QrErrorCorrectionLevel
 }
 
 /// <summary>
-/// Represents the result of a TOTP validation attempt.
+/// A TOTP code that was accepted: the success value of <c>TwoFactorAuthenticator.ValidateTotp</c> and
+/// <c>TotpLoginGuard.Validate</c>. A refused code is an error instead; see <see cref="TwoFactorAuthErrorCodes"/>.
 /// </summary>
-public record TotpValidationResult
+public sealed record TotpMatch
 {
-    /// <summary>Whether the provided TOTP code was valid.</summary>
-    public required bool IsValid { get; init; }
-
     /// <summary>
     /// The absolute TOTP time step that matched: Unix time divided by the time step, the same unit as
-    /// <c>TwoFactorAuthenticator.GetCurrentTimeWindow()</c>. <c>null</c> when validation failed.
+    /// <c>TwoFactorAuthenticator.GetCurrentTimeWindow()</c>.
     /// <para>
-    /// Use it to stop replay: store the last accepted step per user and reject a code whose step is not
-    /// greater. The check and the update must be one atomic operation (for example a conditional update
-    /// that only succeeds while the stored step is lower), or two concurrent requests can both accept the
-    /// same code.
+    /// Validation with a <c>userId</c> already refuses a replayed step through the <c>ITotpUsedStepStore</c>. Without
+    /// one, use it to stop replay yourself: store the last accepted step per user and reject a code whose step is not
+    /// greater. The check and the update must be one atomic operation (for example a conditional update that only
+    /// succeeds while the stored step is lower), or two concurrent requests can both accept the same code.
     /// </para>
     /// </summary>
-    public long? MatchedWindow { get; init; }
+    public required long MatchedWindow { get; init; }
 
     /// <summary>
     /// Clock drift of the match in time steps, relative to the step at validation time: <c>0</c> for the
-    /// current step, negative for a past step, positive for a future one. <c>null</c> when validation failed.
+    /// current step, negative for a past step, positive for a future one.
     /// </summary>
-    public int? WindowOffset { get; init; }
-
-    /// <summary>
-    /// The generic <see cref="ErrorMessage"/> returned when validation could not run (for example a malformed
-    /// secret key). The underlying exception is logged, never returned, so the message is safe to show a user.
-    /// </summary>
-    public const string ValidationErrorMessage = "The code could not be validated.";
-
-    /// <summary>
-    /// The <see cref="ErrorMessage"/> returned when the code matched but its time step was already accepted for the
-    /// user (replay), or an older step than the last accepted one: the <c>ITotpUsedStepStore</c> refused it.
-    /// </summary>
-    public const string ReplayedCodeMessage = "This code has already been used.";
-
-    /// <summary>
-    /// Human-readable error message when <see cref="IsValid"/> is <c>false</c>: <c>"Invalid code"</c> for a
-    /// code that did not match, <see cref="ReplayedCodeMessage"/> for a code used before, and
-    /// <see cref="ValidationErrorMessage"/> when validation failed. Never contains exception text.
-    /// </summary>
-    public string? ErrorMessage { get; init; }
-
-    /// <summary>Creates a successful validation result.</summary>
-    /// <param name="matchedWindow">The absolute time step that matched.</param>
-    /// <param name="windowOffset">The matched step relative to the step at validation time.</param>
-    public static TotpValidationResult Valid(long? matchedWindow = null, int? windowOffset = null) => new()
-    {
-        IsValid = true,
-        MatchedWindow = matchedWindow,
-        WindowOffset = windowOffset
-    };
-
-    /// <summary>Creates a failed validation result with an optional error message.</summary>
-    /// <param name="msg">Human-readable reason for failure.</param>
-    public static TotpValidationResult Invalid(string msg = "Invalid code") => new()
-    {
-        IsValid = false,
-        ErrorMessage = msg
-    };
+    public required int WindowOffset { get; init; }
 }

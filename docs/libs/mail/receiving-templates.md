@@ -62,6 +62,21 @@ if (one.IsSuccess)
 
 `GetMessageAsync` fetches individual MIME sections, never the complete message. `Imap.MaxAttachmentBytes` limits each decoded attachment (25 MiB by default), `MaxBodyBytes` limits each text/HTML body (1 MiB), `MaxMessageBytes` limits their combined decoded bytes (32 MiB), and `MaxAttachments` limits returned descriptors (100). Wire reads are limited independently, even if BODYSTRUCTURE lies about the size. Oversized content is omitted with `TooLarge = true`; `ContentTruncated` on the message also reports omitted bodies/descriptors. `Size` is zero when decoding was skipped and otherwise the decoded size observed; `EncodedSize` is the server's untrusted encoded length. `FetchMessagesAsync` / `SearchAsync` fetch bodies only when requested and return attachment descriptors without fetching their content.
 
+### Fetch one attachment on demand
+
+Use the descriptor's `PartSpecifier` to request just one attachment after listing the message:
+
+```csharp
+var result = await mail.Imap.GetAttachmentAsync("INBOX", message.Uid, attachment.PartSpecifier!, cancellationToken);
+if (result.IsFailure) return;
+var downloaded = result.Value!;
+if (!downloaded.TooLarge && downloaded.Content is { } bytes)
+    await destination.WriteAsync(bytes, cancellationToken);
+```
+
+This method applies the smaller of the attachment and message budgets, plus a wire limit. It never fetches sibling attachments.
+The budgets bound retained decoded bytes, not exact process working set: MIME parsing, wire buffers and strings have overhead.
+
 ### Search
 
 `SearchAsync` ANDs all supplied criteria together. `ImapSearchCriteria.All()` and `.Unread()` cover the common cases; the rest are optional fields. Results default to a `maxResults` of 50.
@@ -136,6 +151,7 @@ public sealed record ReceivedMessage
     public MessageFlags Flags { get; init; }
     public string? Folder { get; init; }
     public IReadOnlyList<ReceivedAttachment> Attachments { get; init; }
+    public bool ContentTruncated { get; init; }   // a body, attachment or descriptor was omitted by a budget
 }
 
 public sealed record ReceivedAttachment
@@ -199,6 +215,7 @@ public sealed class ImapSearchCriteria
 | `DeleteFolderAsync(fullName, ct)` | `Result` |
 | `FetchMessagesAsync(folder, offset, count, includeBody = false, ct)` | `Result<IReadOnlyList<ReceivedMessage>>` |
 | `GetMessageAsync(folder, uid, ct)` | `Result<ReceivedMessage>` |
+| `GetAttachmentAsync(folder, uid, partSpecifier, ct)` | `Result<ReceivedAttachment>` |
 | `SearchAsync(folder, criteria, includeBody = false, maxResults = 50, ct)` | `Result<IReadOnlyList<ReceivedMessage>>` |
 | `MoveMessageAsync(source, uid, destination, ct)` | `Result` |
 | `CopyMessageAsync(source, uid, destination, ct)` | `Result` |
@@ -304,8 +321,8 @@ public sealed record MailTemplate
     public string? HtmlBody { get; init; }
     public string? Layout { get; init; }                 // id of a layout template
     public IReadOnlyList<string> Variables { get; init; }
-    public DateTimeOffset CreatedAt { get; init; }
-    public DateTimeOffset? ModifiedAt { get; init; }
+    public DateTime CreatedAt { get; init; }             // UTC
+    public DateTime? ModifiedAt { get; init; }
 
     public static MailTemplate Create(
         string id, string subject,
@@ -363,17 +380,3 @@ Add the `Imap` section to `config.mail.json` to enable reading. Omit it entirely
 - [API Reference](../../api/index.md) — generated type/member documentation.
 - [Package on NuGet](https://www.nuget.org/packages/CodeLogic.Mail)
 
-## Fetching an attachment on demand
-
-Use the descriptor's `PartSpecifier` to request just one attachment after listing the message:
-
-```csharp
-var result = await imap.GetAttachmentAsync("INBOX", message.Uid, attachment.PartSpecifier!, cancellationToken);
-if (result.IsFailure) return;
-var downloaded = result.Value!;
-if (!downloaded.TooLarge && downloaded.Content is { } bytes)
-    await destination.WriteAsync(bytes, cancellationToken);
-```
-
-This method applies the smaller of the attachment and message budgets, plus a wire limit. It never fetches sibling attachments.
-The budgets bound retained decoded bytes, not exact process working set: MIME parsing, wire buffers and strings have overhead.

@@ -10,8 +10,11 @@ namespace CL.Mail.Models;
 [ConfigSection("mail")]
 public sealed class MailConfig : ConfigModelBase
 {
-    /// <summary>Whether the library is active. When false, all operations are no-ops.</summary>
-    [ConfigField(Label = "Enabled", Description = "Master switch for mail delivery and inbox polling.", Group = "General", Order = 0)]
+    /// <summary>
+    /// Whether the library is active. When false, no services are built and the <c>Smtp</c> / <c>Imap</c>
+    /// accessors throw <see cref="InvalidOperationException"/>.
+    /// </summary>
+    [ConfigField(Label = "Enabled", Description = "Master switch for sending (SMTP) and reading (IMAP) mail.", Group = "General", Order = 0)]
     public bool Enabled { get; set; } = true;
 
     /// <summary>

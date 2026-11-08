@@ -136,7 +136,7 @@ public sealed class DiscordWebhookService : IDisposable
     /// <param name="webhookUrl">
     /// Webhook URL to post to. Falls back to <c>config.DefaultWebhookUrl</c> when not specified.
     /// </param>
-    /// <param name="cancellationToken">Cancels the request (<c>social.discord.cancelled</c>).</param>
+    /// <param name="cancellationToken">Cancels the request (<see cref="SocialConnectErrorCodes.DiscordCancelled"/>).</param>
     /// <returns>A <see cref="Result"/> indicating whether the message was delivered successfully.</returns>
     public Task<Result> SendMessageAsync(string content, string? webhookUrl = null, CancellationToken cancellationToken = default)
     {
@@ -157,7 +157,7 @@ public sealed class DiscordWebhookService : IDisposable
     /// <param name="webhookUrl">
     /// Webhook URL to post to. Falls back to <c>config.DefaultWebhookUrl</c> when not specified.
     /// </param>
-    /// <param name="cancellationToken">Cancels the request (<c>social.discord.cancelled</c>).</param>
+    /// <param name="cancellationToken">Cancels the request (<see cref="SocialConnectErrorCodes.DiscordCancelled"/>).</param>
     /// <returns>A <see cref="Result"/> indicating whether the message was delivered successfully.</returns>
     public Task<Result> SendEmbedAsync(IEnumerable<DiscordEmbed> embeds, string? content = null, string? webhookUrl = null, CancellationToken cancellationToken = default)
     {
@@ -178,7 +178,7 @@ public sealed class DiscordWebhookService : IDisposable
     /// <param name="webhookUrl">
     /// Webhook URL to post to. Falls back to <c>config.DefaultWebhookUrl</c> when not specified.
     /// </param>
-    /// <param name="cancellationToken">Cancels the request (<c>social.discord.cancelled</c>).</param>
+    /// <param name="cancellationToken">Cancels the request (<see cref="SocialConnectErrorCodes.DiscordCancelled"/>).</param>
     /// <returns>A <see cref="Result"/> indicating whether the message was delivered successfully.</returns>
     public async Task<Result> SendAsync(DiscordWebhookMessage message, string? webhookUrl = null, CancellationToken cancellationToken = default)
     {
@@ -188,25 +188,25 @@ public sealed class DiscordWebhookService : IDisposable
         {
             const string msg = "No webhook URL provided and no default configured";
             _logger?.Error(msg);
-            return Result.Failure(Error.Validation("social.discord.no_url", msg));
+            return Result.Failure(Error.Validation(SocialConnectErrorCodes.DiscordNoUrl, msg));
         }
 
         if (!TryParseWebhookUrl(url, out var webhookUri, out var webhookId))
         {
             const string msg = "The webhook URL is not a Discord webhook (https://discord.com/api/webhooks/{id}/{token})";
             _logger?.Warning($"{msg}: refused {RedactWebhookUrl(url)}");
-            return Result.Failure(Error.Validation("social.discord.invalid_url", msg));
+            return Result.Failure(Error.Validation(SocialConnectErrorCodes.DiscordInvalidUrl, msg));
         }
 
         // Enforce Discord's hard limits up front so over-limit payloads fail with a clear
         // message instead of a wasted round-trip and an opaque HTTP 400.
         if (message.Content is { Length: > 2000 })
             return Result.Failure(Error.Validation(
-                "social.discord.content_too_long",
+                SocialConnectErrorCodes.DiscordContentTooLong,
                 $"Message content is {message.Content.Length} characters; Discord allows at most 2000."));
         if (message.Embeds is { Count: > 10 })
             return Result.Failure(Error.Validation(
-                "social.discord.too_many_embeds",
+                SocialConnectErrorCodes.DiscordTooManyEmbeds,
                 $"Message has {message.Embeds.Count} embeds; Discord allows at most 10."));
 
         var sentAt = DateTime.UtcNow;
@@ -234,8 +234,8 @@ public sealed class DiscordWebhookService : IDisposable
 
             return Result.Failure(
                 Error.Internal(
-                    "social.discord.delivery_failed",
-                    $"[{SocialError.WebhookDeliveryFailed}] HTTP {(int)response.StatusCode}",
+                    SocialConnectErrorCodes.DiscordDeliveryFailed,
+                    $"Webhook delivery failed: HTTP {(int)response.StatusCode}",
                     body
                 )
             );
@@ -245,28 +245,28 @@ public sealed class DiscordWebhookService : IDisposable
             const string errMsg = "Webhook request was cancelled";
             _logger?.Warning(errMsg);
             PublishWebhookEvent(url, webhookId, false, sentAt, null, errMsg);
-            return Result.Failure(Error.Unavailable("social.discord.cancelled", errMsg));
+            return Result.Failure(Error.Unavailable(SocialConnectErrorCodes.DiscordCancelled, errMsg));
         }
         catch (OperationCanceledException ex)
         {
-            var errMsg = $"[{SocialError.Timeout}] Webhook request timed out: {ex.Message}";
+            var errMsg = $"Webhook request timed out: {ex.Message}";
             _logger?.Error(errMsg, ex);
             PublishWebhookEvent(url, webhookId, false, sentAt, null, errMsg);
-            return Result.Failure(Error.Timeout("social.discord.timeout", errMsg));
+            return Result.Failure(Error.Timeout(SocialConnectErrorCodes.DiscordTimeout, errMsg));
         }
         catch (HttpRequestException ex)
         {
-            var errMsg = $"[{SocialError.NetworkError}] Network error sending webhook: {ex.Message}";
+            var errMsg = $"Network error sending webhook: {ex.Message}";
             _logger?.Error(errMsg, ex);
             PublishWebhookEvent(url, webhookId, false, sentAt, null, errMsg);
-            return Result.Failure(Error.Unavailable("social.discord.network_error", errMsg));
+            return Result.Failure(Error.Unavailable(SocialConnectErrorCodes.DiscordNetworkError, errMsg));
         }
         catch (Exception ex)
         {
-            var errMsg = $"[{SocialError.NetworkError}] Unexpected error sending webhook: {ex.Message}";
+            var errMsg = $"Unexpected error sending webhook: {ex.Message}";
             _logger?.Error(errMsg, ex);
             PublishWebhookEvent(url, webhookId, false, sentAt, null, errMsg);
-            return Result.Failure(Error.Internal("social.discord.error", errMsg, ex.GetType().Name));
+            return Result.Failure(Error.Internal(SocialConnectErrorCodes.DiscordError, errMsg, ex.GetType().Name));
         }
     }
 

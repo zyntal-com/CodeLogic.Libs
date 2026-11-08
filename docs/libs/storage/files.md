@@ -1,7 +1,5 @@
 # Files & Attributes
 
-Local path containment and conversion back to storage paths both follow the volume's probed case rules. A mounted filesystem can differ from its host OS; a case-equivalent root still maps to the same relative path and preserves descendant spelling.
-
 > Everything about a file beyond its bytes: permissions, ownership, timestamps, links, checksums,
 > metadata, tags, versions, and signed URLs — plus raw server commands and free space.
 

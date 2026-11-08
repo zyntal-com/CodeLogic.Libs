@@ -5,10 +5,9 @@ All notable changes to **CodeLogic.SocialConnect** are documented here. Versions
 
 ## 5.0 (unreleased)
 
-### Audit completion (2026-11-07)
+### Changed
 
 - Record only provider-verified nonces; cap verification concurrency and replay-store capacity, refusing overload without evicting valid nonces. Failed assertions consume no replay entries. Use the shared bounded log formatter.
-
 
 ### Breaking
 
@@ -16,6 +15,17 @@ All notable changes to **CodeLogic.SocialConnect** are documented here. Versions
   4.9.x. CodeLogic 5 makes `Result<T>` / `Result` C# 15 unions and `Error` a closed record with
   kind subtypes (`NotFoundError`, `ValidationError`, ...). Results can now be matched
   exhaustively with `switch`.
+- **The `SocialError` enum is removed; error codes are `SocialConnectErrorCodes` constants.** The codes keep their
+  values (`social.discord.*`, `social.steam.*`), and messages no longer start with the enum name in brackets.
+
+  | Old | New |
+  |---|---|
+  | `SocialError` enum | `SocialConnectErrorCodes` string constants, matched against `Error.Code` |
+  | `"[WebhookDeliveryFailed] HTTP 400"` | `"Webhook delivery failed: HTTP 400"` (`social.discord.delivery_failed`) |
+  | `"[Timeout] ..."`, `"[NetworkError] ..."`, `"[AuthenticationFailed] ..."`, `"[UserNotFound] ..."`, `"[SerializationError] ..."`, `"[ConfigurationError] ..."` | the same message without the bracketed prefix; also in the failure text of `WebhookSentEvent`, `SteamAuthenticatedEvent` and `SteamOpenIdVerifiedEvent` |
+  | `"social.discord.no_url"`, `"social.steam.timeout"`, ... (string literals) | `SocialConnectErrorCodes.DiscordNoUrl`, `SocialConnectErrorCodes.SteamTimeout`, ... (same values) |
+
+  Code that parsed the `[Name]` prefix out of `Error.Message` must switch on `Error.Code` (or the `Error` kind).
 - `Auth.AuthenticateAsync` returns `Result<SteamTicketIdentity>` instead of `Result<SteamAuthResult>`.
   The mutable `SteamAuthResult` class (with `IsAuthenticated`, `ErrorDescription` and `0`/`1` ints for
   bans) is gone: the immutable `SteamTicketIdentity(SteamId, OwnerSteamId, AppId, VacBanned, PublisherBanned)`
@@ -50,8 +60,8 @@ All notable changes to **CodeLogic.SocialConnect** are documented here. Versions
   config instead of building a client for it. `SteamConfig.TryGetApiBaseUri` is the check.
 - **Steam sign-in refuses a replayed assertion.** `SteamOpenIdService.VerifyAsync` records each verified
   `openid.response_nonce` in an `IOpenIdNonceStore` (default: in memory, per process) and refuses one it has seen
-  with `UnauthorizedError` `social.steam.openid_replayed`. The nonce is recorded before Steam is asked, so an
-  assertion whose confirmation failed cannot be presented again either. Applications no longer need their own
+  with `UnauthorizedError` `social.steam.openid_replayed`. The nonce is recorded only after Steam confirms the
+  assertion, so a failed confirmation consumes no entry. Applications no longer need their own
   nonce tracking, unless they run several servers without a shared store.
 - **Cancellation is an error, not an exception.** `SteamOpenIdService.VerifyAsync` rethrew the caller's
   `OperationCanceledException`; it now returns `UnavailableError` `social.steam.cancelled`. The new
@@ -117,6 +127,11 @@ All notable changes to **CodeLogic.SocialConnect** are documented here. Versions
   themselves; the library does not implement Discord OAuth2.
 - Configuration examples in the README and the docs use the camelCase keys the CodeLogic loader reads.
   The PascalCase keys shown before are matched case-sensitively and were ignored, leaving defaults active.
+- The live config section no longer says "CodeLogic 4.9+". The docs say the nonce is recorded after Steam confirms
+  the sign-in, list `social.steam.openid_busy`, the Discord and Steam profile error codes, and that only
+  `SendMessageAsync` / `SendEmbedAsync` apply the default username and avatar and only `GetPlayerAsync` publishes
+  `SteamProfileFetchedEvent`. Examples match on the result union (`r is SteamPlayer p`) instead of reading
+  `Value` without a null check. The README's trailing relative link, which broke on nuget.org, is gone.
 
 ## 2026-10-30
 

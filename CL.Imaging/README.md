@@ -105,15 +105,15 @@ string dataUri = ImageTools.ToDataUri(doc, ImageFormat.Png).Value!;
 await Libraries.LoadAsync<CL.Imaging.ImagingLibrary>();
 ```
 
-`config.imaging.json`:
+`config.imaging.json` (camelCase keys, as the CodeLogic loader reads them):
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `DefaultMaxPixels` | `40000000` | Largest image decoded (0 = no limit) |
-| `DefaultMaxBytes` | `104857600` | Largest encoded input read (0 = no limit) |
-| `DefaultQuality` | `85` | Lossy quality when a call doesn't give one |
-| `DefaultFormat` | `Webp` | Output format when a call doesn't give one |
-| `StripMetadataByDefault` | `true` | Drop EXIF unless a call keeps it |
+| `defaultMaxPixels` | `40000000` | Largest image decoded (0 = no limit) |
+| `defaultMaxBytes` | `104857600` | Largest encoded input read (0 = no limit) |
+| `defaultQuality` | `85` | Lossy quality when a call doesn't give one |
+| `defaultFormat` | `"webp"` | Output format when a call doesn't give one (`"jpeg"`, `"png"`, `"webp"`) |
+| `stripMetadataByDefault` | `true` | Drop EXIF unless a call keeps it |
 
 Without the library, set `ImagingDefaults.Current = ImagingSettings.BuiltIn with { ... }` yourself.
 
@@ -127,7 +127,7 @@ Without the library, set `ImagingDefaults.Current = ImagingSettings.BuiltIn with
 | `imaging.invalid_argument` | Validation | A step's argument out of range, crop outside the image, bad BlurHash |
 | `imaging.encode_failed` | Internal | The encoder produced nothing |
 | `imaging.cancelled` | Unavailable | The `CancellationToken` was cancelled |
-| `imaging.file_not_found` | NotFound | `LoadFile`/`ProbeFile` on a missing path |
+| `imaging.file_not_found` | NotFound | `LoadFile`/`LoadFileAsync`/`ProbeFile` on a missing path |
 | `imaging.io_failed` | Internal | Stream or file I/O failed |
 | `imaging.processing_failed` | Internal | Unexpected engine failure |
 
@@ -143,4 +143,6 @@ Without the library, set `ImagingDefaults.Current = ImagingSettings.BuiltIn with
 - An `ImageDocument` is not meant for concurrent mutation; reading the same document from several pipelines at once
   is fine because pipelines never write to their source.
 
-Audit completion notes and current limits are in [the guide](../docs/libs/imaging/metadata.md).
+## Documentation
+
+Full guide: **[CL.Imaging documentation](https://zyntal-com.github.io/CodeLogic.Libs/libs/imaging/index.html)**

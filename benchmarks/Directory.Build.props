@@ -1,7 +1,7 @@
 <Project>
   <!--
     Benchmarks are not packed and do not inherit the repo-root build props/targets (like samples and tests).
-    Data.Benchmarks targets the 5.x line; MySql2.Baseline targets .NET 10 with the published CodeLogic.MySQL2 4.9.
+    Data.Benchmarks targets the 5.x line.
   -->
   <PropertyGroup>
     <IsPackable>false</IsPackable>

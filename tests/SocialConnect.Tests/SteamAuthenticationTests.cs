@@ -74,7 +74,7 @@ public sealed class SteamAuthenticationTests
         var r = await service.AuthenticateAsync(ticket);
 
         Assert.IsType<ValidationError>(r.Error);
-        Assert.Equal("social.steam.invalid_ticket", r.Error!.Code);
+        Assert.Equal(SocialConnectErrorCodes.SteamInvalidTicket, r.Error!.Code);
         Assert.Empty(steam.Requests);
     }
 
@@ -84,7 +84,8 @@ public sealed class SteamAuthenticationTests
         using var service = Service(Answer("{}"), appId: "");
         var r = await service.AuthenticateAsync("ab12");
         Assert.IsType<ValidationError>(r.Error);
-        Assert.Equal("social.steam.no_appid", r.Error!.Code);
+        Assert.Equal(SocialConnectErrorCodes.SteamNoAppId, r.Error!.Code);
+        Assert.Equal("App ID is required for Steam authentication", r.Error.Message);   // no "[ConfigurationError]" prefix
     }
 
     [Fact]
@@ -93,7 +94,7 @@ public sealed class SteamAuthenticationTests
         using var service = Service(Answer("""{"response":{"error":{"errorcode":101,"errordesc":"Invalid ticket"}}}"""));
         var r = await service.AuthenticateAsync("ab12");
         Assert.IsType<UnauthorizedError>(r.Error);
-        Assert.Equal("social.steam.auth_failed", r.Error!.Code);
+        Assert.Equal(SocialConnectErrorCodes.SteamAuthFailed, r.Error!.Code);
         Assert.Equal("101", r.Error.Details);
     }
 
@@ -103,7 +104,7 @@ public sealed class SteamAuthenticationTests
         using var service = Service(Answer("""{"response":{"params":{"result":"Invalid"}}}"""));
         var r = await service.AuthenticateAsync("ab12");
         Assert.IsType<UnauthorizedError>(r.Error);
-        Assert.Equal("social.steam.auth_failed", r.Error!.Code);
+        Assert.Equal(SocialConnectErrorCodes.SteamAuthFailed, r.Error!.Code);
     }
 
     [Fact]
@@ -112,7 +113,7 @@ public sealed class SteamAuthenticationTests
         using var service = Service(Answer("", HttpStatusCode.BadGateway));
         var r = await service.AuthenticateAsync("ab12");
         Assert.IsType<UnavailableError>(r.Error);
-        Assert.Equal("social.steam.network_error", r.Error!.Code);
+        Assert.Equal(SocialConnectErrorCodes.SteamNetworkError, r.Error!.Code);
     }
 
     [Fact]
@@ -121,7 +122,7 @@ public sealed class SteamAuthenticationTests
         using var service = Service(Answer("", HttpStatusCode.Forbidden));
         var r = await service.AuthenticateAsync("ab12");
         Assert.IsType<InternalError>(r.Error);
-        Assert.Equal("social.steam.request_rejected", r.Error!.Code);
+        Assert.Equal(SocialConnectErrorCodes.SteamRequestRejected, r.Error!.Code);
         Assert.Equal("403", r.Error.Details);
     }
 
@@ -131,7 +132,7 @@ public sealed class SteamAuthenticationTests
         using var service = Service(Answer("<html>not json</html>"));
         var r = await service.AuthenticateAsync("ab12");
         Assert.IsType<InternalError>(r.Error);
-        Assert.Equal("social.steam.parse_error", r.Error!.Code);
+        Assert.Equal(SocialConnectErrorCodes.SteamParseError, r.Error!.Code);
     }
 
     [Fact]
@@ -140,7 +141,7 @@ public sealed class SteamAuthenticationTests
         using var service = Service(new FakeSteam(_ => throw new TaskCanceledException("timed out")));
         var r = await service.AuthenticateAsync("ab12");
         Assert.IsType<TimeoutError>(r.Error);
-        Assert.Equal("social.steam.timeout", r.Error!.Code);
+        Assert.Equal(SocialConnectErrorCodes.SteamTimeout, r.Error!.Code);
     }
 
     [Fact]
@@ -150,7 +151,7 @@ public sealed class SteamAuthenticationTests
         using var service = Service(new FakeSteam(_ => { cts.Cancel(); throw new OperationCanceledException(cts.Token); }));
         var r = await service.AuthenticateAsync("ab12", cancellationToken: cts.Token);
         Assert.IsType<UnavailableError>(r.Error);
-        Assert.Equal("social.steam.cancelled", r.Error!.Code);
+        Assert.Equal(SocialConnectErrorCodes.SteamCancelled, r.Error!.Code);
     }
 
     [Theory]
@@ -172,7 +173,7 @@ public sealed class SteamAuthenticationTests
         var r = await service.AuthenticateAsync("ab12");
 
         Assert.IsType<InternalError>(r.Error);
-        Assert.Equal("social.steam.parse_error", r.Error!.Code);
+        Assert.Equal(SocialConnectErrorCodes.SteamParseError, r.Error!.Code);
         var e = Assert.Single(published);
         Assert.False(e.Success);
         Assert.Equal(string.Empty, e.SteamId);

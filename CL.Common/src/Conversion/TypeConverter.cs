@@ -11,7 +11,8 @@ public static class TypeConverter
 {
     /// <summary>
     /// Attempts to convert <paramref name="value"/> to type <typeparamref name="T"/>.
-    /// Supports all primitive types, enums, and types with a <c>TypeConverter</c>.
+    /// Supports the types <c>Convert.ChangeType</c> handles (primitives,
+    /// <see cref="decimal"/>, <see cref="DateTime"/>, <see cref="string"/>); enums and <c>TypeConverter</c> types are not supported.
     /// </summary>
     public static Result<T> Convert<T>(object? value)
     {

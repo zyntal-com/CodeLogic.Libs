@@ -11,8 +11,9 @@
 </p>
 
 <p align="center">
-  Fifteen production-ready .NET 11 library integrations for
-  <a href="https://github.com/zyntal-com/CodeLogic">CodeLogic 5</a>.
+  Twelve .NET 11 libraries for
+  <a href="https://github.com/zyntal-com/CodeLogic">CodeLogic 5</a>,
+  published as sixteen packages (CL.Data has four provider packages).
   Each is a self-contained <code>ILibrary</code> with auto-generated configuration,
   lifecycle management, and health checks.
 </p>
@@ -114,12 +115,24 @@ rely on database connections, mail services, and the rest being available.
 
 ```csharp
 // Resolve a loaded library anywhere in your code:
-var mail = Libraries.Get<CL.Mail.MailLibrary>();
+var mail = Libraries.Get<CL.Mail.MailLibrary>()!;
 var sent = await mail.Smtp.SendAsync(message);
+
+// Result<T> is a union, so the compiler checks that a switch covers every case.
+var text = sent switch
+{
+    MailSendReceipt receipt => $"Sent {receipt.MessageId}",
+    ValidationError e       => $"Rejected: {e.Message}",
+    Error e                 => $"Failed: {e.Code}",
+    null                    => "No result",
+};
 ```
 
-Most operations return `Result` / `Result<T>` rather than throwing for expected failures
-(a few libraries — Mail, GitHelper, NetUtils — use their own result types; see their docs).
+Operations return CodeLogic `Result` / `Result<T>` rather than throwing for expected failures. A failure
+carries an `Error` whose kind (`NotFoundError`, `ValidationError`, `TimeoutError`, ...) you can match on.
+`ValueOrThrow()` / `ThrowIfFailure()` turn a failure into an exception where that is simpler (tests, startup).
+Every library works this way, CL.NetUtils included: a DNSBL check returns `Result<DnsblCheck>` and a GeoIP lookup
+`Result<IpLocation>`.
 
 ## Documentation
 

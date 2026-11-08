@@ -5,17 +5,34 @@ All notable changes to **CodeLogic.TwoFactorAuth** are documented here. Versions
 
 ## 5.0 (unreleased)
 
-### Audit completion (2026-11-07)
-
-- Reject unsafe replay-store retention/intervals. Add TotpLoginGuard and bounded atomic ITotpAttemptStore / InMemoryTotpAttemptStore for application-controlled login lockout.
-
-
 ### Breaking
 
 - Targets **.NET 11** (`net11.0`) and requires **CodeLogic 5.0** (`[5.0.0, 6.0.0)`). On .NET 10, stay on
   4.9.x. CodeLogic 5 makes `Result<T>` / `Result` C# 15 unions and `Error` a closed record with
   kind subtypes (`NotFoundError`, `ValidationError`, ...). Results can now be matched exhaustively
   with `switch`.
+- **`TotpValidationResult` is removed; TOTP validation returns CodeLogic `Result<TotpMatch>`.** A refused code is
+  an `Error` whose `Code` is a `TwoFactorAuthErrorCodes` constant. Messages stay safe to show a user and never
+  contain exception text.
+
+  | Old | New |
+  |---|---|
+  | `TotpValidationResult TwoFactorAuthenticator.ValidateTotp(string, string, string?)` | `Result<TotpMatch>` |
+  | `TotpValidationResult TwoFactorAuthenticator.ValidateTotp(string, string, DateTime, string?)` | `Result<TotpMatch>` |
+  | `TotpValidationResult TotpLoginGuard.Validate(string, string, string)` | `Result<TotpMatch>` |
+  | `TotpValidationResult TwoFactorAuthLibrary.ValidateTotp(string, string, string?)` | `Result<TotpMatch>` |
+  | `result.IsValid` | `result.IsSuccess` |
+  | `result.MatchedWindow` / `result.WindowOffset` (`long?` / `int?`) | `TotpMatch.MatchedWindow` / `TotpMatch.WindowOffset` (`long` / `int`, via `result.Value` or a `switch`) |
+  | `result.ErrorMessage` `"Invalid code"` (no match) | `UnauthorizedError` `2fa.invalid_code`, message `"Invalid code"` |
+  | `TotpValidationResult.ReplayedCodeMessage` | `UnauthorizedError` `2fa.code_already_used`, message `"This code has already been used."` |
+  | `TotpValidationResult.ValidationErrorMessage` (malformed secret) | `InternalError` `2fa.validation_failed`, message `"The code could not be validated."`, the exception type in `Details` |
+  | `TotpLoginGuard.Validate` refusals (wrong, replayed, locked out, unreadable secret) | one `UnauthorizedError` `2fa.invalid_code` for all of them, as before |
+  | `TotpValidationResult.Valid(...)` / `Invalid(...)` | removed |
+
+  The inline codes `2fa.generate_failed`, `2fa.qr_png_failed`, `2fa.qr_bmp_failed`, `2fa.qr_save_failed` and
+  `2fa.qr_invalid_path` keep their values and are now `TwoFactorAuthErrorCodes` constants (`GenerateFailed`,
+  `QrPngFailed`, `QrBmpFailed`, `QrSaveFailed`, `QrInvalidPath`). New codes: `2fa.invalid_code`,
+  `2fa.code_already_used`, `2fa.validation_failed`.
 - **`TotpValidationResult.MatchedWindow` is a `long?` holding the absolute time step** that matched
   (Unix time / `TimeStepSeconds`, what Otp.NET reports and what `GetCurrentTimeWindow()` returns). It
   was an `int?` documented as a drift offset, and the narrowing could overflow with short periods. Use it
@@ -68,10 +85,18 @@ All notable changes to **CodeLogic.TwoFactorAuth** are documented here. Versions
 - Configuration examples use the camelCase keys the CodeLogic loader reads (PascalCase keys were ignored).
 - The README and the guide state that the library does not rate-limit and that the application must throttle and
   lock out failed attempts per user; the replay section describes the built-in store.
+- The README describes `LoginGuard` (it no longer says the library never counts attempts) and its quick start adds
+  the usings it needs. The guide's services table lists `LoginGuard` instead of a `GenerateTotpCode` pass-through
+  the library does not have (it is on `Authenticator`). `TotpValidationResult` shows its `init` accessors, and
+  `SecretKeyGeneratedEvent` is documented as published by `GenerateNewKey` only.
+- The README's last line, a relative link that broke on nuget.org, is removed.
 
 ### Changed
 
+- Reject unsafe replay-store retention/intervals. Add TotpLoginGuard and bounded atomic ITotpAttemptStore / InMemoryTotpAttemptStore for application-controlled login lockout.
+
 - Package versions are pinned (Otp.NET 1.4.1, QRCoder 1.8.1) instead of floating (`1.*`).
+- The library manifest's description says CodeLogic 5 (it said CodeLogic 4).
 
 ## 2026-10-24
 
