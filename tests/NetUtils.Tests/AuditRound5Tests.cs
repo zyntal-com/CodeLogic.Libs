@@ -6,6 +6,7 @@ using CL.NetUtils;
 using CL.NetUtils.Models;
 using CL.NetUtils.Services;
 using CodeLogic.Core.Events;
+using CodeLogic.Core.Results;
 using CodeLogic.Framework.Libraries;
 using Xunit;
 using static NetUtils.Tests.GeoIpDownloadTests;
@@ -137,7 +138,7 @@ public sealed class GeoIpDownloadLimitTests : IDisposable
         var result = await service.DownloadDatabaseAsync();
 
         Assert.True(result.IsFailure);
-        Assert.Equal(NetUtilsErrors.DownloadTooLargeCode, result.Error!.Code);
+        Assert.Equal(NetUtilsErrorCodes.DownloadTooLarge, result.Error!.Code);
         Assert.Equal(FakeMmdb("v1"), await File.ReadAllBytesAsync(service.DatabasePath));
         Assert.Equal([service.DatabasePath], Directory.GetFileSystemEntries(Path.GetDirectoryName(service.DatabasePath)!));
     }
@@ -154,7 +155,7 @@ public sealed class GeoIpDownloadLimitTests : IDisposable
 
         var result = await service.DownloadDatabaseAsync();
 
-        Assert.Equal(NetUtilsErrors.DownloadTooLargeCode, result.Error?.Code);
+        Assert.Equal(NetUtilsErrorCodes.DownloadTooLarge, result.Error?.Code);
         Assert.Equal(FakeMmdb("v1"), await File.ReadAllBytesAsync(service.DatabasePath));
         Assert.Equal([service.DatabasePath], Directory.GetFileSystemEntries(Path.GetDirectoryName(service.DatabasePath)!));
     }
@@ -170,7 +171,7 @@ public sealed class GeoIpDownloadLimitTests : IDisposable
 
         var result = await service.DownloadDatabaseAsync();
 
-        Assert.Equal(NetUtilsErrors.DownloadTooLargeCode, result.Error?.Code);
+        Assert.Equal(NetUtilsErrorCodes.DownloadTooLarge, result.Error?.Code);
         Assert.Equal(FakeMmdb("v1"), await File.ReadAllBytesAsync(service.DatabasePath));
         Assert.Equal([service.DatabasePath], Directory.GetFileSystemEntries(Path.GetDirectoryName(service.DatabasePath)!));
     }
@@ -187,7 +188,7 @@ public sealed class GeoIpDownloadLimitTests : IDisposable
 
         var result = await service.DownloadDatabaseAsync();
 
-        Assert.Equal(NetUtilsErrors.ChecksumMismatchCode, result.Error?.Code);
+        Assert.Equal(NetUtilsErrorCodes.ChecksumMismatch, result.Error?.Code);
         Assert.Equal([ChecksumUrl, ArchiveUrl], handler.Requests.Select(r => r.RequestUri!.ToString()));
         Assert.All(handler.Requests, r => Assert.Equal("Basic", r.Headers.Authorization?.Scheme));
         Assert.Equal(FakeMmdb("v1"), await File.ReadAllBytesAsync(service.DatabasePath));
@@ -223,7 +224,7 @@ public sealed class GeoIpDownloadLimitTests : IDisposable
 
         var result = await service.DownloadDatabaseAsync();
 
-        Assert.Equal(NetUtilsErrors.ChecksumUnavailableCode, result.Error?.Code);
+        Assert.Equal(NetUtilsErrorCodes.ChecksumUnavailable, result.Error?.Code);
         Assert.Equal([ChecksumUrl], handler.Requests.Select(r => r.RequestUri!.ToString()));
         Assert.False(File.Exists(service.DatabasePath));
     }
@@ -237,7 +238,7 @@ public sealed class GeoIpDownloadLimitTests : IDisposable
 
         var result = await service.DownloadDatabaseAsync();
 
-        Assert.Equal(NetUtilsErrors.DownloadTimeoutCode, result.Error?.Code);
+        Assert.Equal(NetUtilsErrorCodes.DownloadTimeout, result.Error?.Code);
         Assert.Equal(FakeMmdb("v1"), await File.ReadAllBytesAsync(service.DatabasePath));
     }
 
@@ -249,7 +250,7 @@ public sealed class GeoIpDownloadLimitTests : IDisposable
         using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
 
         var result = await service.DownloadDatabaseAsync(cancellation.Token);
-        Assert.Equal(NetUtilsErrors.CancelledCode, result.Error?.Code);
+        Assert.Equal(NetUtilsErrorCodes.Cancelled, result.Error?.Code);
 
         using var second = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => service.InitializeAsync(second.Token));
@@ -262,8 +263,8 @@ public sealed class GeoIpDownloadLimitTests : IDisposable
         using var noCredentials = new GeoIpService(new GeoIpConfig(), null, _dir, handler);
         using var untrusted = new GeoIpService(new GeoIpConfig { AccountId = 1, LicenseKey = "k", DownloadUrl = "https://attacker.example/x" }, null, _dir, handler);
 
-        Assert.Equal(NetUtilsErrors.DownloadRefusedCode, (await noCredentials.DownloadDatabaseAsync()).Error?.Code);
-        Assert.Equal(NetUtilsErrors.DownloadRefusedCode, (await untrusted.DownloadDatabaseAsync()).Error?.Code);
+        Assert.Equal(NetUtilsErrorCodes.DownloadRefused, (await noCredentials.DownloadDatabaseAsync()).Error?.Code);
+        Assert.Equal(NetUtilsErrorCodes.DownloadRefused, (await untrusted.DownloadDatabaseAsync()).Error?.Code);
         Assert.Empty(handler.Requests);
     }
 
@@ -284,7 +285,7 @@ public sealed class GeoIpDownloadLimitTests : IDisposable
             for (var i = 0; i < 2000; i++)
             {
                 var result = await service.LookupIpAsync("8.8.8.8");
-                if (result.ErrorMessage is not "Location not found") errors.Add(result.ErrorMessage);
+                if (result.Error?.Code is not NetUtilsErrorCodes.LocationNotFound) errors.Add(result.Error?.ToString() ?? "unexpected success");
             }
             return errors;
         });
@@ -295,7 +296,7 @@ public sealed class GeoIpDownloadLimitTests : IDisposable
     }
 }
 
-// ── DNSBL: allowlist sees the canonical address; cancellation is its own status ─────
+// ── DNSBL: allowlist sees the canonical address; cancellation is its own error ──────
 
 public sealed class DnsblCanonicalAndCancellationTests
 {
@@ -315,7 +316,7 @@ public sealed class DnsblCanonicalAndCancellationTests
             IsAllowedAsync = (ip, _) => { seen = ip; return Task.FromResult(true); }
         };
 
-        var result = await checker.CheckIpAsync(input, request);
+        var result = (await checker.CheckIpAsync(input, request)).ValueOrThrow();
 
         Assert.Equal(Ip, seen);
         Assert.Equal(DnsblCheckStatus.NotBlacklisted, result.Status);
@@ -323,7 +324,7 @@ public sealed class DnsblCanonicalAndCancellationTests
     }
 
     [Fact]
-    public async Task A_check_cancelled_by_the_caller_is_reported_as_Cancelled_not_Error()
+    public async Task A_check_cancelled_by_the_caller_is_reported_as_a_cancelled_error()
     {
         using var cancellation = new CancellationTokenSource();
         var checker = new DnsblChecker(new DnsblConfig(), null, async (_, ct) =>
@@ -337,10 +338,10 @@ public sealed class DnsblCanonicalAndCancellationTests
         cancellation.CancelAfter(50);
         var result = await pending;
 
-        Assert.Equal(DnsblCheckStatus.Cancelled, result.Status);
-        Assert.False(result.IsBlacklisted);
-        Assert.Equal(IpAddressType.IPv4, result.AddressType);
-        Assert.Equal("The DNSBL check was cancelled", result.ErrorMessage);
+        Assert.True(result.IsFailure);
+        Assert.IsType<UnavailableError>(result.Error);
+        Assert.Equal(NetUtilsErrorCodes.Cancelled, result.Error!.Code);
+        Assert.Equal("The DNSBL check was cancelled", result.Error.Message);
     }
 
     [Fact]
@@ -357,7 +358,7 @@ public sealed class DnsblCanonicalAndCancellationTests
 
         var result = await checker.CheckIpAsync(Ip, request, cancellation.Token);
 
-        Assert.Equal(DnsblCheckStatus.Cancelled, result.Status);
+        Assert.Equal(NetUtilsErrorCodes.Cancelled, result.Error?.Code);
     }
 
     [Fact]
@@ -370,7 +371,7 @@ public sealed class DnsblCanonicalAndCancellationTests
         });
         var request = new DnsblCheckRequest { Ipv4Services = ["a.test"], Timeout = TimeSpan.FromMilliseconds(50) };
 
-        var result = await checker.CheckIpAsync(Ip, request);
+        var result = (await checker.CheckIpAsync(Ip, request)).ValueOrThrow();
 
         Assert.Equal(DnsblCheckStatus.Indeterminate, result.Status);
         Assert.Equal(["a.test"], result.FailedServices);
@@ -445,7 +446,7 @@ public sealed class NetUtilsConfigReloadTests : IAsyncLifetime
         await ApplyAsync("""{ "enabled": true, "dnsbl": { "enabled": false }, "geoIp": { "enabled": false } }""");
         Assert.False(lib.HasDnsbl);
         Assert.False(lib.Dnsbl.IsEnabled);
-        Assert.Equal(DnsblCheckStatus.Error, (await lib.Dnsbl.CheckIpAsync("93.184.215.7")).Status);
+        Assert.Equal(NetUtilsErrorCodes.DnsblDisabled, (await lib.Dnsbl.CheckIpAsync("93.184.215.7")).Error?.Code);
     }
 
     [Fact]

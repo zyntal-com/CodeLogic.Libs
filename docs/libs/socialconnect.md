@@ -19,6 +19,8 @@ dotnet add package CodeLogic.SocialConnect
 
 ```csharp
 using CL.SocialConnect;
+using CL.SocialConnect.Models;   // models and SocialConnectErrorCodes
+using CodeLogic.Core.Results;
 
 await Libraries.LoadAsync<SocialConnectLibrary>();   // register before ConfigureAsync()
 await CodeLogic.ConfigureAsync();
@@ -49,6 +51,21 @@ if (social.HasSteam)
 ```
 
 Discord webhook methods return a plain `Result` (no value — they either delivered or they didn't). Steam profile and auth methods return `Result<T>`. Check `IsSuccess` before reading `.Value`, or match the result (`if (r is SteamPlayer p)`), and read `Error?.Message` on failure.
+
+Every failure is an `Error` whose `Code` is a constant in `SocialConnectErrorCodes` (`social.discord.*`, `social.steam.*`; each code always has the same kind). The tables below list them per service. Match on the code or the kind, never on the message text:
+
+```csharp
+Result<SteamPlayer> r = await social.Steam.GetPlayerAsync(steamId);
+var text = r switch
+{
+    SteamPlayer p                                                         => p.PersonaName,
+    ValidationError { Code: SocialConnectErrorCodes.SteamInvalidSteamId } => "Not a SteamID64",
+    NotFoundError                                                         => "No such player",
+    TimeoutError or UnavailableError                                      => "Steam is not reachable right now",
+    Error e                                                               => $"Failed: {e.Code}",
+    null                                                                  => "No result",
+};
+```
 
 ## Discord webhooks
 

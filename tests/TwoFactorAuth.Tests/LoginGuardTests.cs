@@ -1,5 +1,6 @@
 using CL.TwoFactorAuth.Models;
 using CL.TwoFactorAuth.Services;
+using CodeLogic.Core.Results;
 using Xunit;
 
 namespace TwoFactorAuth.Tests;
@@ -36,11 +37,12 @@ public sealed class LoginGuardTests
         var guard = new TotpLoginGuard(authenticator, attempts);
         var secret = authenticator.GenerateSecretKey();
         var code = authenticator.GenerateTotpCode(secret).ValueOrThrow();
-        Assert.True(guard.Validate(code, secret, "user").IsValid);
+        Assert.True(guard.Validate(code, secret, "user").IsSuccess);
         var replay = guard.Validate(code, secret, "user");
         var locked = guard.Validate("wrong", secret, "user");
-        Assert.False(replay.IsValid);
-        Assert.Equal(replay.ErrorMessage, locked.ErrorMessage);
+        var replayError = Assert.IsType<UnauthorizedError>(replay.Error);
+        Assert.Equal(TwoFactorAuthErrorCodes.InvalidCode, replayError.Code);
+        Assert.Equal(replayError, locked.Error);                         // replay and lockout look the same
         Assert.False(attempts.TryBegin("user"));
     }
 

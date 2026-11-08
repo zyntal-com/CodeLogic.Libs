@@ -16,7 +16,8 @@ public enum IpAddressType
 }
 
 /// <summary>
-/// Outcome of a DNSBL check.
+/// Verdict of a DNSBL check that ran. A check that could not run (invalid address, DNSBL checking switched off,
+/// cancelled, unexpected failure) has no status: it is an error, see <see cref="NetUtilsErrorCodes"/>.
 /// </summary>
 public enum DnsblCheckStatus
 {
@@ -30,86 +31,58 @@ public enum DnsblCheckStatus
     /// No zone lists the address, but at least one zone could not be checked (timeout, resolver failure, or a
     /// DNSBL error answer such as Spamhaus' <c>127.255.255.x</c>). The address is not known to be clean.
     /// </summary>
-    Indeterminate,
-
-    /// <summary>The check could not run at all (invalid address, unexpected failure); see <see cref="DnsblCheckResult.ErrorMessage"/>.</summary>
-    Error,
-
-    /// <summary>The caller's cancellation token fired before the check finished; nothing is known about the address.</summary>
-    Cancelled
+    Indeterminate
 }
 
 /// <summary>
-/// Result of a DNSBL blacklist check for a single IP address.
+/// A completed DNSBL check of one IP address: the success value of <c>DnsblChecker.CheckIpAsync</c>.
 /// </summary>
-public record DnsblCheckResult
+public sealed record DnsblCheck
 {
-    /// <summary>The outcome. Distinguishes a clean result from one where zones could not be checked.</summary>
-    public DnsblCheckStatus Status { get; init; }
+    /// <summary>The IP address that was checked, as the caller spelled it.</summary>
+    public required string IpAddress { get; init; }
+
+    /// <summary>Protocol family of the checked address (an IPv4-mapped IPv6 address counts as IPv4).</summary>
+    public required IpAddressType AddressType { get; init; }
+
+    /// <summary>The verdict. Distinguishes a clean result from one where zones could not be checked.</summary>
+    public required DnsblCheckStatus Status { get; init; }
+
+    /// <summary>Whether at least one zone lists the address (<see cref="Status"/> is <see cref="DnsblCheckStatus.Blacklisted"/>).</summary>
+    public bool IsBlacklisted => Status == DnsblCheckStatus.Blacklisted;
+
+    /// <summary>The DNSBL zone that lists the address, or <see langword="null"/> when not blacklisted.</summary>
+    public string? MatchedService { get; init; }
 
     /// <summary>Zones that could not be checked (timeout, resolver failure, DNSBL error answer). Empty when every zone answered.</summary>
     public IReadOnlyList<string> FailedServices { get; init; } = [];
 
-    /// <summary>The IP address that was checked.</summary>
-    public required string IpAddress { get; init; }
-
-    /// <summary>Whether the IP address was found on at least one blacklist.</summary>
-    public required bool IsBlacklisted { get; init; }
-
-    /// <summary>The DNSBL service that matched, or <see langword="null"/> when not blacklisted.</summary>
-    public string? MatchedService { get; init; }
-
-    /// <summary>Protocol family of the checked address.</summary>
-    public required IpAddressType AddressType { get; init; }
-
-    /// <summary>Error message when the check itself failed; <see langword="null"/> on success.</summary>
-    public string? ErrorMessage { get; init; }
-
     /// <summary>UTC timestamp of when the check was performed.</summary>
     public DateTime CheckedAt { get; init; } = DateTime.UtcNow;
 
-    /// <summary>Creates a result indicating the IP is blacklisted by the given service.</summary>
-    public static DnsblCheckResult Blacklisted(string ip, IpAddressType type, string service, IReadOnlyList<string>? failedServices = null) =>
-        new()
-        {
-            IpAddress = ip, IsBlacklisted = true, MatchedService = service, AddressType = type,
-            Status = DnsblCheckStatus.Blacklisted, FailedServices = failedServices ?? []
-        };
+    internal static DnsblCheck Blacklisted(string ip, IpAddressType type, string service, IReadOnlyList<string> failedServices) =>
+        new() { IpAddress = ip, AddressType = type, Status = DnsblCheckStatus.Blacklisted, MatchedService = service, FailedServices = failedServices };
 
-    /// <summary>Creates a result indicating the IP passed all blacklist checks.</summary>
-    public static DnsblCheckResult NotBlacklisted(string ip, IpAddressType type) =>
-        new() { IpAddress = ip, IsBlacklisted = false, AddressType = type, Status = DnsblCheckStatus.NotBlacklisted };
+    internal static DnsblCheck NotBlacklisted(string ip, IpAddressType type) =>
+        new() { IpAddress = ip, AddressType = type, Status = DnsblCheckStatus.NotBlacklisted };
 
-    /// <summary>Creates a result for a check where no zone listed the IP but some zones could not be checked.</summary>
-    public static DnsblCheckResult Indeterminate(string ip, IpAddressType type, IReadOnlyList<string> failedServices) =>
-        new()
-        {
-            IpAddress = ip, IsBlacklisted = false, AddressType = type, Status = DnsblCheckStatus.Indeterminate,
-            FailedServices = failedServices,
-            ErrorMessage = $"Could not check {failedServices.Count} DNSBL zone(s): {string.Join(", ", failedServices)}"
-        };
-
-    /// <summary>Creates an error result when the check could not be completed.</summary>
-    public static DnsblCheckResult Error(string ip, IpAddressType type, string error) =>
-        new() { IpAddress = ip, IsBlacklisted = false, AddressType = type, ErrorMessage = error, Status = DnsblCheckStatus.Error };
-
-    /// <summary>Creates the result of a check the caller cancelled (<see cref="DnsblCheckStatus.Cancelled"/>).</summary>
-    public static DnsblCheckResult Cancelled(string ip, IpAddressType type, string message) =>
-        new() { IpAddress = ip, IsBlacklisted = false, AddressType = type, ErrorMessage = message, Status = DnsblCheckStatus.Cancelled };
+    internal static DnsblCheck Indeterminate(string ip, IpAddressType type, IReadOnlyList<string> failedServices) =>
+        new() { IpAddress = ip, AddressType = type, Status = DnsblCheckStatus.Indeterminate, FailedServices = failedServices };
 }
 
 /// <summary>
-/// Result of an IP geolocation lookup.
+/// Geolocation data for one IP address: the success value of <c>GeoIpService.LookupIpAsync</c>. Which fields are
+/// filled depends on the database edition (<c>GeoIpService.LoadedDatabaseType</c>).
 /// </summary>
-public record IpLocationResult
+public sealed record IpLocation
 {
-    /// <summary>The IP address that was looked up.</summary>
+    /// <summary>The IP address that was looked up, as the caller spelled it.</summary>
     public required string IpAddress { get; init; }
 
     /// <summary>Full country name, or <see langword="null"/> when unavailable.</summary>
     public string? CountryName { get; init; }
 
-    /// <summary>ISO 3166-1 alpha-2 country code, or <see langword="null"/> when unavailable.</summary>
+    /// <summary>ISO 3166-1 alpha-2 country code, or <see langword="null"/> when unavailable (ASN and ISP databases).</summary>
     public string? CountryCode { get; init; }
 
     /// <summary>City name, or <see langword="null"/> when unavailable.</summary>
@@ -139,24 +112,14 @@ public record IpLocationResult
     /// <summary>Organization of the autonomous system, or <see langword="null"/> when unavailable (ASN, ISP and Enterprise databases).</summary>
     public string? AutonomousSystemOrganization { get; init; }
 
-    /// <summary>Error message when the lookup failed; <see langword="null"/> on success.</summary>
-    public string? ErrorMessage { get; init; }
-
-    /// <summary>
-    /// <see langword="true"/> when the lookup succeeded and found data: a country code (City, Country and Enterprise
-    /// databases) or, for ASN and ISP databases, which have no country, an autonomous system number or ISP.
-    /// </summary>
-    public bool IsSuccessful => string.IsNullOrEmpty(ErrorMessage)
-        && (!string.IsNullOrEmpty(CountryCode) || AutonomousSystemNumber is not null || !string.IsNullOrEmpty(Isp));
-
     /// <summary>UTC timestamp of when the lookup was performed.</summary>
     public DateTime LookedUpAt { get; init; } = DateTime.UtcNow;
 
-    /// <summary>Creates a result indicating the IP was not found in the database.</summary>
-    public static IpLocationResult NotFound(string ip, string? error = null) =>
-        new() { IpAddress = ip, ErrorMessage = error ?? "Location not found" };
-
-    /// <summary>Creates an error result when the lookup could not be completed.</summary>
-    public static IpLocationResult Error(string ip, string error) =>
-        new() { IpAddress = ip, ErrorMessage = error };
+    /// <summary>
+    /// Whether the entry holds usable data: a country code (City, Country and Enterprise databases) or, for ASN and
+    /// ISP databases, which have no country, an autonomous system number or ISP. A lookup whose entry has none is
+    /// reported as <see cref="NetUtilsErrorCodes.LocationNotFound"/>.
+    /// </summary>
+    internal bool HasData =>
+        !string.IsNullOrEmpty(CountryCode) || AutonomousSystemNumber is not null || !string.IsNullOrEmpty(Isp);
 }

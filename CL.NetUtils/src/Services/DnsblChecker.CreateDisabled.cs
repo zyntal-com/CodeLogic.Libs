@@ -3,6 +3,7 @@ using System.Net.Sockets;
 using CL.NetUtils.Localization;
 using CL.NetUtils.Models;
 using CodeLogic.Core.Logging;
+using CodeLogic.Core.Results;
 
 namespace CL.NetUtils.Services;
 
@@ -10,16 +11,16 @@ public partial class DnsblChecker
 {
 
     /// <summary>
-    /// A checker that queries nothing: every check returns <see cref="DnsblCheckStatus.Error"/> with a "DNSBL checking
-    /// is disabled" message. <see cref="NetUtilsLibrary.Dnsbl"/> hands it out while DNSBL checking is switched off.
+    /// A checker that queries nothing: every check of a valid address fails with
+    /// <see cref="NetUtilsErrorCodes.DnsblDisabled"/>. <see cref="NetUtilsLibrary.Dnsbl"/> hands it out while DNSBL checking is switched off.
     /// </summary>
     internal static DnsblChecker CreateDisabled(ILogger? logger) =>
         new(new DnsblConfig { Enabled = false }, logger, static (_, _) => Task.FromResult(Array.Empty<IPAddress>()), enabled: false);
 
     /// <summary>
     /// <see langword="false"/> when DNSBL checking is switched off (<c>netutils.enabled</c> or <c>netutils.dnsbl.enabled</c>
-    /// is <see langword="false"/>). A disabled checker sends no query; each check returns
-    /// <see cref="DnsblCheckStatus.Error"/> with a "disabled" <see cref="DnsblCheckResult.ErrorMessage"/>.
+    /// is <see langword="false"/>). A disabled checker sends no query; each check of a valid address fails with an
+    /// <see cref="UnavailableError"/> coded <see cref="NetUtilsErrorCodes.DnsblDisabled"/>.
     /// </summary>
     public bool IsEnabled => _enabled;
 
@@ -31,14 +32,19 @@ public partial class DnsblChecker
     /// <remarks>
     /// The primary zones are queried first (concurrently when <see cref="DnsblConfig.ParallelQueries"/> is set);
     /// the fallback zones are queried only when no primary zone lists the address. A zone that times out, fails
-    /// to resolve, or answers with a DNSBL error code is reported in <see cref="DnsblCheckResult.FailedServices"/>,
+    /// to resolve, or answers with a DNSBL error code is reported in <see cref="DnsblCheck.FailedServices"/>,
     /// and a check with no listing but failed zones is <see cref="DnsblCheckStatus.Indeterminate"/>, never
     /// <see cref="DnsblCheckStatus.NotBlacklisted"/>.
     /// </remarks>
     /// <param name="ipAddress">The IP address string to check (IPv4 or IPv6).</param>
     /// <param name="cancellationToken">Optional cancellation token.</param>
-    /// <returns>A <see cref="DnsblCheckResult"/> describing the outcome.</returns>
-    public Task<DnsblCheckResult> CheckIpAsync(string ipAddress, CancellationToken cancellationToken = default)
+    /// <returns>
+    /// The completed check (<see cref="DnsblCheck.Status"/> holds the verdict), or an error: a
+    /// <see cref="ValidationError"/> for text that is not an IP address, an <see cref="UnavailableError"/> when DNSBL
+    /// checking is disabled or the caller cancelled, an <see cref="InternalError"/> for an unexpected failure. The codes
+    /// are in <see cref="NetUtilsErrorCodes"/>.
+    /// </returns>
+    public Task<Result<DnsblCheck>> CheckIpAsync(string ipAddress, CancellationToken cancellationToken = default)
     {
         var request = new DnsblCheckRequest
         {
@@ -66,10 +72,11 @@ public partial class DnsblChecker
     /// one spelling.
     /// </param>
     /// <param name="cancellationToken">
-    /// Cancels the check: the result is then <see cref="DnsblCheckStatus.Cancelled"/>, never <c>Error</c> and never a
-    /// verdict on the address.
+    /// Cancels the check: the result is then an <see cref="UnavailableError"/> coded
+    /// <see cref="NetUtilsErrorCodes.Cancelled"/>, never a verdict on the address.
     /// </param>
-    public async Task<DnsblCheckResult> CheckIpAsync(
+    /// <returns>The completed check, or an error; see <see cref="CheckIpAsync(string, CancellationToken)"/>.</returns>
+    public async Task<Result<DnsblCheck>> CheckIpAsync(
         string ipAddress,
         DnsblCheckRequest request,
         CancellationToken cancellationToken = default)
@@ -77,27 +84,26 @@ public partial class DnsblChecker
         ArgumentNullException.ThrowIfNull(request);
         var strings = Strings();
         var shown = InputText.ForLog(ipAddress);
-        var type = IpAddressType.Unknown;
         try
         {
             if (!IPAddress.TryParse(ipAddress, out var ip))
             {
                 _logger?.Warning(InputText.Format(strings.InvalidIpAddress, shown));
-                return DnsblCheckResult.Error(ipAddress, IpAddressType.Unknown, strings.InvalidIpAddressFormat);
+                return NetUtilsErrors.InvalidIpAddress(strings.InvalidIpAddressFormat);
             }
 
             // An IPv4 client seen through a dual-stack socket (::ffff:a.b.c.d) is listed in the IPv4 zones.
             if (ip.IsIPv4MappedToIPv6)
                 ip = ip.MapToIPv4();
-            type = GetAddressType(ip);
+            var type = GetAddressType(ip);
 
             if (!_enabled)
-                return DnsblCheckResult.Error(ipAddress, type, strings.DnsblDisabled);
+                return NetUtilsErrors.DnsblDisabled(strings.DnsblDisabled);
 
             if (IsLocalOrPrivateIp(ip))
             {
                 _logger?.Debug($"Skipping DNSBL check for local/private IP: {shown}");
-                return DnsblCheckResult.NotBlacklisted(ipAddress, type);
+                return DnsblCheck.NotBlacklisted(ipAddress, type);
             }
 
             // The allowlist sees the canonical address, so "::ffff:1.2.3.4", "1.2.3.4" and "0x01.0x02.0x03.0x04" compare equal.
@@ -105,7 +111,7 @@ public partial class DnsblChecker
                 await request.IsAllowedAsync(ip.ToString(), cancellationToken).ConfigureAwait(false))
             {
                 _logger?.Debug($"IP {shown} is on the caller-supplied allowlist — skipping DNSBL");
-                return DnsblCheckResult.NotBlacklisted(ipAddress, GetAddressType(ip));
+                return DnsblCheck.NotBlacklisted(ipAddress, type);
             }
 
             if (ip.AddressFamily == AddressFamily.InterNetwork)
@@ -115,18 +121,19 @@ public partial class DnsblChecker
                 return await CheckIpv6Async(ip, ipAddress, request, cancellationToken).ConfigureAwait(false);
 
             _logger?.Debug($"DNSBL check skipped for unsupported address family: {shown}");
-            return DnsblCheckResult.NotBlacklisted(ipAddress, IpAddressType.Unknown);
+            return DnsblCheck.NotBlacklisted(ipAddress, IpAddressType.Unknown);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            // The caller gave up (request aborted, shutdown): say so, instead of an error the caller might count as a failed zone.
+            // The caller gave up (request aborted, shutdown): say so, instead of a verdict or an internal error.
             _logger?.Debug($"DNSBL check for {shown} was cancelled by the caller");
-            return DnsblCheckResult.Cancelled(ipAddress, type, strings.DnsblCancelled);
+            return NetUtilsErrors.Cancelled(strings.DnsblCancelled);
         }
         catch (Exception ex)
         {
+            // The exception text stays in the log; the result carries a fixed message and the exception type.
             _logger?.Error($"Error checking DNSBL for {shown}", ex);
-            return DnsblCheckResult.Error(ipAddress, type, ex.Message);
+            return NetUtilsErrors.DnsblCheckFailed(strings.DnsblCheckFailed, ex);
         }
     }
 
@@ -134,21 +141,21 @@ public partial class DnsblChecker
 
     private enum ZoneOutcome { NotListed, Listed, Failed }
 
-    private async Task<DnsblCheckResult> CheckIpv4Async(IPAddress ip, string ipAddress, DnsblCheckRequest request, CancellationToken cancellationToken)
+    private async Task<DnsblCheck> CheckIpv4Async(IPAddress ip, string ipAddress, DnsblCheckRequest request, CancellationToken cancellationToken)
     {
         var reversedIp = ReverseLookupLabel(ip);
         return await CheckZonesAsync(ipAddress, reversedIp, IpAddressType.IPv4, request.Ipv4Services, request.Ipv4FallbackServices, request, cancellationToken)
             .ConfigureAwait(false);
     }
 
-    private async Task<DnsblCheckResult> CheckIpv6Async(IPAddress ip, string ipAddress, DnsblCheckRequest request, CancellationToken cancellationToken)
+    private async Task<DnsblCheck> CheckIpv6Async(IPAddress ip, string ipAddress, DnsblCheckRequest request, CancellationToken cancellationToken)
     {
         var reversedIpv6 = ReverseLookupLabel(ip);
         return await CheckZonesAsync(ipAddress, reversedIpv6, IpAddressType.IPv6, request.Ipv6Services, request.Ipv6FallbackServices, request, cancellationToken)
             .ConfigureAwait(false);
     }
 
-    private async Task<DnsblCheckResult> CheckZonesAsync(
+    private async Task<DnsblCheck> CheckZonesAsync(
         string ipAddress,
         string reversed,
         IpAddressType type,
@@ -166,18 +173,18 @@ public partial class DnsblChecker
         if (listedBy is not null)
         {
             _logger?.Warning(InputText.Format(strings.IpBlacklisted, shown, InputText.ForLog(listedBy)));
-            return DnsblCheckResult.Blacklisted(ipAddress, type, listedBy, failed);
+            return DnsblCheck.Blacklisted(ipAddress, type, listedBy, failed);
         }
 
         if (failed.Count > 0)
         {
             _logger?.Warning($"{shown} is not listed by the zones that answered, but {failed.Count} zone(s) could not be checked: " +
                              string.Join(", ", failed.Select(InputText.ForLog)));
-            return DnsblCheckResult.Indeterminate(ipAddress, type, failed);
+            return DnsblCheck.Indeterminate(ipAddress, type, failed);
         }
 
         _logger?.Debug(InputText.Format(strings.IpClean, shown));
-        return DnsblCheckResult.NotBlacklisted(ipAddress, type);
+        return DnsblCheck.NotBlacklisted(ipAddress, type);
     }
 
     /// <summary>Queries one zone list; returns the first listing zone (in list order) or null. Failed zones go to <paramref name="failed"/>.</summary>

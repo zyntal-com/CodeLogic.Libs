@@ -128,7 +128,7 @@ var text = found switch
 ```
 
 `IsSuccess` / `Value` / `Error` still work. `ValueOrThrow()` and `ThrowIfFailure()` throw a
-`ResultFailedException` that carries the `Error`. CL.NetUtils lookups return their own result records instead.
+`ResultFailedException` that carries the `Error`. Every library works this way, CL.NetUtils included.
 
 ### Configuration files
 
