@@ -184,6 +184,7 @@ public sealed partial class Database
     }
 
     /// <summary>Runs a pre-rendered query and materializes every row (compiled queries).</summary>
+    [System.Runtime.CompilerServices.AsyncMethodBuilder(typeof(System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder<>))]
     internal async ValueTask<Result<List<T>>> QuerySpecAsync<T>(CommandSpec spec, bool isWrite, IEntityAccessor<T>? accessor, string? table,
         IReadOnlyList<string> tags, CancellationToken ct, CachePolicy? cache = null, SqlStatement? tablesFrom = null)
     {
@@ -194,11 +195,26 @@ public sealed partial class Database
             Tags = tags,
             IsWrite = isWrite,
         };
-        var policy = NamingPolicy;
-        var result = await ReadAsync(context, isWrite ? null : cache, tablesFrom, table,
-            (reader, token) => RowReader.ReadAllAsync(reader, accessor, policy, token), static list => list.Count).ConfigureAwait(false);
+        var result = await ReadAsync(context, isWrite ? null : cache, tablesFrom, table, (Accessor: accessor, Policy: NamingPolicy),
+            static (reader, state, token) => RowReader.ReadAllAsync(reader, state.Accessor, state.Policy, token),
+            static list => list.Count).ConfigureAwait(false);
         if (isWrite) InvalidateCache(tags);
         return result;
+    }
+
+    /// <summary>Runs a pre-rendered SELECT and materializes its first row, or default when there is none (key lookups).</summary>
+    internal ValueTask<Result<T?>> QueryFirstSpecAsync<T>(CommandSpec spec, IEntityAccessor<T>? accessor, string? table,
+        IReadOnlyList<string> tags, CancellationToken ct, CachePolicy? cache = null)
+    {
+        var context = new CommandContext(this, spec, CommandKind.Query, ct)
+        {
+            Operation = "select",
+            Table = table,
+            Tags = tags,
+        };
+        return ReadAsync(context, cache, null, table, (Accessor: accessor, Policy: NamingPolicy),
+            static (reader, state, token) => RowReader.ReadFirstAsync(reader, state.Accessor, state.Policy, token),
+            static row => row is null ? 0 : 1);
     }
 
     /// <summary>Runs a SELECT and builds each row with <paramref name="materialize"/> (projections, joins, groups).</summary>
@@ -259,17 +275,26 @@ public sealed partial class Database
     /// The cache tags (the tables a statement reads, from <paramref name="tablesFrom"/>, else <paramref name="table"/>) are only
     /// worked out when a result is loaded and stored; a hit never walks the statement.
     /// </remarks>
-    private async ValueTask<Result<TResult>> ReadAsync<TResult>(CommandContext context, CachePolicy? cache, SqlStatement? tablesFrom, string? table,
-        Func<DbDataReader, CancellationToken, ValueTask<TResult>> read, Func<TResult, long>? rows)
+    private ValueTask<Result<TResult>> ReadAsync<TResult>(CommandContext context, CachePolicy? cache, SqlStatement? tablesFrom, string? table,
+        Func<DbDataReader, CancellationToken, ValueTask<TResult>> read, Func<TResult, long>? rows) =>
+        ReadAsync(context, cache, tablesFrom, table, read, static (reader, build, token) => build(reader, token), rows);
+
+    /// <summary>
+    /// Runs a reading command, through the result cache when <paramref name="cache"/> is set. <paramref name="state"/> is passed
+    /// to <paramref name="read"/>, so callers need no closure.
+    /// </summary>
+    [System.Runtime.CompilerServices.AsyncMethodBuilder(typeof(System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder<>))]
+    private async ValueTask<Result<TResult>> ReadAsync<TState, TResult>(CommandContext context, CachePolicy? cache, SqlStatement? tablesFrom,
+        string? table, TState state, Func<DbDataReader, TState, CancellationToken, ValueTask<TResult>> read, Func<TResult, long>? rows)
     {
         if (cache is null || Options.Cache is not { } store || _transaction is not null)
         {
-            return await RunAsync(context, read,
-                static async (cmd, build, token) =>
+            return await RunAsync(context, (State: state, Read: read),
+                static async (cmd, s, token) =>
                 {
                     var reader = await cmd.ExecuteReaderAsync(token).ConfigureAwait(false);
                     await using var readerLifetime = reader.ConfigureAwait(false);
-                    return await build(reader, token).ConfigureAwait(false);
+                    return await s.Read(reader, s.State, token).ConfigureAwait(false);
                 }, rows).ConfigureAwait(false);
         }
 
@@ -286,7 +311,7 @@ public sealed partial class Database
                 }, static set => set.Rows.Length).ConfigureAwait(false);
             if (buffered.IsFailure) return buffered.Error!;
             var tables = tablesFrom is not null ? SqlTables.Of(tablesFrom) : table is null ? [] : [table];
-            return Result<(object, long, IReadOnlyList<string>)>.Success((buffered.Value!, buffered.Value!.Size, CacheTags(tables)));
+            return Result<(object, long, IReadOnlyList<string>)>.Success((buffered.Value!, buffered.Value!.Size, CacheTags(tables, context)));
         }, context.CancellationToken, store.Config.PublishEvents ? hit => Publish(hit
             ? new CL.Data.Events.CacheHitEvent(Name, Provider.Name, Options.Time.GetUtcNow(), context.Table)
             : new CL.Data.Events.CacheMissEvent(Name, Provider.Name, Options.Time.GetUtcNow(), context.Table)) : null).ConfigureAwait(false);
@@ -294,7 +319,7 @@ public sealed partial class Database
 
         var replay = ((BufferedResultSet)loaded.Value!).CreateReader();
         await using var replayLifetime = replay.ConfigureAwait(false);
-        return Result<TResult>.Success(await read(replay, context.CancellationToken).ConfigureAwait(false));
+        return Result<TResult>.Success(await read(replay, state, context.CancellationToken).ConfigureAwait(false));
     }
 
     /// <summary>The cache key of a command: connection, kind, SQL and parameter values.</summary>
@@ -337,9 +362,16 @@ public sealed partial class Database
         }
     }
 
-    /// <summary>Tags of a cached result: one per table read, plus the connection-wide tag.</summary>
-    private string[] CacheTags(IReadOnlyList<string> tables)
+    /// <summary>
+    /// Tags of a cached result: one per table read, plus the connection-wide tag. A key lookup that reads only its own table
+    /// (the entity cache) is tagged with its row and with <see cref="DataTags.Entities"/> instead of the table, so writes to
+    /// other rows keep it.
+    /// </summary>
+    private string[] CacheTags(IReadOnlyList<string> tables, CommandContext context)
     {
+        if (tables.Count == 1 && context.Table == tables[0] && context.Tags is [var only]
+            && only.StartsWith("entity:", StringComparison.Ordinal))
+            return [Name + "|" + only, Name + "|" + DataTags.Entities(tables[0]), Name + "|*"];
         var tags = new string[tables.Count + 1];
         for (var i = 0; i < tables.Count; i++) tags[i] = Name + "|" + DataTags.Table(tables[i]);
         tags[^1] = Name + "|*";
@@ -373,9 +405,39 @@ public sealed partial class Database
         }
         finally
         {
-            // Even a partly failed batch may have changed rows (outside a transaction): drop what it touched.
-            InvalidateCache([.. commands.SelectMany(c => c.Tags).Distinct()]);
+            // Even a partly failed batch may have changed rows (outside a transaction): drop what it touched. Inserted rows
+            // are named by key (a key lookup may have cached "not found" for them); when a key is not known, the table tag
+            // alone drops every key lookup of the table.
+            if (Options.Cache is not null) InvalidateCache(WriteTags(commands, entities, accessor));
         }
+    }
+
+    private static List<string> WriteTags<T>(IReadOnlyList<WriteCommand> commands, IReadOnlyList<T> entities, IEntityAccessor<T> accessor)
+    {
+        HashSet<string> tags = [];
+        foreach (var command in commands)
+        {
+            foreach (var tag in command.Tags) tags.Add(tag);
+            if (command.Kind != WriteKind.Insert) continue;
+            List<string> keys = [];
+            foreach (var entity in entities)
+            {
+                var key = accessor.GetKey(entity);
+                if (!IsKnownKey(key)) { keys = []; break; }
+                keys.Add(DataTags.Entity(command.Table, key));
+            }
+            foreach (var key in keys) tags.Add(key);
+        }
+        return [.. tags];
+    }
+
+    // A key with no value, or an identity that was not read back (0), names no row.
+    private static bool IsKnownKey(EntityKey key)
+    {
+        if (key.IsDefault) return false;
+        for (var i = 0; i < key.Count; i++)
+            if (key[i] is null or 0L or 0) return false;
+        return true;
     }
 
     /// <summary>Runs a <c>SELECT 1 ... LIMIT 1</c> on the primary (inside the current transaction, if any).</summary>

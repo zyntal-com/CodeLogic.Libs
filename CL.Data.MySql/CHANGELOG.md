@@ -2,6 +2,10 @@
 
 ## 5.0 (unreleased)
 
+### Breaking
+
+- `MySqlOptions.ConnectionReset` is a `ConnectionResetMode` (was `MySqlConnectionReset`); configuration values are unchanged.
+
 ### Changed
 
 - **No reset round trip on every open (behaviour change):** the pool runs with MySqlConnector's `ConnectionReset=false`, and CL.Data resets a connection (`COM_RESET_CONNECTION`, then `SET NAMES utf8mb4` and the database restored) before it returns to the pool only when it may carry session state. Generated queries and writes skip the reset, which halves point-lookup latency against a remote server (get by key against MySQL in Docker Desktop: 1,166 µs → 622 µs, and about 2 KB less allocated per call). Statements that user code prepared through `WithConnectionAsync` keep working: the driver then runs its full reset at the next open.

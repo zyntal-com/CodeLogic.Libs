@@ -45,6 +45,7 @@ public sealed class BenchItem
 public class MySqlBenchmarks
 {
     private static readonly CompiledQuery<BenchItem, long> ById = CompiledQuery.For<BenchItem, long>((q, id) => q.Where(i => i.Id == id));
+    private static readonly CompiledQuery<BenchItem, decimal> PricedAbove = CompiledQuery.For<BenchItem, decimal>((q, min) => q.Where(i => i.Price > min));
     private static readonly CompiledQuery<BenchItem, decimal> Above = CompiledQuery.For<BenchItem, decimal>((q, min) => q.Where(i => i.Price > min).OrderBy(i => i.Id).Take(100));
 
     private Database _db = null!;
@@ -67,7 +68,7 @@ public class MySqlBenchmarks
         _source = new MySqlDataSource(new MySqlConnectionStringBuilder(cs) { ConnectionReset = false }.ConnectionString);
         _always = Database.Create("bench-always", MySqlDataProvider.Instance, new DataConnectionConfig
         {
-            Provider = "mysql", ConnectionString = cs, MySql = new MySqlOptions { ConnectionReset = MySqlConnectionReset.Always },
+            Provider = "mysql", ConnectionString = cs, MySql = new MySqlOptions { ConnectionReset = ConnectionResetMode.Always },
         }).ValueOrThrow();
         _cached = Database.Create("bench-cached", MySqlDataProvider.Instance, new DataConnectionConfig { Provider = "mysql", ConnectionString = cs },
             new DatabaseOptions { Cache = new CL.Data.Caching.DataCache(new DataCacheConfig { EntityCache = true }) }).ValueOrThrow();
@@ -217,4 +218,7 @@ public class MySqlBenchmarks
         var min = 10m;
         return (await _db.Query<BenchItem>().Where(i => i.Price > min).CountAsync()).Value;
     }
+
+    [Benchmark, BenchmarkCategory("Count")]
+    public async Task<long> CLData_Compiled_Count() => (await PricedAbove.CountAsync(_db, 10m)).Value;
 }

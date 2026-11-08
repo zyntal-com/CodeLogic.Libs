@@ -5,6 +5,7 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../../CL.Data.MySql/CL.Data.MySql.csproj" />
+    <ProjectReference Include="../../CL.Data.PostgreSql/CL.Data.PostgreSql.csproj" />
     <ProjectReference Include="../../CL.Data/generator/CL.Data.Generator/CL.Data.Generator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
   </ItemGroup>
 </Project>

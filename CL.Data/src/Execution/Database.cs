@@ -235,7 +235,8 @@ public sealed partial class Database : IAsyncDisposable
         Func<DbCommand, TState, CancellationToken, ValueTask<TResult>> body, Func<TResult, long>? rows,
         System.Data.IsolationLevel? transaction)
     {
-        return _pipeline.ExecuteAsync(context, async ctx =>
+        // Pooled state machine: the terminal runs once per command and always awaits I/O.
+        return _pipeline.ExecuteAsync(context, [System.Runtime.CompilerServices.AsyncMethodBuilder(typeof(System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder<>))] async ValueTask<Result<TResult>> (CommandContext ctx) =>
         {
             var started = Stopwatch.GetTimestamp();
             var node = ctx.Node ?? Primary;

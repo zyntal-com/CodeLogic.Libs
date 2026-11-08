@@ -29,6 +29,14 @@ internal static class RowReader
         return rows;
     }
 
+    /// <summary>Reads the first row of the current result, or default when there is none.</summary>
+    public static async ValueTask<T?> ReadFirstAsync<T>(DbDataReader reader, IEntityAccessor<T>? accessor, NamingPolicy policy,
+        CancellationToken ct)
+    {
+        if (!await reader.ReadAsync(ct).ConfigureAwait(false)) return default;
+        return accessor is null ? ValueReader<T>.Read(reader, 0) : accessor.Materialize(reader, Ordinals(reader, accessor.Map, policy));
+    }
+
     /// <summary>
     /// Reader ordinal of each mapped column (-1 when absent). Result columns match the database name under
     /// <paramref name="policy"/> or the property name, case-insensitively.

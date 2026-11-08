@@ -163,6 +163,63 @@ public abstract class CacheConformance(ProviderFixture fixture) : ConformanceSui
     }
 
     [SkippableFact]
+    public async Task The_entity_cache_drops_only_the_rows_a_write_names()
+    {
+        RequireProvider();
+        var (db, reads, _) = Cached(entityCache: true);
+        await using var __ = db;
+        var rows = await SeedAsync(db);
+        var repo = db.Repository<Product>();
+
+        async Task<Product?> Get(long id) => (await repo.GetByIdAsync(id)).ValueOrThrow();
+        async Task<bool> Hit(long id)
+        {
+            var before = reads.Count;
+            await Get(id);
+            return reads.Count == before;
+        }
+
+        foreach (var row in rows) await Get(row.Id);
+        Assert.True(await Hit(rows[0].Id));
+
+        // An update or delete by key drops that row only.
+        rows[1].Name = "u2";
+        (await repo.UpdateAsync(rows[1])).ValueOrThrow();
+        Assert.True(await Hit(rows[0].Id));
+        Assert.True(await Hit(rows[2].Id));
+        Assert.Equal("u2", (await Get(rows[1].Id))!.Name);
+        (await repo.IncrementAsync(rows[1].Id, p => p.Stock)).ValueOrThrow();
+        Assert.True(await Hit(rows[0].Id));
+        Assert.Equal(rows[1].Stock + 1, (await Get(rows[1].Id))!.Stock);
+        (await repo.HardDeleteAsync(rows[2])).ValueOrThrow();
+        Assert.True(await Hit(rows[0].Id));
+        Assert.Null(await Get(rows[2].Id));
+
+        // An insert drops a cached "not found" for its key.
+        var tags = db.Repository<ProductTag>();
+        var tagKey = CL.Data.Mapping.EntityKey.Of(rows[0].Id, "green");
+        Assert.Null((await tags.GetByKeyAsync(tagKey)).ValueOrThrow());
+        (await tags.InsertAsync(new ProductTag { ProductId = rows[0].Id, Tag = "green", Weight = 1 })).ValueOrThrow();
+        Assert.NotNull((await tags.GetByKeyAsync(tagKey)).ValueOrThrow());
+
+        // Writes whose rows are not known drop every key lookup of the table.
+        await Get(rows[0].Id);
+        (await db.Query<Product>().Where(p => p.Sku == "C-1").UpdateAsync(p => new Product { Name = "set1" })).ValueOrThrow();
+        Assert.Equal("set1", (await Get(rows[0].Id))!.Name);
+        (await repo.UpsertAsync(new Product { Id = rows[0].Id, Sku = "C-1", Name = "up1", Price = 1, Stock = 1 })).ValueOrThrow();
+        Assert.Equal("up1", (await Get(rows[0].Id))!.Name);
+        (await db.ExecuteSqlAsync($"UPDATE conf_products SET {Sql.Identifier("Name")} = {"raw"} WHERE {Sql.Identifier("Sku")} = {"C-1"}")).ValueOrThrow();
+        Assert.Equal("raw", (await Get(rows[0].Id))!.Name);
+
+        // Query results still follow the table: an update by key drops cached lists.
+        Assert.Contains("raw", (await AllAsync(db)).Select(p => p.Name));
+        var fresh = (await Get(rows[1].Id))!;   // the increment above moved its concurrency token
+        fresh.Name = "listed";
+        (await repo.UpdateAsync(fresh)).ValueOrThrow();
+        Assert.Contains("listed", (await AllAsync(db)).Select(p => p.Name));
+    }
+
+    [SkippableFact]
     public async Task Concurrent_misses_run_once_and_entries_expire()
     {
         RequireProvider();

@@ -161,7 +161,11 @@ public sealed class DataConnectionConfig
     [ConfigField(Label = "Bulk Threshold", Min = 0, Group = "Performance", Order = 62, Collapsed = true)]
     public int BulkThreshold { get; set; } = 5000;
 
-    /// <summary>Prepare frequently repeated statements on the server.</summary>
+    /// <summary>
+    /// Allow server-side prepared statements. PostgreSQL prepares repeated statements automatically (Npgsql auto-prepare,
+    /// <c>postgreSql.maxAutoPrepare</c>). MySQL honours <c>DbCommand.Prepare()</c> in code run through <c>WithConnectionAsync</c>;
+    /// CL.Data does not prepare its own statements there, because it measured no gain for them. Off: nothing is prepared.
+    /// </summary>
     [ConfigField(Label = "Prepare Statements", Group = "Performance", Order = 64, Collapsed = true)]
     public bool PrepareStatements { get; set; } = true;
 

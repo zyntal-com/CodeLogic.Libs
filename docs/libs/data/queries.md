@@ -159,9 +159,9 @@ var version = await db.WithConnectionAsync((connection, transaction, ct) => Valu
 `SqlText.Raw(...)` is for trusted, pre-built text only.
 
 Raw SQL and `WithConnectionAsync` may leave session state on a pooled connection (`SET`, user variables, temporary
-tables, `GET_LOCK`, a raw `START TRANSACTION`). On MySQL, CL.Data resets such a connection before it returns to the pool,
-so the next command never sees that state; plain statements skip the reset (see
-[Providers](providers.md#mysql)). The other providers' drivers reset every pooled connection themselves.
+tables, `GET_LOCK`, a raw `START TRANSACTION`). On MySQL and PostgreSQL, CL.Data resets such a connection before it
+returns to the pool, so the next command never sees that state; plain statements skip the reset (see
+[Providers](providers.md)). SQL Server resets every pooled connection itself, and SQLite applies its settings on every open.
 
 **What a raw statement is** (`SqlIntent`) decides where `SqlQueryAsync`, `SqlReadAsync`, `SqlScalarAsync` and `DataBatch.Sql`
 run it, whether it is retried and what happens to the cache:
@@ -192,6 +192,11 @@ var hits = await Above.ToListAsync(db, 25m);
 ```
 
 `WithCache(...)` and `ReadFrom(...)` in the chain apply to every call, as on a regular query.
+
+**When to compile:** a LINQ query builds its expression tree on every call (the C# compiler does that for each lambda),
+and CL.Data builds and renders its SQL. The plan cache only saves the translation. Compile the queries on hot paths: a
+compiled count allocates about a third less than the same LINQ count (6.2 KB against 9.8 KB on MySQL). `GetByIdAsync` and `GetByKeyAsync` need no
+compiling, since their SQL is built once per entity.
 
 ## Auditing, concurrency, tenancy, filters
 

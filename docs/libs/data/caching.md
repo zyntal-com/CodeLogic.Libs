@@ -40,6 +40,12 @@ var report = await db.Query<Order>().WithCache()
 ```
 
 **Entity cache:** with `entityCache` on, `GetByIdAsync` and `GetByKeyAsync` answer repeated lookups from memory.
+- **Per-row eviction:** a write that names its rows drops only those rows' lookups. That covers updates, deletes,
+  increments and adjustments by key, and inserts (they drop a cached "not found" for their keys). Updating one customer
+  keeps every other customer's lookup cached.
+- **Whole-table eviction:** a write whose rows are not known drops every lookup of the table: set-based updates and
+  deletes, upserts, bulk copy, raw SQL, and an `Invalidate` call with the table tag.
+- **Query results** (`WithCache()` queries) are dropped on any write to a table they read, as before.
 
 **How results are stored:**
 - **Fresh objects:** results are kept as raw rows and materialized on every hit, so callers get fresh objects and can't change what's cached.

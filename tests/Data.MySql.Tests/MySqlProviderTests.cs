@@ -38,10 +38,10 @@ public sealed class MySqlProviderTests
     }
 
     [Theory]
-    [InlineData(MySqlConnectionReset.WhenDirty, false, true)]
-    [InlineData(MySqlConnectionReset.Always, true, false)]
-    [InlineData(MySqlConnectionReset.Never, false, false)]
-    public void Connection_reset_mode_decides_who_resets(MySqlConnectionReset mode, bool driverResets, bool cldataResets)
+    [InlineData(ConnectionResetMode.WhenDirty, false, true)]
+    [InlineData(ConnectionResetMode.Always, true, false)]
+    [InlineData(ConnectionResetMode.Never, false, false)]
+    public void Connection_reset_mode_decides_who_resets(ConnectionResetMode mode, bool driverResets, bool cldataResets)
     {
         // The typed option wins over a ConnectionReset key in the raw connection string.
         var config = new DataConnectionConfig
