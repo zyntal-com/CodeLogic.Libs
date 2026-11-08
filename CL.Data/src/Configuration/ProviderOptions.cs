@@ -29,12 +29,12 @@ public sealed class MySqlOptions
     public bool AllowLoadLocalInfile { get; set; }
 
     /// <summary>
-    /// When pooled connections are reset (session state cleared). <see cref="MySqlConnectionReset.WhenDirty"/> (the default)
+    /// When pooled connections are reset (session state cleared). <see cref="ConnectionResetMode.WhenDirty"/> (the default)
     /// skips the driver's reset on every open, which costs a full round trip, and resets a connection only when it may carry
     /// session state. Overrides a <c>ConnectionReset</c> key in the connection string.
     /// </summary>
     [ConfigField(Label = "Connection Reset", RequiresRestart = true, Order = 5)]
-    public MySqlConnectionReset ConnectionReset { get; set; } = MySqlConnectionReset.WhenDirty;
+    public ConnectionResetMode ConnectionReset { get; set; } = ConnectionResetMode.WhenDirty;
 
     /// <summary>
     /// Seconds an idle pooled connection is kept before the driver closes it. Without a reset on every open nothing checks a
@@ -45,18 +45,18 @@ public sealed class MySqlOptions
     public int ConnectionIdleTimeoutSeconds { get; set; } = 180;
 }
 
-/// <summary>When CL.Data's MySQL provider resets pooled connections.</summary>
-public enum MySqlConnectionReset
+/// <summary>When pooled connections are reset (MySQL <c>mySql.connectionReset</c>, PostgreSQL <c>postgreSql.connectionReset</c>).</summary>
+public enum ConnectionResetMode
 {
     /// <summary>
     /// Reset a connection before it returns to the pool, only when it may carry session state: raw SQL that is not a plain
-    /// single SELECT/INSERT/UPDATE/DELETE/DDL statement (<c>SET</c>, <c>CALL</c>, transaction control, user variables,
-    /// <c>GET_LOCK</c>, temporary tables, several statements), connections handed to <c>WithConnectionAsync</c>, advisory locks
-    /// not released cleanly, interrupted commands. Generated queries and writes skip the reset.
+    /// single query, DML or DDL statement (<c>SET</c>, <c>CALL</c>, transaction control, user variables, advisory locks,
+    /// temporary tables, several statements), connections handed to <c>WithConnectionAsync</c>, advisory locks not released
+    /// cleanly, interrupted commands. Generated queries and writes skip the reset.
     /// </summary>
     WhenDirty = 0,
 
-    /// <summary>The driver resets every pooled connection when it is opened (one extra round trip per open).</summary>
+    /// <summary>The driver resets every pooled connection (MySQL: when it is opened, one extra round trip; PostgreSQL: when it is closed).</summary>
     Always,
 
     /// <summary>
@@ -84,6 +84,14 @@ public sealed class PostgreSqlOptions
     /// <summary>Npgsql multiplexing: many commands share fewer physical connections.</summary>
     [ConfigField(Label = "Multiplexing", RequiresRestart = true, Order = 3)]
     public bool Multiplexing { get; set; }
+
+    /// <summary>
+    /// When pooled connections are reset. <see cref="ConnectionResetMode.WhenDirty"/> (the default) skips Npgsql's reset on
+    /// every close (<c>DISCARD ALL</c> or its equivalent, sent with the next command) and resets a connection only when it may
+    /// carry session state. Overrides a <c>No Reset On Close</c> key in the connection string; ignored with multiplexing.
+    /// </summary>
+    [ConfigField(Label = "Connection Reset", RequiresRestart = true, Order = 4)]
+    public ConnectionResetMode ConnectionReset { get; set; } = ConnectionResetMode.WhenDirty;
 }
 
 /// <summary>How SQL Server connections authenticate.</summary>

@@ -10,14 +10,14 @@ using MySqlConnector;
 namespace Data.MySql.Tests;
 
 /// <summary>
-/// Session state never leaks between pooled uses of a connection, whichever <see cref="MySqlConnectionReset"/> mode resets it,
-/// and <see cref="MySqlConnectionReset.WhenDirty"/> resets only when needed. Every database here has a one-connection pool,
+/// Session state never leaks between pooled uses of a connection, whichever <see cref="ConnectionResetMode"/> mode resets it,
+/// and <see cref="ConnectionResetMode.WhenDirty"/> resets only when needed. Every database here has a one-connection pool,
 /// so each lease reuses the same server session.
 /// </summary>
 [Collection("mysql")]
 public sealed class MySqlSessionHygieneTests(MySqlFixture fixture)
 {
-    private Database Open(MySqlConnectionReset mode = MySqlConnectionReset.WhenDirty, bool prepare = true)
+    private Database Open(ConnectionResetMode mode = ConnectionResetMode.WhenDirty, bool prepare = true)
     {
         Skip.If(fixture.SkipReason is not null, fixture.SkipReason);
         var config = new DataConnectionConfig
@@ -86,9 +86,9 @@ public sealed class MySqlSessionHygieneTests(MySqlFixture fixture)
     }
 
     [SkippableTheory]
-    [InlineData(MySqlConnectionReset.WhenDirty)]
-    [InlineData(MySqlConnectionReset.Always)]
-    public async Task Raw_session_changes_do_not_reach_the_next_user(MySqlConnectionReset mode)
+    [InlineData(ConnectionResetMode.WhenDirty)]
+    [InlineData(ConnectionResetMode.Always)]
+    public async Task Raw_session_changes_do_not_reach_the_next_user(ConnectionResetMode mode)
     {
         await using var db = Open(mode);
         var globalMode = await Scalar<string>(db, "SELECT @@GLOBAL.sql_mode");
@@ -119,7 +119,7 @@ public sealed class MySqlSessionHygieneTests(MySqlFixture fixture)
     [SkippableFact]
     public async Task Never_leaks_session_state_as_documented()
     {
-        await using var db = Open(MySqlConnectionReset.Never);
+        await using var db = Open(ConnectionResetMode.Never);
         await Exec(db, "SET @leak = 42");
         Assert.Equal(42, await Scalar<long>(db, "SELECT @leak"));
     }

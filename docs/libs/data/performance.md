@@ -28,7 +28,9 @@ All numbers are from one Windows 11 machine, with MySQL in Docker Desktop. A rou
 
 - **Source-generated mapping:** entities are read and bound by generated code. That means typed reads, no boxing and no reflection, and it's why Native AOT works. `CL_DATA_FORCE_REFLECTION=1` turns generated mapping off, for comparison.
 - **Plan cache:** a query's shape is hashed (`XxHash128`, ignoring captured values) and its SQL and parameter slots are reused. Repeated queries skip translation completely.
-- **Compiled queries:** `CompiledQuery.For<T, TArgs>(...)` plans a query once per database, and calls only bind arguments. This is the fastest path, and it allocates as little as Dapper.
+- **Compiled queries:** `CompiledQuery.For<T, TArgs>(...)` plans a query once per database, and calls only bind arguments. This is the fastest path for LINQ queries, and it allocates as little as Dapper.
+- **Key lookups:** `GetByIdAsync` / `GetByKeyAsync` build their SQL once per entity, dialect and naming policy and only bind the key, so they run as fast as raw ADO.NET.
+- **Lean execution:** the per-command steps (pipeline, retries, executor, reader) reuse pooled async state machines, rows are read without closures, and registered value converters are looked up once per type, not once per value.
 - **Cheap SQL building:** parameter placeholder names are cached per dialect, and the SQL writer's buffers are reused per thread. Planning and rendering a 100-row insert takes 55 KB, down from 114 KB.
 - **Fewer round trips:**
   - `db.Batch()` sends several queries at once.
@@ -38,6 +40,9 @@ All numbers are from one Windows 11 machine, with MySQL in Docker Desktop. A rou
 - **No reset round trip on MySQL:** MySqlConnector's reset on every pooled open is skipped. CL.Data resets a connection only
   when it may carry session state (`mySql.connectionReset: "WhenDirty"`, the default; see [Providers](providers.md#mysql)),
   which halves the latency of small queries against a remote server.
+- **No reset on close on PostgreSQL:** Npgsql's reset on every close is skipped in the same way
+  (`postgreSql.connectionReset`), 9–14% off a lookup by key.
+- **Per-row cache eviction:** an update by key keeps the entity cache of every other row (see [Caching](caching.md)).
 - **Warm pools:** `minPoolSize` connections are opened at start.
 - **No `COUNT` you didn't ask for:** `ToPagedListAsync(withTotal: false)` is the default, and keyset paging (`ToCursorPageAsync`) never counts.
 - **The result cache:** microsecond hits, with exact invalidation (see [Caching](caching.md)).
@@ -64,7 +69,8 @@ The CI job `data-perf` runs the check, and it exits 1 when a benchmark goes over
 
 ## Tips
 
-- **Hot queries:** use `WithCache` for read-mostly data, and compiled queries for hot paths.
+- **Hot queries:** use `WithCache` for read-mostly data, and compiled queries for hot LINQ queries (a compiled count
+  allocates about a third less than the LINQ one). Key lookups are already precompiled.
 - **Large columns:** use `Exclude(...)` when you don't need them.
 - **Large lists:** stream with `AsAsyncEnumerable`, and page with cursors.
 - **Writes:** for large inserts with known keys, or when you don't need identities back, use `db.Bulk<T>()`. To write only the columns you changed, use snapshots (`repo.Snapshot` plus `UpdateAsync(entity, snapshot)`).

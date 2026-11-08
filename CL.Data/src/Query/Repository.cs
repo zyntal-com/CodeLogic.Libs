@@ -319,17 +319,25 @@ public sealed class Repository<T>
         if (accessor.IsFailure) return accessor.Error!;
         var map = accessor.Value!.Map;
         var names = map.GetNames(_db.NamingPolicy);
-        var keyWhere = ReadPlanner.KeyPredicate(map, names, key);
-        if (keyWhere.IsFailure) return keyWhere.Error!;
 
-        var select = ReadPlanner.Select(_db, map, keyWhere.Value, includeDeleted: false);
-        if (select.IsFailure) return select.Error!;
-        // The entity cache (DataCacheConfig.EntityCache) serves repeated key lookups; any write to the table drops them.
-        var entityCache = _db.Options.Cache is { Config.EntityCache: true } cache
+        // The entity cache (DataCacheConfig.EntityCache) serves repeated key lookups; writes to the row (or set-based writes
+        // to the table) drop them. The row tag is only needed when there is a cache.
+        var cache = _db.Options.Cache;
+        var entityCache = cache is { Config.EntityCache: true }
             ? CL.Data.Caching.CachePolicy.For(TimeSpan.FromSeconds(cache.Config.EntityCacheTtlSeconds))
             : null;
-        var rows = await _db.QueryAsync(select.Value! with { Limit = Limit(1) }, accessor.Value, names.Table,
-            [DataTags.Entity(names.Table, key)], ct, entityCache).ConfigureAwait(false);
+        IReadOnlyList<string> tags = cache is null ? [] : [DataTags.Entity(names.Table, key)];
+
+        // Usually the lookup's SQL is built once per entity and only the key is bound (KeyLookupPlan).
+        if (KeyLookupPlan.TryBind(_db, map, key) is { } spec)
+            return await _db.QueryFirstSpecAsync(spec, accessor.Value, names.Table, tags, ct, entityCache).ConfigureAwait(false);
+
+        var keyWhere = ReadPlanner.KeyPredicate(map, names, key);
+        if (keyWhere.IsFailure) return keyWhere.Error!;
+        var select = ReadPlanner.Select(_db, map, keyWhere.Value, includeDeleted: false);
+        if (select.IsFailure) return select.Error!;
+        var rows = await _db.QueryAsync(select.Value! with { Limit = Limit(1) }, accessor.Value, names.Table, tags, ct, entityCache)
+            .ConfigureAwait(false);
         return rows.IsSuccess ? Result<T?>.Success(rows.Value!.Count > 0 ? rows.Value[0] : default) : rows.Error!;
     }
 

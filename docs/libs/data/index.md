@@ -86,7 +86,7 @@ await using var db = Database.Create("main", MySqlDataProvider.Instance, new Dat
 | Target | `provider`, `connectionString` or `host`/`port`/`database`/`username`/`password`, `failoverHosts`, `sslMode` |
 | Pool & timeouts | `minPoolSize` (opened at start), `maxPoolSize`, `connectTimeoutSeconds`, `commandTimeoutSeconds` |
 | Schema | `syncMode` (`Developer`, `Production`, `Migration`), `schemaSyncLevel` override, `createDatabaseIfMissing`, `namingPolicy`, `backupDirectory` |
-| Performance | `maxBatchSize`, `bulkThreshold`, `prepareStatements`, `cacheEnabled` (per-connection cache override) |
+| Performance | `maxBatchSize`, `bulkThreshold`, `prepareStatements` (PostgreSQL auto-prepare; on MySQL only `Prepare()` in your own `WithConnectionAsync` code), `cacheEnabled` (per-connection cache override) |
 | Diagnostics | `slowQueryThresholdMs`, `captureExplainOnSlowQuery`, `nPlusOneThreshold`, `publishQueryEvents` |
 | Resilience | `retryCount`, `retryBaseDelayMs`, `circuitBreakerThreshold`, `circuitBreakSeconds` |
 | Replicas | `replicas[]`, `readPreference`, `stickyAfterWriteMs`, `maxReplicaLagMs`, `replicaProbeIntervalSeconds` |

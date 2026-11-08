@@ -46,7 +46,16 @@ public sealed record WriteCommand(SqlStatement Statement, WriteKind Kind, string
     /// (<see cref="CL.Data.Providers.ProviderCapabilities.AffectedRowsCountChangesOnly"/>), an <see cref="RowCheck.ExactlyOne"/>
     /// update that reports no rows passes if this finds the row: it matched, but nothing changed.
     /// </summary>
-    public SqlStatement? MatchCheck { get; init; }
+    public SqlStatement? MatchCheck
+    {
+        get => field ??= MatchWhere is { } where && Statement is UpdateStatement update
+            ? new SelectStatement(update.Table) { Projection = [new ProjectionItem(new LiteralExpr(1))], Where = where, Limit = new LiteralExpr(1) }
+            : null;
+        init;
+    }
+
+    /// <summary>The WHERE of <see cref="MatchCheck"/>, which is only built when it is needed (rarely).</summary>
+    internal SqlExpr? MatchWhere { get; init; }
 
     /// <summary>True when the statement returns generated values (RETURNING/OUTPUT) for <see cref="ReturnedColumns"/>.</summary>
     public bool Returns => ReturnedColumns.Count > 0;

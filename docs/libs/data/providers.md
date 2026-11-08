@@ -71,8 +71,18 @@ await db.MySql.AnalyzeTableAsync<Product>();
 ```json
 { "provider": "postgresql", "host": "pg1", "database": "app", "username": "app", "password": "secret",
   "failoverHosts": ["pg2"],
-  "postgreSql": { "defaultSchema": "public", "maxAutoPrepare": 50, "multiplexing": false } }
+  "postgreSql": { "defaultSchema": "public", "maxAutoPrepare": 50, "multiplexing": false, "connectionReset": "WhenDirty" } }
 ```
+
+- **Connection reset:** Npgsql normally resets a pooled connection on every close (`DISCARD ALL` or its equivalent, sent
+  with the next command), which is extra server work on every command. With `connectionReset: "WhenDirty"` (the default)
+  that reset is skipped and CL.Data resets a connection only when it may carry session state: raw SQL that is not one plain
+  query, DML or DDL statement (`SET`, `RESET`, `BEGIN`, `LOCK`, `LISTEN`, `PREPARE`, `DO`, `CALL`, `set_config`, advisory
+  locks, temporary tables, several statements), connections handed to `WithConnectionAsync`, locks not released cleanly
+  and interrupted commands. The reset rolls back an open transaction and runs the statements Npgsql uses when it has
+  prepared statements, so auto-prepared statements stay valid. `"Always"` keeps Npgsql's reset; `"Never"` turns resets off.
+  The option overrides `No Reset On Close` in `connectionString` and is ignored with `multiplexing`. A lookup by key took
+  594 µs with the reset and 543 µs without it, against PostgreSQL 18 in Docker Desktop.
 
 - **Failover:** `failoverHosts` maps to Npgsql multi-host with `TargetSessionAttributes=primary`.
 - **Tables** are qualified with `defaultSchema` unless `[Table(Schema = ...)]` says otherwise.

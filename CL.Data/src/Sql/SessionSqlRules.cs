@@ -13,6 +13,7 @@ public sealed class SessionSqlRules
     private readonly HashSet<string>.AlternateLookup<ReadOnlySpan<char>> _starts;
     private readonly HashSet<string>.AlternateLookup<ReadOnlySpan<char>> _dirty;
     private readonly char? _parameterPrefix;
+    private readonly bool _atIsVariable;
 
     /// <summary>Creates rules.</summary>
     /// <param name="neutralStarts">First words of statements that leave no session state (<c>SELECT</c>, <c>INSERT</c>, ...).</param>
@@ -22,9 +23,14 @@ public sealed class SessionSqlRules
     /// <c>@p1</c>, ...) are then not taken for user variables.
     /// </param>
     /// <param name="lexicon">How the dialect lexes comments and literals; null is standard SQL. It must match the server.</param>
+    /// <param name="atIsVariable">
+    /// True when <c>@</c> outside literals marks a user or system variable (MySQL). False where it is an operator (PostgreSQL
+    /// <c>@&gt;</c>, <c>&lt;@</c>).
+    /// </param>
     public SessionSqlRules(IEnumerable<string> neutralStarts, IEnumerable<string> dirtyWords, char? parameterPrefix = null,
-        SqlLexicon? lexicon = null)
+        SqlLexicon? lexicon = null, bool atIsVariable = true)
     {
+        _atIsVariable = atIsVariable;
         ArgumentNullException.ThrowIfNull(neutralStarts);
         ArgumentNullException.ThrowIfNull(dirtyWords);
         _parameterPrefix = parameterPrefix;
@@ -80,7 +86,7 @@ public sealed class SessionSqlRules
                     return true;
                 case SqlTokenKind.Symbol when first && tokens.Text[0] != '(':
                     return true;
-                case SqlTokenKind.Symbol when tokens.Text[0] == '@':
+                case SqlTokenKind.Symbol when tokens.Text[0] == '@' && _atIsVariable:
                     if (IsParameter(ref tokens)) break;
                     return true;   // a user or system variable
             }

@@ -140,7 +140,7 @@ public sealed class MySqlDataProvider : DataProvider
         builder.AllowLoadLocalInfile = options.AllowLoadLocalInfile;
         builder.IgnorePrepare = !config.PrepareStatements;
         // The driver's reset on every open costs a full round trip; with WhenDirty CL.Data resets only dirty sessions.
-        builder.ConnectionReset = options.ConnectionReset == MySqlConnectionReset.Always;
+        builder.ConnectionReset = options.ConnectionReset == ConnectionResetMode.Always;
         builder.ConnectionIdleTimeout = (uint)options.ConnectionIdleTimeoutSeconds;
 
         // Fixed by CL.Data: affected rows (not found rows) so insert-ignore can tell duplicates apart; GUIDs as
@@ -176,7 +176,7 @@ public sealed class MySqlDataProvider : DataProvider
 
     /// <inheritdoc />
     public override bool ResetsDirtySessions(DataConnectionConfig config) =>
-        config.Pooling && (config.MySql?.ConnectionReset ?? MySqlConnectionReset.WhenDirty) == MySqlConnectionReset.WhenDirty;
+        config.Pooling && (config.MySql?.ConnectionReset ?? ConnectionResetMode.WhenDirty) == ConnectionResetMode.WhenDirty;
 
     /// <inheritdoc />
     public override bool MayChangeSession(string sql) => SessionRules.MayChangeSession(sql);

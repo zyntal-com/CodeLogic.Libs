@@ -104,6 +104,14 @@ public readonly struct PostgresFeatures(Database db)
         {
             await _stop.CancelAsync().ConfigureAwait(false);
             try { await _loop.ConfigureAwait(false); } catch { /* already reported as ended */ }
+            // Pooled connections may skip Npgsql's reset on close (postgreSql.connectionReset): stop listening explicitly so
+            // the next user of this connection receives no notifications. A broken connection is dropped by the pool.
+            try
+            {
+                var unlisten = new NpgsqlCommand("UNLISTEN *", _connection);
+                await using (unlisten.ConfigureAwait(false)) await unlisten.ExecuteNonQueryAsync(CancellationToken.None).ConfigureAwait(false);
+            }
+            catch { /* the connection is gone */ }
             await _connection.DisposeAsync().ConfigureAwait(false);
             _stop.Dispose();
         }

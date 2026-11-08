@@ -2,6 +2,10 @@
 
 ## 5.0 (unreleased)
 
+### Breaking
+
+- **`ConnectionResetMode` replaces `MySqlConnectionReset`:** one enum (`WhenDirty`, `Always`, `Never`) for `mySql.connectionReset` and the new `postgreSql.connectionReset`. Configuration values are unchanged; C# code that names the old type must use the new one.
+
 ### Security
 
 - **Bookkeeping reads use the primary:** schema sync state, migration and seed history, the database cache bus and every schema introspector (`ReadTableAsync`, `ListTablesAsync`) read the primary, whatever the read preference. Before, with replicas and the default `PreferReplica`, a lagging replica made startup sync try to create `cl_data_schema` a second time and let a second node re-apply migrations despite the advisory lock.
@@ -47,6 +51,12 @@
 - Query plan variants use volatile publication so concurrent readers see fully initialized snapshots.
 
 ### Changed
+
+- **The entity cache drops only the rows a write names (behaviour change):** key lookups are tagged with their row instead of the table, so an update, delete, increment or adjustment by key keeps every other row's lookup cached, and an insert drops a cached "not found" for its keys. Writes whose rows are not known (set-based updates and deletes, upserts, bulk copy, raw SQL, `Invalidate` with a table tag, invalidations from the cache bus) still drop every lookup of the table. Query results are still dropped on any write to their tables. A 95% lookup / 5% update workload on a hot set went from 767 µs to 191 µs per operation (14.7 KB → 2.4 KB).
+- **Faster key lookups:** `GetByIdAsync` / `GetByKeyAsync` build their SELECT once per entity, dialect, naming policy and schema and only bind the key (and tenant); entities with user filters keep the general path. A MySQL lookup by key allocates 8.9 KB instead of 11.9 KB and runs within the noise of raw ADO.NET and Dapper; a cached lookup takes 0.8 µs instead of 2.2 µs (1.6 KB instead of 4.0 KB).
+- **Leaner command execution:** pooled async state machines on the per-command path, no closure per read, the registered value converter looked up once per type instead of per value, cached insert column lists, and an update's match check built only when the provider needs it. Under 32 parallel workers a lookup by key allocates 7.6 KB instead of 11.7 KB (Dapper: 6.8 KB), a 100-row filter runs 9% faster and an insert 13% faster; a single insert allocates 9.8 KB instead of 11.5 KB.
+- **PostgreSQL resets only dirty sessions (behaviour change):** see `postgreSql.connectionReset` in the provider docs.
+- **`prepareStatements` documents what it does:** PostgreSQL auto-prepare, and on MySQL `Prepare()` in code run through `WithConnectionAsync`. Preparing CL.Data's own key lookups on MySQL was measured (no gain) and not adopted.
 
 - **MySQL skips the connection reset round trip (behaviour change):** pooled MySQL connections are no longer reset by the driver on every open, which cost one full round trip per command (a lookup by key took about twice as long against a remote server). CL.Data resets a connection itself, before it returns to the pool, only when it may carry session state: raw SQL that is not one plain query, DML or DDL statement (`SET`, `CALL`, transaction control, user variables, `GET_LOCK`, temporary tables, several statements), connections handed to `WithConnectionAsync`, advisory locks that were not released cleanly, SQL rewritten by an interceptor, and commands interrupted by anything but a plain statement error. `mySql.connectionReset` (`WhenDirty`, the default; `Always`, the old behaviour; `Never`) chooses. Without the reset on open, a pooled connection dropped while idle fails on its first command: keep `mySql.connectionIdleTimeoutSeconds` (default 180) below any proxy's idle timeout. See the MySQL section of the provider docs.
 - N+1 diagnostics use a dedicated `System.Threading.Lock` for each counting window.

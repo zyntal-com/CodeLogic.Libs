@@ -13,6 +13,13 @@ public static class DataTags
 
     /// <summary>Tag of one row of <paramref name="table"/>.</summary>
     public static string Entity(string table, EntityKey key) => $"entity:{table}:{key}";
+
+    /// <summary>
+    /// Tag of every entity-cache entry (key lookup) of <paramref name="table"/>. Key lookups are not tagged with
+    /// <see cref="Table"/>, so a write to one row keeps the other rows cached; an invalidation of <see cref="Table"/> without
+    /// any <see cref="Entity"/> tag of that table (set-based writes, bulk copy, raw SQL) also drops this tag.
+    /// </summary>
+    public static string Entities(string table) => "entities:" + table;
 }
 
 /// <summary>Options for upserts.</summary>
@@ -58,15 +65,19 @@ public static class WritePlanner
 
         // Rows that bring their own identity value and rows that let the server generate it need different column lists.
         var identity = map.Identity;
-        var groups = identity is null
-            ? [(Explicit: true, Rows: Enumerable.Range(0, entities.Count).ToList())]
-            : Enumerable.Range(0, entities.Count).GroupBy(i => !IsDefault(accessor.GetValue(entities[i], identity.Ordinal)))
-                .Select(g => (Explicit: g.Key, Rows: g.ToList())).ToList();
+        IReadOnlyList<(bool Explicit, int[] Rows)> groups = identity is null
+            ? [(true, AllRows(entities.Count))]
+            : entities.Count == 1
+                ? [(!IsDefault(accessor.GetValue(entities[0], identity.Ordinal)), [0])]
+                : Enumerable.Range(0, entities.Count).GroupBy(i => !IsDefault(accessor.GetValue(entities[i], identity.Ordinal)))
+                    .Select(g => (g.Key, g.ToArray())).ToList();
 
         foreach (var (explicitIdentity, rows) in groups)
         {
-            var columns = map.Columns.Where(c => IsWritable(c) && (explicitIdentity || !c.Has(ColumnRoles.Identity))).ToArray();
-            var generated = map.Columns.Where(c => (!explicitIdentity && c.Has(ColumnRoles.Identity)) || c.DataType == DataType.RowVersion).ToArray();
+            // The column lists depend only on the entity, the naming policy and whether identities are explicit: built once.
+            var shape = InsertShape.For(map, names, explicitIdentity);
+            var columns = shape.Columns;
+            var generated = shape.Generated;
             var useReturning = generated.Length > 0 && ctx.Capabilities.Returning;
             var perStatement = RowsPerStatement(columns.Length, ctx, 1);
             // Generated values are matched to entities by row order; one row per statement when the provider's
@@ -74,7 +85,7 @@ public static class WritePlanner
             if (useReturning && !ctx.Capabilities.ReturningPreservesOrder) perStatement = 1;
             // Without RETURNING, generated identities come from the last-insert-id, which covers one statement at a time.
 
-            var columnNames = columns.Select(names.Of).ToArray();
+            var columnNames = shape.ColumnNames;
             var collector = new ValueCollector();
             foreach (var chunk in rows.Chunk(perStatement))
             {
@@ -88,7 +99,7 @@ public static class WritePlanner
                 }
                 var statement = new InsertStatement(table, columnNames, values)
                 {
-                    Returning = useReturning ? generated.Select(names.Of).ToArray() : [],
+                    Returning = useReturning ? shape.GeneratedNames : [],
                     ExplicitIdentity = explicitIdentity && identity is not null,
                 };
                 commands.Add(new WriteCommand(statement, WriteKind.Insert, names.Table, chunk.Length, [DataTags.Table(names.Table)])
@@ -104,6 +115,29 @@ public static class WritePlanner
         }
 
         return commands;
+    }
+
+    private static int[] AllRows(int count)
+    {
+        var rows = new int[count];
+        for (var i = 0; i < count; i++) rows[i] = i;
+        return rows;
+    }
+
+    /// <summary>The columns an INSERT writes and reads back, per entity, naming policy and identity mode (cached).</summary>
+    private sealed record InsertShape(ColumnMap[] Columns, string[] ColumnNames, ColumnMap[] Generated, string[] GeneratedNames)
+    {
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<(EntityMap Map, EntityNames Names, bool Explicit), InsertShape> Shapes = new();
+
+        public static InsertShape For(EntityMap map, EntityNames names, bool explicitIdentity) =>
+            Shapes.TryGetValue((map, names, explicitIdentity), out var shape) ? shape : Shapes.GetOrAdd((map, names, explicitIdentity), Build);
+
+        private static InsertShape Build((EntityMap Map, EntityNames Names, bool Explicit) key)
+        {
+            var columns = key.Map.Columns.Where(c => IsWritable(c) && (key.Explicit || !c.Has(ColumnRoles.Identity))).ToArray();
+            var generated = key.Map.Columns.Where(c => (!key.Explicit && c.Has(ColumnRoles.Identity)) || c.DataType == DataType.RowVersion).ToArray();
+            return new InsertShape(columns, columns.Select(key.Names.Of).ToArray(), generated, generated.Select(key.Names.Of).ToArray());
+        }
     }
 
     // ── Update ──────────────────────────────────────────────────────────────
@@ -166,7 +200,7 @@ public static class WritePlanner
         return new WriteCommand(statement, WriteKind.Update, names.Table, 1, Tags(names.Table, key))
         {
             Check = RowCheck.ExactlyOne,
-            MatchCheck = new SelectStatement(statement.Table) { Projection = [new ProjectionItem(new LiteralExpr(1))], Where = where, Limit = new LiteralExpr(1) },
+            MatchWhere = where,   // MatchCheck is built from it only when an update reports no changed row
             ReturnedColumns = returned,
             OnSuccess = onSuccess,
         };

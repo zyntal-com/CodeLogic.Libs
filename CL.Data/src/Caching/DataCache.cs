@@ -140,8 +140,39 @@ public sealed class DataCache : IDisposable
         if (tags.Count == 0) return;
         Interlocked.Increment(ref _generation);   // loads that started before this write must not store their result
         foreach (var tag in tags) _store.RemoveByTag(tag);
+        foreach (var tag in WholeTableEntityTags(tags)) _store.RemoveByTag(tag);
         MarkShielded(tags);
         if (notify) Invalidated?.Invoke(tags);
+    }
+
+    /// <summary>
+    /// For each <c>{connection}|table:{t}</c> tag that comes without any <c>{connection}|entity:{t}:...</c> tag, the
+    /// <c>{connection}|entities:{t}</c> tag: a write whose rows are not known drops every key lookup of the table. A write that
+    /// names its rows (update or delete by key, insert with known keys) keeps the other rows' key lookups.
+    /// </summary>
+    internal static IEnumerable<string> WholeTableEntityTags(IReadOnlyList<string> tags)
+    {
+        foreach (var tag in tags)
+        {
+            var at = tag.IndexOf("|table:", StringComparison.Ordinal);
+            if (at < 0) continue;
+            var connection = tag.AsSpan(0, at);
+            var table = tag.AsSpan(at + "|table:".Length);
+            var named = false;
+            foreach (var other in tags)
+            {
+                var span = other.AsSpan();
+                if (span.StartsWith(connection) && span[connection.Length..].StartsWith("|entity:")
+                    && span[(connection.Length + "|entity:".Length)..].StartsWith(table)
+                    && span.Length > connection.Length + "|entity:".Length + table.Length
+                    && span[connection.Length + "|entity:".Length + table.Length] == ':')
+                {
+                    named = true;
+                    break;
+                }
+            }
+            if (!named) yield return string.Concat(connection, "|entities:", table);
+        }
     }
 
     /// <summary>Shielded results whose tables were written: due for a reload at the next refresh tick (they keep serving meanwhile).</summary>
