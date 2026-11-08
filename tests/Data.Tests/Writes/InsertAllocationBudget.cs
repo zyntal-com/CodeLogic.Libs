@@ -36,6 +36,6 @@ public sealed class InsertAllocationBudget(ITestOutputHelper output)
         var c = GC.GetAllocatedBytesForCurrentThread();
         output.WriteLine($"plan {b - a} B, render {c - b} B, sql {rendered.Text.Length} chars, params {rendered.Parameters.Count}");
         Assert.Equal(500, rendered.Parameters.Count);
-        Assert.True(c - a < 64 * 1024, $"planning + rendering allocated {c - a} bytes (budget 64 KB; was 114 KB before WP-A1)");
+        Assert.True(c - a < 64 * 1024, $"planning + rendering allocated {c - a} bytes (budget 64 KB; was 114 KB before the write-path optimization)");
     }
 }

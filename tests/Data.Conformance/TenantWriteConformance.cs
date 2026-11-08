@@ -7,7 +7,7 @@ using CodeLogic.Core.Results;
 namespace Data.Conformance;
 
 /// <summary>
-/// Tenant isolation on every write path, and identity write-back for mixed inserts (audit 2026-10-31, findings 1, 2 and 4).
+/// Tenant isolation on every write path, and identity write-back for mixed inserts.
 /// </summary>
 public abstract class TenantWriteConformance(ProviderFixture fixture) : ConformanceSuite(fixture)
 {
