@@ -8,12 +8,14 @@
   // Time ratios are 1.25 (not 1.15): on GitHub runners MySQL is on the same host, so a round trip is far under a
   // millisecond and library overhead weighs more than against a real server; short runs on shared runners add
   // noise (Filter100 measured 1.04 locally, 1.152 on CI). Allocations are the strict, reliable signal.
+  // The 100-row filters allow more (2026-11-08): without the reset round trip on every open, the CI baseline fell
+  // from ~550 to ~165 us while CL.Data's own overhead stayed ~45 us, so the same overhead is a larger ratio (CI 1.24-1.28).
   "benchmarks": {
     "CLData_GetById":            { "maxAllocatedBytes": 13700,   "maxRatio": 1.25 },
     "CLData_Compiled_GetById":   { "maxAllocatedBytes": 10900,   "maxRatio": 1.25 },
     "CLData_Cached_GetById":     { "maxAllocatedBytes": 5200,    "maxRatio": 0.05 },
-    "CLData_Filter100":          { "maxAllocatedBytes": 45500,   "maxRatio": 1.25 },
-    "CLData_Compiled_Filter100": { "maxAllocatedBytes": 38900,   "maxRatio": 1.25 },
+    "CLData_Filter100":          { "maxAllocatedBytes": 45500,   "maxRatio": 1.40 },
+    "CLData_Compiled_Filter100": { "maxAllocatedBytes": 38900,   "maxRatio": 1.35 },
     "CLData_Cached_Filter100":   { "maxAllocatedBytes": 19300,   "maxRatio": 0.10 },
     "CLData_Insert":             { "maxAllocatedBytes": 13400,   "maxRatio": 1.25 },
     "CLData_InsertMany100":      { "maxAllocatedBytes": 259000,  "maxRatio": 0.10 },
