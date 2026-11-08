@@ -21,6 +21,7 @@ dotnet add package CodeLogic.NetUtils
 
 ```csharp
 using CL.NetUtils;
+using CL.NetUtils.Models;   // DnsblCheckResult, IpLocationResult, DnsblCheckRequest
 
 await Libraries.LoadAsync<NetUtilsLibrary>();   // register before ConfigureAsync()
 await CodeLogic.ConfigureAsync();
@@ -60,6 +61,9 @@ switch (result.Status)
         break;
     case DnsblCheckStatus.Error:
         Console.WriteLine($"Check failed: {result.ErrorMessage}");
+        break;
+    case DnsblCheckStatus.Cancelled:
+        Console.WriteLine("Check cancelled.");
         break;
     case DnsblCheckStatus.NotBlacklisted:
         Console.WriteLine("Clean.");
@@ -123,20 +127,20 @@ DnsblCheckResult result = await net.Dnsbl.CheckIpAsync("203.0.113.1", request);
 ### `DnsblCheckResult`
 
 ```csharp
-public sealed record DnsblCheckResult
+public record DnsblCheckResult
 {
     public string IpAddress { get; init; }
-    public DnsblCheckStatus Status { get; init; }   // NotBlacklisted | Blacklisted | Indeterminate | Error
+    public DnsblCheckStatus Status { get; init; }   // NotBlacklisted | Blacklisted | Indeterminate | Error | Cancelled
     public bool IsBlacklisted { get; init; }
     public string? MatchedService { get; init; }   // the zone that matched, or null
     public IReadOnlyList<string> FailedServices { get; init; } // zones that could not be checked
     public IpAddressType AddressType { get; init; } // IPv4 | IPv6 | Unknown
-    public string? ErrorMessage { get; init; }      // set for Error and Indeterminate
+    public string? ErrorMessage { get; init; }      // set for Error, Indeterminate and Cancelled
     public DateTime CheckedAt { get; init; }        // UTC
 }
 ```
 
-The record exposes `Blacklisted`, `NotBlacklisted`, `Indeterminate`, and `Error` factory methods used internally to build each outcome. `IsBlacklisted` is `false` for `Indeterminate`, so code that only checks `IsBlacklisted` treats an unchecked address as allowed; check `Status` to decide yourself.
+The record exposes `Blacklisted`, `NotBlacklisted`, `Indeterminate`, `Error` and `Cancelled` factory methods used internally to build each outcome. `IsBlacklisted` is `false` for `Indeterminate`, so code that only checks `IsBlacklisted` treats an unchecked address as allowed; check `Status` to decide yourself.
 
 ## GeoIP
 
@@ -193,7 +197,7 @@ To download automatically, set your MaxMind credentials:
 ### `IpLocationResult`
 
 ```csharp
-public sealed record IpLocationResult
+public record IpLocationResult
 {
     public string IpAddress { get; init; }
     public string? CountryName { get; init; }
@@ -297,7 +301,7 @@ stay as they were; the codes are in `NetUtilsErrors`:
 
 ## Localization
 
-Log lines and the error messages the library puts in `DnsblCheckResult.ErrorMessage` and `IpLocationResult.ErrorMessage` (invalid address, DNSBL disabled, GeoIP not initialized, location not found) come from `NetUtilsStrings`, registered as localization section `netutils`. Translate them like any CodeLogic localization model; the English defaults apply until translations load. Caller-supplied addresses and zones are logged with control characters replaced and cut to 64 characters, so they cannot forge log lines.
+Log lines and the error messages the library puts in `DnsblCheckResult.ErrorMessage` and `IpLocationResult.ErrorMessage` (invalid address, DNSBL disabled, check cancelled, GeoIP not initialized, location not found) come from `NetUtilsStrings`, registered as localization section `netutils`. Translate them like any CodeLogic localization model; the English defaults apply until translations load. Caller-supplied addresses and zones are logged with control characters replaced and cut to 64 characters, so they cannot forge log lines.
 
 ## Health check
 

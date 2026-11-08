@@ -16,7 +16,11 @@ dotnet add package CodeLogic.TwoFactorAuth
 ## Quick start
 
 ```csharp
-await Libraries.LoadAsync<TwoFactorAuthLibrary>();
+using CL.TwoFactorAuth;
+using CL.TwoFactorAuth.Models;
+using CodeLogic.Core.Results;
+
+await Libraries.LoadAsync<TwoFactorAuthLibrary>();   // register before ConfigureAsync()
 await CodeLogic.ConfigureAsync();
 await CodeLogic.StartAsync();
 
@@ -33,9 +37,12 @@ if (qr.IsSuccess) { /* <img src="qr.Value"> */ }
 // 3. Verify a code the user typed. Pass the user id: a code that was already used for that user is refused.
 TotpValidationResult check = tfa.ValidateTotp("123 456", key.SecretKey, userId: "user@example.com");
 if (check.IsValid) { /* grant access */ }
+
+// At sign-in, LoginGuard adds attempt limits (five per user per five minutes by default).
+TotpValidationResult login = tfa.LoginGuard.Validate("123 456", key.SecretKey, "user@example.com");
 ```
 
-> **Rate limiting is your job.** A six-digit code has a million values and a drift window of three steps gives an attacker roughly three chances per guess, so unlimited attempts break TOTP in hours. The library validates codes; it does not count attempts. Throttle and lock out failed verifications per user (for example a growing delay after 3 failures and a lockout after 5–10), log them, and never reveal which factor failed.
+> **Limit login attempts.** A six-digit code has a million values and a drift window of three steps gives an attacker roughly three chances per guess, so unlimited attempts break TOTP in hours. `tfa.LoginGuard` counts attempts per user and locks out after five failures in five minutes; `ValidateTotp` does not count attempts. On several servers, supply a shared `ITotpAttemptStore`. Also rate-limit by source address, log failed attempts, and never reveal which factor failed.
 
 ## Features
 
@@ -43,6 +50,7 @@ if (check.IsValid) { /* grant access */ }
 - **Provisioning** — `GenerateNewKey(issuer, user)` returns a `TwoFactorKey` with a standard `otpauth://` `ProvisioningUri` that carries the configured `period`; issuer, user and secret are percent-encoded.
 - **Generate & validate** — `GenerateTotpCode` / `ValidateTotp` with a configurable time step and drift window; whitespace in a typed code is ignored. Validation returns a `TotpValidationResult` with the matched absolute time step (`MatchedWindow`, a `long`) and the drift in steps (`WindowOffset`). Errors are logged; `ErrorMessage` is generic and never exception text.
 - **Replay protection** — with a `userId`, a code whose time step was already accepted for that user is refused (`TotpValidationResult.ReplayedCodeMessage`). The check is atomic in an `ITotpUsedStepStore`; the default keeps the last accepted step per user in memory, and a shared implementation serves several servers.
+- **Login guard** — `LoginGuard.Validate(code, secret, userId)` combines replay protection with per-user attempt limits (`ITotpAttemptStore`; default `InMemoryTotpAttemptStore`, five attempts per five minutes). Wrong, replayed and locked-out codes give the same result.
 - **Lifetime helpers** — `GetSecondsUntilExpiry()` and `GetCurrentTimeWindow()`.
 - **QR rendering** — PNG / BMP bytes, Base64, data URI, and save-to-file (fully qualified `.png` path), with configurable module size and error-correction level. Failures carry a generic message; details go to the log.
 - **Events** — `SecretKeyGeneratedEvent` and `TotpValidatedEvent` on the CodeLogic event bus.
@@ -83,5 +91,3 @@ Full guide: **[CL.TwoFactorAuth documentation](https://zyntal-com.github.io/Code
 ## License
 
 MIT — see [LICENSE](https://github.com/zyntal-com/CodeLogic.Libs/blob/main/LICENSE).
-
-Audit completion notes and current limits are in [the guide](../docs/libs/twofactorauth.md).

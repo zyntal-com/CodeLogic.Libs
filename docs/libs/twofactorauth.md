@@ -131,9 +131,9 @@ The library exposes two services plus convenience pass-throughs for the most com
 |--------|---------|---------|
 | `Authenticator` | `TwoFactorAuthenticator` | TOTP generation / validation service |
 | `QrCode` | `QrCodeGenerator` | QR-code rendering service |
+| `LoginGuard` | `TotpLoginGuard` | Sign-in validation with replay protection and attempt limits (see [Login attempt guard](#login-attempt-guard)) |
 | `GenerateSecretKey()` | `string` | New Base32 secret |
 | `GenerateNewKey(issuer, user)` | `TwoFactorKey` | New key + provisioning URI |
-| `GenerateTotpCode(secret)` | `Result<string>` | Current 6-digit code for a secret |
 | `ValidateTotp(code, secret, userId?)` | `TotpValidationResult` | Verify a 6-digit code; with a user id, refuse a replay |
 | `GenerateQrCodeDataUri(key)` | `Result<string>` | `data:image/png;base64,…` URI |
 
@@ -190,10 +190,10 @@ secret with a non-default step, pass the period too.
 ```csharp
 public record TotpValidationResult
 {
-    public bool IsValid { get; }
-    public long? MatchedWindow { get; }   // absolute time step that matched (Unix time / TimeStepSeconds), null if invalid
-    public int? WindowOffset { get; }     // drift: matched step minus the current step (0, -1, +1, ...), null if invalid
-    public string? ErrorMessage { get; }  // "Invalid code", ReplayedCodeMessage, or ValidationErrorMessage
+    public required bool IsValid { get; init; }
+    public long? MatchedWindow { get; init; }   // absolute time step that matched (Unix time / TimeStepSeconds), null if invalid
+    public int? WindowOffset { get; init; }     // drift: matched step minus the current step (0, -1, +1, ...), null if invalid
+    public string? ErrorMessage { get; init; }  // "Invalid code", ReplayedCodeMessage, or ValidationErrorMessage
 }
 ```
 
@@ -236,7 +236,7 @@ Both events implement `IEvent` and are published to the CodeLogic event bus.
 
 | Event | Published when |
 |-------|----------------|
-| `SecretKeyGeneratedEvent` | A new secret/key is generated. |
+| `SecretKeyGeneratedEvent` | `GenerateNewKey` creates a key (carries issuer and user name). `GenerateSecretKey` alone publishes nothing. |
 | `TotpValidatedEvent` | `ValidateTotp` runs with a `userId` supplied (carries the user id and outcome; a replayed code is `IsValid = false`). |
 
 ## Health check

@@ -92,9 +92,8 @@ the same id disconnect each other, so give every process its own. Ids starting w
 ```csharp
 var subscription = (await client.SubscribeAsync("home/+/temperature", async (message, ct) =>
 {
-    var reading = message.ReadJson<Reading>();
-    if (reading.IsSuccess)
-        await store.SaveAsync(message.Topic, reading.Value!, ct);
+    if (message.ReadJson<Reading>() is Reading reading)
+        await store.SaveAsync(message.Topic, reading, ct);
 }, MqttQos.AtLeastOnce)).ValueOrThrow();
 
 await subscription.DisposeAsync();   // stop; unsubscribes when no other handler uses the filter
@@ -281,8 +280,8 @@ oldest queued message is dropped. A client has 15 seconds to send CONNECT after 
   - a removed one is disposed;
   - a changed one is reconfigured in place, keeping its subscriptions.
 - **Broker:**
-  - user, anonymous-access and limit changes apply at once;
-  - port, address, TLS and storage changes restart the broker, and clients reconnect on their own.
+  - user, anonymous-access, session and retained-message limit changes apply at once;
+  - port, address, TLS, storage and `maxPendingMessagesPerClient` changes restart the broker, and clients reconnect on their own.
 - **Invalid changes:** a change that fails validation is logged and ignored.
 
 ## Events
@@ -296,7 +295,7 @@ Published on the CodeLogic event bus (`context.Events` / `CodeLogic.GetEventBus(
 | `MqttBrokerStartedEvent(Endpoint)` / `MqttBrokerStoppedEvent` | The broker started or stopped. |
 | `MqttBrokerClientConnectedEvent(ClientId, Username, Endpoint)` | A client connected to the broker. |
 | `MqttBrokerClientDisconnectedEvent(ClientId, Username, Clean)` | A client left; `Clean = false` means it dropped (its last will is published). |
-| `MqttBrokerConnectionRejectedEvent(ClientId, Username, Endpoint, Reason)` | The broker refused a client: `credentials`, `reserved client id`, `client id held by …` or `session limit of N reached`. |
+| `MqttBrokerConnectionRejectedEvent(ClientId, Username, Endpoint, Reason)` | The broker refused a client: `credentials`, `reserved client id`, `empty client id`, `client id held by …` or `session limit of N reached`. |
 
 ## Error codes
 

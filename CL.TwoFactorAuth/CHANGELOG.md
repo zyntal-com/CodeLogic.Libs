@@ -68,10 +68,16 @@ All notable changes to **CodeLogic.TwoFactorAuth** are documented here. Versions
 - Configuration examples use the camelCase keys the CodeLogic loader reads (PascalCase keys were ignored).
 - The README and the guide state that the library does not rate-limit and that the application must throttle and
   lock out failed attempts per user; the replay section describes the built-in store.
+- The README describes `LoginGuard` (it no longer says the library never counts attempts) and its quick start adds
+  the usings it needs. The guide's services table lists `LoginGuard` instead of a `GenerateTotpCode` pass-through
+  the library does not have (it is on `Authenticator`). `TotpValidationResult` shows its `init` accessors, and
+  `SecretKeyGeneratedEvent` is documented as published by `GenerateNewKey` only.
+- The README's last line, a relative link that broke on nuget.org, is removed.
 
 ### Changed
 
 - Package versions are pinned (Otp.NET 1.4.1, QRCoder 1.8.1) instead of floating (`1.*`).
+- The library manifest's description says CodeLogic 5 (it said CodeLogic 4).
 
 ## 2026-10-24
 

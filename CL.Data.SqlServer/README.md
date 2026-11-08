@@ -11,6 +11,6 @@ dotnet add package CodeLogic.Data.SqlServer
 - **With the CodeLogic runtime:** load `SqlServerDataLibrary` next to `DataLibrary`, and set `"provider": "sqlserver"` on a connection in `config.data.json`.
 - **Without it:** pass `SqlServerDataProvider.Instance` to `Database.Create`.
 
-SQL, integrated and Entra ID authentication; bulk copy uses `SqlBulkCopy`; JSON columns get an `ISJSON` check; replicas use `ApplicationIntent=ReadOnly` and report lag from `sys.dm_hadr_database_replica_states`; `multiSubnetFailover` and `failoverPartner` for failover. Extras: `db.SqlServer.UpdateStatisticsAsync<T>()`.
+SQL, integrated and Entra ID authentication; bulk copy uses `SqlBulkCopy`; JSON columns get an `ISJSON` check; replicas use `ApplicationIntent=ReadOnly` and report lag from `sys.dm_hadr_database_replica_states`; `sqlServer.multiSubnetFailover` and `sqlServer.failoverPartner` for failover (`failoverHosts` is rejected). Extras: `db.SqlServer.UpdateStatisticsAsync<T>()`.
 
 Documentation: [Providers](../docs/libs/data/providers.md).

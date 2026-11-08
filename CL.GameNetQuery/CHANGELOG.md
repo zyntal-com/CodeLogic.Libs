@@ -90,6 +90,12 @@ All notable changes to **CodeLogic.GameNetQuery** are documented here. Versions 
 - `ValveRconClient` / `MinecraftRconClient`: `ResponseTimeout` (default 5 s, was a fixed poll of about
   5 s) and `MultiPacketIdleTimeout` (default 500 ms).
 
+### Documentation
+
+- The `QueryAsync` examples in the README and the guide switch on the result union
+  (`ServerQuery q => …, TimeoutError => …, Error e => …`). The guide's `ValveRconClient` member table no longer
+  breaks before `ResponseTimeout`, and `ValveStatusParserCS2.GetPlayerCount` shows its named tuple.
+
 ## 2026-10-24
 
 ### Changed

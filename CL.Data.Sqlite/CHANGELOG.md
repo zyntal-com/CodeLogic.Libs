@@ -11,3 +11,7 @@
 ### Fixed
 
 - The schema introspector always reads the primary.
+
+### Documentation
+
+- The README says when the pragmas apply: busy timeout, foreign keys and synchronous mode on every pooled connection, WAL once per database file.

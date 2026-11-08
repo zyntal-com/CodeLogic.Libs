@@ -24,10 +24,12 @@ using CodeLogic.Core.Results;
 
 // A2S UDP — info + players + timing as a CodeLogic Result (no library load required)
 Result<ServerQuery> query = await ValveUdpQuery.QueryAsync("203.0.113.10", 27015);
-if (query.IsSuccess)
-    Console.WriteLine($"{query.Value.Info.Hostname}: {query.Value.Players.Count} players in {query.Value.DurationMs} ms");
-else
-    Console.WriteLine($"{query.Error.Code}: {query.Error.Message}"); // e.g. gamenetquery.timeout
+Console.WriteLine(query switch
+{
+    ServerQuery q => $"{q.Info.Hostname}: {q.Players.Count} players in {q.DurationMs} ms",
+    Error e       => $"{e.Code}: {e.Message}",   // e.g. gamenetquery.timeout
+    null          => "No result"
+});
 
 // Or the simple helpers: null / empty list on failure
 ServerInfo? info = await ValveUdpQuery.GetServerInfoAsync("203.0.113.10", 27015);

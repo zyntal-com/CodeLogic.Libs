@@ -71,6 +71,10 @@ All notable changes to **CodeLogic.GitHelper** are documented here. Versions fol
 
 - Configuration examples in the README and the docs use the camelCase keys the CodeLogic loader reads.
   The PascalCase keys shown before are matched case-sensitively and were ignored, leaving defaults active.
+- The live config section no longer says "CodeLogic 4.9+"; every 5.x install has it. The docs' error example
+  switches on the result union (`GitDiagnostics d => …, Error e => …`), and the setup examples add the
+  `CL.GitHelper.Models` / `CL.GitHelper.Services` usings they need.
+- The README's last line, a relative link that broke on nuget.org, is removed.
 
 ### Fixed
 

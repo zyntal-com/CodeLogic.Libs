@@ -116,17 +116,17 @@ Branch on the error **kind** for coarse handling, or on `Error.Code` for a speci
 ```csharp
 Result<MailSendReceipt> result = await mail.Smtp.SendAsync(message, ct);
 
-switch (result.Error)
+switch (result)
 {
-    case null:
-        logger.Info($"Sent {result.Value!.MessageId}");
+    case MailSendReceipt receipt:
+        logger.Info($"Sent {receipt.MessageId}");
         break;
     case UnauthorizedError:                      /* bad SMTP credentials */ break;
     case TimeoutError or UnavailableError:       /* server slow / down: retry later */ break;
     case ValidationError e when e.Code == MailErrorCodes.SmtpRejected:
         /* server refused a recipient/content; e.Details has the SMTP status */ break;
     case ValidationError e:                      /* bad input: e.Code says which field */ break;
-    default:                                     /* InternalError etc.: result.Error.Message */ break;
+    case Error e:                                /* InternalError etc.: e.Message */ break;
 }
 ```
 
@@ -149,11 +149,11 @@ public sealed record MailMessage
     public IReadOnlyList<string> Attachments { get; init; } // fully qualified file paths
     public IReadOnlyDictionary<string, string> Headers { get; init; } // no CR/LF/NUL; reserved names refused (below)
     public MailPriority Priority { get; init; }             // default Normal
-    public DateTimeOffset CreatedAt { get; init; }
+    public DateTime CreatedAt { get; init; }                // UTC
 }
 ```
 
-`MailPriority` is `Low` / `Normal` / `High`; it maps to the standard `X-Priority` / `Importance` headers.
+`MailPriority` is `Low` / `Normal` / `High`; it sets the standard `Importance` header.
 
 `Cc`, `Bcc`, `ReplyTo`, `Attachments` and `Headers` coalesce `null` to empty when set (through `init` or `with`), so a message built by hand with a missing collection validates normally; a `null` `To` fails with `mail.invalid_recipient`.
 
@@ -196,7 +196,7 @@ Custom `Headers` cannot set what the service writes itself or what identifies th
 
 ### Changing config while running
 
-Config changes apply live: `config.mail.json` applies live when changed through `Libraries.UpdateConfigAsync`, `Libraries.ReloadConfigAsync`, or the config file watcher. Only what changed is rebuilt:
+`config.mail.json` applies live when changed through `Libraries.UpdateConfigAsync`, `Libraries.ReloadConfigAsync`, or the config file watcher. Only what changed is rebuilt:
 
 - **SMTP settings**: `mail.Smtp` is replaced. Every send opens its own connection, so sends already running finish on the old settings.
 - **Template directory**: `mail.TemplateProvider` and `mail.TemplateEngine` are replaced.
@@ -231,7 +231,7 @@ HealthStatus status = await mail.HealthCheckAsync();
 public sealed record MailSendReceipt(string? MessageId, DateTime SentAtUtc);
 ```
 
-`Result` / `Result<T>` are the CodeLogic 5 unions: `IsSuccess`, `IsFailure`, `Value`, `Error`, plus `Map`, `Bind`, `Match`, `OnSuccess`, `OnFailure`, `ValueOrDefault`, `ValueOrThrow`. None of the mail operations throw for the expected failure paths.
+`Result` / `Result<T>` are the CodeLogic 5 unions, so a `switch` over one is checked for exhaustiveness. Members: `IsSuccess`, `IsFailure`, `Value`, `Error`, plus `Map` / `MapAsync`, `Bind` / `BindAsync`, `Match`, `OnSuccess`, `OnFailure`, `ValueOrDefault`, `ValueOrThrow` (`ThrowIfFailure` on `Result`). None of the mail operations throw for the expected failure paths.
 
 Every failure is an `Error` whose `Code` is a `MailErrorCodes` constant, and each code always comes with the same kind:
 
@@ -240,28 +240,28 @@ Every failure is an `Error` whose `Code` is a `MailErrorCodes` constant, and eac
 | `InvalidRecipient` | `mail.invalid_recipient` | `ValidationError` |
 | `InvalidSender` | `mail.invalid_sender` | `ValidationError` |
 | `InvalidSubject` | `mail.invalid_subject` | `ValidationError` |
-| `InvalidBody` (new) | `mail.invalid_body` | `ValidationError` |
-| `InvalidHeader` (new) | `mail.invalid_header` | `ValidationError` |
+| `InvalidBody` | `mail.invalid_body` | `ValidationError` |
+| `InvalidHeader` | `mail.invalid_header` | `ValidationError` |
 | `TemplateNotFound` | `mail.template_not_found` | `NotFoundError` |
 | `InvalidTemplateId` | `mail.invalid_template_id` | `ValidationError` |
 | `TemplateRenderingFailed` | `mail.template_rendering_failed` | `InternalError` |
 | `SmtpConfigInvalid` | `mail.smtp_config_invalid` | `ValidationError` |
 | `SmtpAuthenticationFailed` | `mail.smtp_authentication_failed` | `UnauthorizedError` |
 | `SmtpTimeout` | `mail.smtp_timeout` | `TimeoutError` |
-| `SmtpConnectionFailed` (new) | `mail.smtp_connection_failed` | `UnavailableError` |
+| `SmtpConnectionFailed` | `mail.smtp_connection_failed` | `UnavailableError` |
 | `SmtpRejected` | `mail.smtp_rejected` | `ValidationError` (`Details` has the SMTP status) |
 | `SmtpError` | `mail.smtp_error` | `InternalError` |
 | `AttachmentNotFound` | `mail.attachment_not_found` | `NotFoundError` |
-| `InvalidAttachment` (new) | `mail.invalid_attachment` | `ValidationError` |
+| `InvalidAttachment` | `mail.invalid_attachment` | `ValidationError` |
 | `ImapConfigInvalid` | `mail.imap_config_invalid` | `ValidationError` |
 | `ImapAuthenticationFailed` | `mail.imap_authentication_failed` | `UnauthorizedError` |
 | `ImapTimeout` | `mail.imap_timeout` | `TimeoutError` |
-| `ImapConnectionFailed` (new) | `mail.imap_connection_failed` | `UnavailableError` |
+| `ImapConnectionFailed` | `mail.imap_connection_failed` | `UnavailableError` |
 | `ImapError` | `mail.imap_error` | `InternalError` |
-| `ImapRejected` (new) | `mail.imap_rejected` | `ValidationError` (`Details` has the IMAP response) |
+| `ImapRejected` | `mail.imap_rejected` | `ValidationError` (`Details` has the IMAP response) |
 | `FolderNotFound` | `mail.folder_not_found` | `NotFoundError` |
 | `MessageNotFound` | `mail.message_not_found` | `NotFoundError` |
-| `Cancelled` (new) | `mail.cancelled` | `UnavailableError` |
+| `Cancelled` | `mail.cancelled` | `UnavailableError` |
 | `Unknown` | `mail.unknown` | `InternalError` |
 
 For an unexpected exception (`mail.unknown`, `mail.smtp_error`, `mail.imap_error`, `mail.template_rendering_failed`) the `Message` is a fixed description of what failed and `Details` is the exception's type name; the exception text, which can name files, hosts or protocol state, is written to the log only. Server answers (`mail.smtp_rejected`, `mail.imap_rejected`) keep the server's text.

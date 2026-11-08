@@ -123,6 +123,10 @@ All notable changes to **CodeLogic.NetUtils** are documented here. Versions foll
 
 - Configuration examples use the camelCase keys the CodeLogic loader reads (PascalCase keys were ignored).
 - The DNSBL guide describes the actual query order, fallback rule and failure handling.
+- The guide lists `DnsblCheckStatus.Cancelled` and the `Cancelled` factory, shows `DnsblCheckResult` and
+  `IpLocationResult` as plain (unsealed) records, as in the code, and its status switch handles `Cancelled`.
+  The setup examples add the `CL.NetUtils.Models` using they need.
+- The README's last line, a relative link that broke on nuget.org, is removed.
 
 ## 2026-10-30
 

@@ -96,7 +96,7 @@ public static class DateTimeHelper
 
     /// <summary>
     /// Returns a human-readable relative time string.
-    /// Examples: "just now", "3 minutes ago", "in 2 hours", "yesterday".
+    /// Examples: "just now", "3 minutes ago", "in 2 hours", "a day ago".
     /// </summary>
     public static string ToRelativeString(DateTime dt)
     {

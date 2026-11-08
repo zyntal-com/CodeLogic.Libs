@@ -43,7 +43,7 @@ await Libraries.LoadAsync<StorageLibrary>();
 await CodeLogic.CodeLogic.ConfigureAsync();   // the class CodeLogic.CodeLogic, not the namespace
 await CodeLogic.CodeLogic.StartAsync();
 
-var storage = Libraries.Get<StorageLibrary>();
+var storage = Libraries.Get<StorageLibrary>()!;
 IStorageService files = storage.DefaultStorage;
 IStorageService archive = storage.GetStorage("archive");
 ```
@@ -81,6 +81,10 @@ default) can reach outside it.
 > between the check and the open, and the operation then follows that link. Don't rely on the root alone
 > to contain a hostile local actor: give the application its own directory that nobody else can write to,
 > or isolate it at the OS level (a dedicated account, container, or mount).
+
+Local connections check containment, and turn a full path back into a storage path, with the case rules
+probed on the volume, not the host OS's defaults (a mount that ignores case on Linux, for example). A root
+spelled in another case maps to the same relative paths, and the spelling below the root is kept.
 
 Object-store listings (S3, Azure Blob, Google Cloud Storage, Swift) report only keys the library can name back: a key
 whose part under the mounted prefix `StoragePath.Normalize` would rewrite or reject (`a/../b`, `a//b`, `./a`, a
@@ -136,7 +140,7 @@ var put = await files.UploadAsync("assets/asset.bin", input, new StorageUploadOp
     ContentType = "application/octet-stream"
 });
 
-var info = await files.GetInfoAsync("assets/asset.bin");
+Result<StorageItem> info = await files.GetInfoAsync("assets/asset.bin");
 var exists = await files.ExistsAsync("assets/asset.bin");
 var page = await files.ListAsync("assets", new StorageListOptions
 {
@@ -151,6 +155,19 @@ if (download.IsSuccess)
     await using var owned = download.Value!;
     await owned.CopyToAsync(output);
 }
+```
+
+`Result<T>` and `Result` are CodeLogic 5 unions (`CodeLogic.Core.Results`), so a `switch` over one is
+checked for exhaustiveness:
+
+```csharp
+string text = info switch
+{
+    StorageItem item => $"{item.Size} bytes, changed {item.LastModified}",
+    NotFoundError => "not there",                  // storage.not_found
+    Error error => $"failed: {error.Code}",
+    null => "no result"
+};
 ```
 
 Upload streams are caller-owned and remain open. A successful `DownloadAsync` value owns its provider
@@ -215,13 +232,18 @@ directly (see [Guaranteed transfers](transfers.md#guaranteed-transfers)).
 ## Migration
 
 The legacy `CodeLogic.StorageS3` package accepted a bucket on every operation. `CodeLogic.Storage`
-mounts a bucket/prefix per connection and uses relative paths. This release also renames several
-error codes, adds `ConflictPolicy`, extends `StorageItem` and `StorageConnectionInfo`, returns
-`StorageTransferReport` from copies and moves, replaces `CreateTransferQueue` with
-`OpenTransferQueueAsync`, makes two-way sync without a baseline report conflicts, and shares FTP/SFTP
-session pools between registrations with identical settings. See the
+mounts a bucket/prefix per connection and uses relative paths. Since 4.8.93, several error codes were
+renamed, `ConflictPolicy` was added, `StorageItem` and `StorageConnectionInfo` were extended, copies
+and moves return `StorageTransferReport`, `OpenTransferQueueAsync` replaces `CreateTransferQueue`,
+two-way sync without a baseline reports conflicts, and FTP/SFTP session pools are shared between
+registrations with identical settings. See the
 package [`MIGRATION.md`](https://github.com/zyntal-com/CodeLogic.Libs/blob/main/CL.Storage/MIGRATION.md)
 for every mapping.
+
+5.0 targets .NET 11 and CodeLogic 5. A local `RootPath` must be absolute, paths reject every control
+character, and `StorageConnectionConfigBase` is a closed class; the
+[CHANGELOG](https://github.com/zyntal-com/CodeLogic.Libs/blob/main/CL.Storage/CHANGELOG.md) lists the
+breaking changes.
 
 ## Completing shutdown
 

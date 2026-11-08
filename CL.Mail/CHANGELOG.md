@@ -176,6 +176,13 @@ All notable changes to **CodeLogic.Mail** are documented here. Versions follow
 
 - Configuration examples in the README and the docs use the camelCase keys the CodeLogic loader reads.
   The PascalCase keys shown before are matched case-sensitively and were ignored, leaving defaults active.
+- The live config section no longer says "CodeLogic 4.9+". The README lists `Imap.MaxMessageBytes`,
+  `MaxBodyBytes` and `MaxAttachments`, and `GetAttachmentAsync`. The docs list `GetAttachmentAsync` and
+  `ReceivedMessage.ContentTruncated`, show `CreatedAt` as `DateTime`, say `MailPriority` sets only the
+  `Importance` header, and switch on the result union in the error example. The README's trailing relative
+  link, which broke on nuget.org, is replaced by a link to the Receiving & Templates page.
+- The `Enabled` setting's description no longer mentions inbox polling (there is none) or no-op operations:
+  when it is off, the `Smtp` / `Imap` accessors throw. The `InvalidHeader` code lists every reserved header.
 
 ### Changed
 

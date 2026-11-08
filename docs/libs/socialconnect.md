@@ -48,11 +48,11 @@ if (social.HasSteam)
 }
 ```
 
-Discord webhook methods return a plain `Result` (no value — they either delivered or they didn't). Steam profile and auth methods return `Result<T>`. Always check `IsSuccess` before reading `.Value`, and read `Error?.Message` on failure.
+Discord webhook methods return a plain `Result` (no value — they either delivered or they didn't). Steam profile and auth methods return `Result<T>`. Check `IsSuccess` before reading `.Value`, or match the result (`if (r is SteamPlayer p)`), and read `Error?.Message` on failure.
 
 ## Discord webhooks
 
-`DiscordWebhookService` posts to Discord webhook URLs. Every method accepts an optional `webhookUrl`; when omitted it falls back to `Discord.DefaultWebhookUrl` from config. The configured `DefaultUsername` and `DefaultAvatarUrl` are applied automatically unless the message overrides them.
+`DiscordWebhookService` posts to Discord webhook URLs. Every method accepts an optional `webhookUrl`; when omitted it falls back to `Discord.DefaultWebhookUrl` from config. `SendMessageAsync` and `SendEmbedAsync` apply the configured `DefaultUsername` and `DefaultAvatarUrl`; `SendAsync` sends the message as given.
 
 Only Discord webhook URLs are accepted, so a URL that reaches the service from user input cannot point the server at another host (SSRF). `DiscordWebhookService.IsValidWebhookUrl(url)` is the check: `https` on the default port, no user info or fragment, host `discord.com` or `discordapp.com` (or their `ptb.` / `canary.` subdomains), and path `/api/webhooks/{id}/{token}` or `/api/v{n}/webhooks/{id}/{token}`; a query such as `?wait=true` or `?thread_id=…` is allowed. Any other URL fails with `ValidationError` `social.discord.invalid_url` before a request is made, and a `Discord.DefaultWebhookUrl` that fails the check is a configuration error. Redirects are not followed. Logs and events only ever carry the redacted URL (`DiscordWebhookService.RedactWebhookUrl`, e.g. `https://discord.com/api/webhooks/123/***`).
 
@@ -103,6 +103,18 @@ Result r = await social.Discord.SendAsync(message);
 ```
 
 All three methods take a `CancellationToken` as their last parameter; a cancelled send fails with `UnavailableError` `social.discord.cancelled`. They publish a `WebhookSentEvent` after the request completes. For tests and outbound proxies, `new DiscordWebhookService(config, httpMessageHandler, logger, events)` routes requests through your handler (automatic redirects are switched off on a `SocketsHttpHandler` / `HttpClientHandler`); a 3xx answer counts as a failed delivery.
+
+| Failure | Error kind | Code |
+|---------|------------|------|
+| No `webhookUrl` and no `Discord.DefaultWebhookUrl` | `ValidationError` | `social.discord.no_url` |
+| Not a Discord webhook URL | `ValidationError` | `social.discord.invalid_url` |
+| Content longer than 2000 characters | `ValidationError` | `social.discord.content_too_long` |
+| More than 10 embeds | `ValidationError` | `social.discord.too_many_embeds` |
+| Discord answered with a non-2xx status | `InternalError` | `social.discord.delivery_failed` (`Details` = response body) |
+| No answer within `TimeoutSeconds` | `TimeoutError` | `social.discord.timeout` |
+| Discord unreachable | `UnavailableError` | `social.discord.network_error` |
+| The `cancellationToken` was cancelled | `UnavailableError` | `social.discord.cancelled` |
+| Anything else | `InternalError` | `social.discord.error` |
 
 ### Discord model reference
 
@@ -213,9 +225,8 @@ Every method takes a SteamID64 of an individual account (17 digits starting `765
 
 ```csharp
 Result<SteamPlayer> r = await social.Steam.GetPlayerAsync("76561198012345678");
-if (r.IsSuccess)
+if (r is SteamPlayer p)
 {
-    SteamPlayer p = r.Value;
     Console.WriteLine($"{p.PersonaName} ({(p.IsPublic ? "public" : "private")})");
     if (p.IsInGame)
         Console.WriteLine($"Playing: {p.GameExtraInfo}");
@@ -228,8 +239,8 @@ if (r.IsSuccess)
 
 ```csharp
 Result<SteamPlayerBans> r = await social.Steam.GetPlayerBansAsync("76561198012345678");
-if (r.IsSuccess && r.Value.HasAnyBan)
-    Console.WriteLine($"VAC bans: {r.Value.NumberOfVacBans}");
+if (r is SteamPlayerBans bans && bans.HasAnyBan)
+    Console.WriteLine($"VAC bans: {bans.NumberOfVacBans}");
 ```
 
 ### Owned games
@@ -238,14 +249,23 @@ if (r.IsSuccess && r.Value.HasAnyBan)
 
 ```csharp
 Result<List<SteamGame>> r = await social.Steam.GetOwnedGamesAsync("76561198012345678");
-if (r.IsSuccess)
+if (r is List<SteamGame> games)
 {
-    foreach (var game in r.Value.OrderByDescending(g => g.PlaytimeForever).Take(5))
+    foreach (var game in games.OrderByDescending(g => g.PlaytimeForever).Take(5))
         Console.WriteLine($"{game.Name}: {game.TotalPlaytime.TotalHours:F0}h");
 }
 ```
 
-Each method takes a `CancellationToken` as its last parameter (a cancelled read is `UnavailableError` `social.steam.cancelled`), and each profile read publishes a `SteamProfileFetchedEvent` carrying a `FromCache` flag. `new SteamProfileService(config, httpMessageHandler, logger, events)` routes requests through your own handler. The service refuses a `Steam.ApiBaseUrl` that is not an absolute `https` URL without user info (`ArgumentException`), because the API key is in every request's query string; the key never appears in logs or events.
+Each method takes a `CancellationToken` as its last parameter (a cancelled read is `UnavailableError` `social.steam.cancelled`). `GetPlayerAsync` publishes a `SteamProfileFetchedEvent` carrying a `FromCache` flag. `new SteamProfileService(config, httpMessageHandler, logger, events)` routes requests through your own handler. The service refuses a `Steam.ApiBaseUrl` that is not an absolute `https` URL without user info (`ArgumentException`), because the API key is in every request's query string; the key never appears in logs or events.
+
+| Failure | Error kind | Code |
+|---------|------------|------|
+| Not a SteamID64 | `ValidationError` | `social.steam.invalid_steamid` |
+| No such player / no ban record | `NotFoundError` | `social.steam.player_not_found` / `social.steam.bans_not_found` (`Details` = Steam ID) |
+| No answer within `TimeoutSeconds` | `TimeoutError` | `social.steam.timeout` |
+| Steam unreachable or answered with an error status | `UnavailableError` | `social.steam.network_error` |
+| The `cancellationToken` was cancelled | `UnavailableError` | `social.steam.cancelled` |
+| Unreadable answer / anything else | `InternalError` | `social.steam.parse_error` / `social.steam.error` |
 
 ### Steam model reference
 
@@ -316,9 +336,9 @@ public class SteamGame
 if (social.HasSteamAuth)
 {
     Result<SteamTicketIdentity> r = await social.Auth.AuthenticateAsync(sessionTicket);
-    if (r.IsSuccess)
-        Console.WriteLine($"Verified {r.Value.SteamId}{(r.Value.VacBanned ? " (VAC banned)" : "")}");
-    else if (r.Error is UnauthorizedError)
+    if (r is SteamTicketIdentity id)
+        Console.WriteLine($"Verified {id.SteamId}{(id.VacBanned ? " (VAC banned)" : "")}");
+    else if (r is UnauthorizedError)
         Console.WriteLine("Ticket rejected");
 }
 ```
@@ -374,11 +394,11 @@ if (expectedState is null || expectedState != Request.Query["state"])
 var returnTo = $"https://example.com/auth/steam/callback?state={expectedState}";
 Result<SteamOpenIdResult> result = await social.OpenId.VerifyAsync(Request.QueryString.Value, returnTo);
 Response.Cookies.Delete("steam_state");
-if (result.IsSuccess)
-    SignIn(result.Value.SteamId);
+if (result is SteamOpenIdResult signedIn)
+    SignIn(signedIn.SteamId);
 ```
 
-`VerifyAsync` checks the assertion locally first, records its nonce, then asks Steam to confirm it (`check_authentication`, only an exact `is_valid:true` line counts). The local checks are:
+`VerifyAsync` checks the assertion locally first, asks Steam to confirm it (`check_authentication`, only an exact `is_valid:true` line counts), then records its nonce. The local checks are:
 
 - `openid.mode` is `id_res` (`cancel` gives `social.steam.openid_cancelled`).
 - The namespace and `op_endpoint` are Steam's.
@@ -399,9 +419,10 @@ Because Steam signs `return_to`, putting a per-attempt state in it and checking 
 | `social.steam.openid_identity` | Missing or malformed Steam identity. |
 | `social.steam.openid_invalid` | Not a valid Steam assertion (mode, endpoint, signed fields, repeated parameters, malformed or future nonce). |
 | `social.steam.openid_expired` | The assertion is older than `Steam.OpenIdNonceMaxAgeSeconds`. |
-| `social.steam.openid_replayed` | The assertion's nonce was verified before. |
+| `social.steam.openid_replayed` | The assertion's nonce was verified before, or the replay store is full. |
 | `social.steam.openid_rejected` | Steam did not confirm the assertion. |
 | `social.steam.openid_unavailable` / `social.steam.openid_timeout` | Steam could not be reached. |
+| `social.steam.openid_busy` | Too many verifications are running (`UnavailableError`); try again later. |
 | `social.steam.cancelled` | The `cancellationToken` was cancelled (`UnavailableError`). |
 
 Each verification publishes a `SteamOpenIdVerifiedEvent`. Caller-supplied parameter names that reach a log line, an event or an error message (the name of a repeated `openid.*` parameter) have control characters replaced and are cut to 64 characters.
@@ -418,7 +439,7 @@ public sealed class SteamOpenIdResult
 
 ## Caching
 
-`SteamProfileService` caches the results of `GetPlayerAsync`, `GetPlayerBansAsync`, and `GetOwnedGamesAsync` for `CacheTtlSeconds` (default 300). Each of the three caches holds at most `MaxCacheEntries` (default 10 000): an expired entry is dropped when read, and when a cache is full the oldest entries are evicted to make room, so memory stays bounded whatever the number of distinct Steam IDs. Cached reads publish `SteamProfileFetchedEvent` with `FromCache = true`. Call `Steam.ClearCache()` to drop all cached entries — useful after you know a profile has changed, or in tests.
+`SteamProfileService` caches the results of `GetPlayerAsync`, `GetPlayerBansAsync`, and `GetOwnedGamesAsync` for `CacheTtlSeconds` (default 300). Each of the three caches holds at most `MaxCacheEntries` (default 10 000): an expired entry is dropped when read, and when a cache is full the oldest entries are evicted to make room, so memory stays bounded whatever the number of distinct Steam IDs. Cached player reads publish `SteamProfileFetchedEvent` with `FromCache = true`. Call `Steam.ClearCache()` to drop all cached entries — useful after you know a profile has changed, or in tests.
 
 ```csharp
 social.Steam.ClearCache();
@@ -478,7 +499,7 @@ The library writes `config.socialconnect.json` (section `socialconnect`) with de
 
 ### Changing config while running
 
-Config changes apply live: `config.socialconnect.json` applies live when changed through `Libraries.UpdateConfigAsync`, `Libraries.ReloadConfigAsync`, or the config file watcher. Only the service whose settings changed is rebuilt:
+`config.socialconnect.json` applies live when changed through `Libraries.UpdateConfigAsync`, `Libraries.ReloadConfigAsync`, or the config file watcher. Only the service whose settings changed is rebuilt:
 
 - **Discord settings**: `social.Discord` is replaced.
 - **Steam settings**: `social.Steam`, `social.Auth` and `social.OpenId` are replaced; the profile cache starts empty.
@@ -493,7 +514,7 @@ All events implement `IEvent` and are published to the CodeLogic event bus.
 | Event | Published when | Payload |
 |-------|----------------|---------|
 | `WebhookSentEvent` | A Discord webhook request completes. | `WebhookUrl` (token redacted: `…/webhooks/{id}/***`), `WebhookId`, `Success`, `SentAt`, `StatusCode?`, `ErrorMessage?` |
-| `SteamProfileFetchedEvent` | A Steam profile/bans/games read completes. | `SteamId`, `FetchedAt`, `FromCache` (default `false`) |
+| `SteamProfileFetchedEvent` | A `GetPlayerAsync` read completes (from Steam or the cache). | `SteamId`, `FetchedAt`, `FromCache` (default `false`) |
 | `SteamAuthenticatedEvent` | A ticket authentication completes. | `SteamId`, `Success`, `AuthenticatedAt`, `AppId?`, `ErrorMessage?` |
 | `SteamOpenIdVerifiedEvent` | A Steam sign-in callback is verified or refused. | `SteamId`, `Success`, `VerifiedAt`, `ErrorMessage?` |
 

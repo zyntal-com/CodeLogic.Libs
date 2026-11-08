@@ -35,6 +35,11 @@
   while the session is open (SSH.NET keeps accepting on a started forward, and stopping it would drop the SFTP session
   running through it). What such a client reaches is the target's SSH port, which still authenticates it. The code
   comment that claimed only this process could reach the port was wrong and is corrected.
+- README and guide brought in line with 5.x: live config changes no longer carry a "CodeLogic 4.9+" qualifier; the
+  library's synchronous `Dispose()` is described as starting the stop in the background (it no longer blocks while
+  queues stop); examples use `ValueOrThrow()` instead of `.Value!` and show an exhaustive `switch` over a
+  `Result<T>`; the overview points 4.9 users at the 5.0 breaking changes; the note on probed volume case rules moved
+  to the mount-model section; the README's broken relative link to the guide is removed.
 
 ### Security
 

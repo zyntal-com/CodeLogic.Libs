@@ -51,6 +51,13 @@ First release. Targets **.NET 11** (`net11.0`) and **CodeLogic 5.0**; built on M
     (MQTT 5 publishers get "quota exceeded"; a clear always passes).
   - **Queues:** `maxPendingMessagesPerClient` drops the oldest queued message, as documented (the overflow strategy is set
     explicitly); clients have 15 s to send CONNECT.
+- **Messages:** `MqttMessage` carries a payload copy, text/JSON readers and MQTT 5 properties.
+- **Topics:** `MqttTopic` validates topics and filters, matches topics against filters, and checks filter coverage (`Covers`).
+- **Events** on the CodeLogic bus: `MqttConnectedEvent`, `MqttDisconnectedEvent`, `MqttBrokerStartedEvent`,
+  `MqttBrokerStoppedEvent`, `MqttBrokerClientConnectedEvent`, `MqttBrokerClientDisconnectedEvent`,
+  `MqttBrokerConnectionRejectedEvent`.
+- **Errors:** stable codes in `MqttErrorCodes` (`mqtt.not_connected`, `mqtt.authentication_failed`,
+  `mqtt.subscribe_rejected`, ...).
 
 ### Security (audit 2026-11-07, before the first release)
 
@@ -68,10 +75,8 @@ First release. Targets **.NET 11** (`net11.0`) and **CodeLogic 5.0**; built on M
 - `publishTopics` / `subscribeTopics` set to `null` in JSON no longer throw; user names cannot contain whitespace or start
   with `$`; client ids in the connection config cannot start with `$`.
 - `MqttLibrary` implements `IAsyncDisposable`; `Dispose()` no longer blocks on network I/O after a normal stop.
-- **Messages:** `MqttMessage` carries a payload copy, text/JSON readers and MQTT 5 properties.
-- **Topics:** `MqttTopic` validates topics and filters, matches topics against filters, and checks filter coverage (`Covers`).
-- **Events** on the CodeLogic bus: `MqttConnectedEvent`, `MqttDisconnectedEvent`, `MqttBrokerStartedEvent`,
-  `MqttBrokerStoppedEvent`, `MqttBrokerClientConnectedEvent`, `MqttBrokerClientDisconnectedEvent`,
-  `MqttBrokerConnectionRejectedEvent`.
-- **Errors:** stable codes in `MqttErrorCodes` (`mqtt.not_connected`, `mqtt.authentication_failed`,
-  `mqtt.subscribe_rejected`, ...).
+
+### Documentation
+
+- The docs list `empty client id` as a broker refusal reason, and say that a `maxPendingMessagesPerClient` change
+  restarts the broker. The README's trailing relative link, which broke on nuget.org, is gone.

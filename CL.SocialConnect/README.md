@@ -33,8 +33,8 @@ if (sent.IsFailure)
 if (social.HasSteam)
 {
     Result<SteamPlayer> player = await social.Steam.GetPlayerAsync("76561198012345678");
-    if (player.IsSuccess)
-        Console.WriteLine($"{player.Value.PersonaName} — {player.Value.ProfileUrl}");
+    if (player is SteamPlayer p)
+        Console.WriteLine($"{p.PersonaName} — {p.ProfileUrl}");
 }
 
 // Steam — "Sign in through Steam" on a website (OpenID 2.0; returns the Steam ID)
@@ -52,8 +52,8 @@ if (social.HasSteamOpenId)
     var returnTo = $"https://example.com/auth/steam/callback?state={expectedState}";
     Result<SteamOpenIdResult> signIn = await social.OpenId.VerifyAsync(request.QueryString.Value, returnTo);
     response.Cookies.Delete("steam_state");
-    if (signIn.IsSuccess)
-        Console.WriteLine($"Signed in as {signIn.Value.SteamId}");   // a replayed assertion fails with social.steam.openid_replayed
+    if (signIn is SteamOpenIdResult user)
+        Console.WriteLine($"Signed in as {user.SteamId}");   // a replayed assertion fails with social.steam.openid_replayed
 }
 ```
 
@@ -110,8 +110,8 @@ Auto-generated on first run as `config.socialconnect.json`:
 | `Discord.Enabled` | `true` | Enable the Discord webhook service. |
 | `Discord.DefaultWebhookUrl` | `""` | Webhook used when a call omits `webhookUrl` (secret); must be a Discord webhook URL. |
 | `Discord.TimeoutSeconds` | `10` | HTTP timeout for Discord calls (1–120). |
-| `Discord.DefaultUsername` | `""` | Default sender name applied to messages. |
-| `Discord.DefaultAvatarUrl` | `""` | Default sender avatar applied to messages. |
+| `Discord.DefaultUsername` | `""` | Default sender name for `SendMessageAsync` / `SendEmbedAsync`. |
+| `Discord.DefaultAvatarUrl` | `""` | Default sender avatar for `SendMessageAsync` / `SendEmbedAsync`. |
 | `Steam.Enabled` | `false` | Enable the Steam services. The profile service **requires `ApiKey`**; sign-in (OpenID) alone does not. |
 | `Steam.ApiKey` | `""` | Steam Web API key (secret) — get one at [steamcommunity.com/dev/apikey](https://steamcommunity.com/dev/apikey). |
 | `Steam.AuthEnabled` | `false` | Enable ticket authentication; **requires `AppId` and `ApiKey`**. |
@@ -126,7 +126,7 @@ Auto-generated on first run as `config.socialconnect.json`:
 
 ### Changing config while running
 
-With CodeLogic 4.9+, `config.socialconnect.json` applies live when changed through `Libraries.UpdateConfigAsync`, `Libraries.ReloadConfigAsync`, or the config file watcher. Only the service whose settings changed is rebuilt:
+`config.socialconnect.json` applies live when changed through `Libraries.UpdateConfigAsync`, `Libraries.ReloadConfigAsync`, or the config file watcher. Only the service whose settings changed is rebuilt:
 
 - **Discord settings**: `social.Discord` is replaced.
 - **Steam settings**: `social.Steam`, `social.Auth` and `social.OpenId` are replaced; the profile cache starts empty.
@@ -146,5 +146,3 @@ Full guide: **[CL.SocialConnect documentation](https://zyntal-com.github.io/Code
 ## License
 
 MIT — see [LICENSE](https://github.com/zyntal-com/CodeLogic.Libs/blob/main/LICENSE).
-
-Audit completion notes and current limits are in [the guide](../docs/libs/socialconnect.md).

@@ -45,14 +45,16 @@ using var doc = loaded.Value!;
 | `Load(Stream)` / `LoadAsync(Stream, options, ct)` | Read to the end (byte limit), check the header's pixel count, decode. |
 | `Load(ReadOnlySpan<byte>)` | Decode bytes. |
 | `LoadFile(path)` / `LoadFileAsync(path, options, ct)` | Decode a file (`imaging.file_not_found` when missing). |
-| `Create(width, height, color)` | A blank image. |
+| `Create(width, height, background)` | A blank image. |
 | `FromSkiaBitmap(bitmap)` / `ToSkiaBitmap()` | Interop with SkiaSharp (copies). |
+| `GetPixel(x, y)`, `Clone()` | Read one pixel; deep copy. |
 | `Width`, `Height`, `DisplayWidth`, `DisplayHeight` | Stored size and size once upright. |
 | `Orientation`, `Metadata`, `IccProfile`, `ExifData`, `SourceFormat` | What was loaded. |
 | `Edit()` | Start a pipeline. |
 | `Encode(format, quality)` / `Encode(ImageEncodeOptions)` | Encode as is. |
 
 `ImageLoadOptions.MaxPixels` / `MaxBytes` default to `ImagingDefaults.Current` (40 MP, 100 MB); 0 disables a limit.
+`ReadMetadata = false` skips reading EXIF and the ICC profile.
 Decodable: JPEG, PNG, WebP, GIF (first frame), BMP, ICO, and HEIF/AVIF where the platform's Skia has the codec
 (otherwise `imaging.unsupported_format`).
 
@@ -71,6 +73,8 @@ var dataUri = ImageTools.ToDataUri(doc, ImageFormat.Png).Value!;
 ```
 
 `ProcessUploadAsync`, `GenerateVariantsAsync` and `ThumbnailAsync` take a stream and a `CancellationToken`.
+`ToDataUri(bytes)` wraps already-encoded bytes (MIME type from the signature), and `FitWithin(width, height, maxWidth,
+maxHeight)` returns the size scaled down into a box.
 
 ## Encoded output
 
@@ -83,17 +87,32 @@ var dataUri = ImageTools.ToDataUri(doc, ImageFormat.Png).Value!;
 | `ToArray()`, `AsStream()`, `ToBase64()`, `ToDataUri()` | Get the bytes out. A stream from `AsStream()` holds its own reference to the buffer: dispose it when done, and it stays valid even after the image is disposed. |
 | `WriteToAsync(stream, ct)`, `SaveAsync(path, ct)` | Write them. |
 
+`AsStream()` takes its reference atomically, so it cannot revive a buffer that a concurrent final `Dispose` has already
+returned to the pool; it throws `ObjectDisposedException` instead.
+
 ## Configuration
 
-`config.imaging.json` (only read when `ImagingLibrary` is loaded; applied live on change):
+`config.imaging.json` (only read when `ImagingLibrary` is loaded; applied live on change). Keys are camelCase:
+
+```json
+{
+  "defaultMaxPixels": 40000000,
+  "defaultMaxBytes": 104857600,
+  "defaultQuality": 85,
+  "defaultFormat": "webp",
+  "stripMetadataByDefault": true
+}
+```
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `DefaultMaxPixels` | `40000000` | Largest image decoded (0 = no limit). |
-| `DefaultMaxBytes` | `104857600` | Largest encoded input read (0 = no limit). |
-| `DefaultQuality` | `85` | Lossy quality when a call gives none. |
-| `DefaultFormat` | `Webp` | Output format when a call gives none (`Jpeg`, `Png`, `Webp`). |
-| `StripMetadataByDefault` | `true` | Drop EXIF on encode unless a call keeps it. |
+| `defaultMaxPixels` | `40000000` | Largest image decoded (0 = no limit). |
+| `defaultMaxBytes` | `104857600` | Largest encoded input read (0 = no limit). |
+| `defaultQuality` | `85` | Lossy quality when a call gives none (1–100). |
+| `defaultFormat` | `"webp"` | Output format when a call gives none (`"jpeg"`, `"png"`, `"webp"`). |
+| `stripMetadataByDefault` | `true` | Drop EXIF on encode unless a call keeps it. |
+
+Invalid values stop the library at startup; an invalid live change is logged and ignored.
 
 Without the library: `ImagingDefaults.Current = ImagingSettings.BuiltIn with { Quality = 90 };`.
 
@@ -110,6 +129,18 @@ Without the library: `ImagingDefaults.Current = ImagingSettings.BuiltIn with { Q
 | `imaging.file_not_found` | NotFound | A missing input file. |
 | `imaging.io_failed` | Internal | Stream or file I/O failed. |
 | `imaging.processing_failed` | Internal | Unexpected engine failure. |
+
+`Result<T>` is a union, so a `switch` can branch on the value and the error kinds:
+
+```csharp
+string reply = ImageInfo.Probe(upload) switch
+{
+    ImageInfo info    => $"{info.Width}x{info.Height} {info.MimeType}",
+    ValidationError e => $"rejected: {e.Code}",   // too_large, decode_failed, unsupported_format
+    Error e           => $"failed: {e.Message}",
+    null              => "no result",
+};
+```
 
 ## Limitations
 

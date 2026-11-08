@@ -17,6 +17,7 @@ dotnet add package CodeLogic.NetUtils
 
 ```csharp
 using CL.NetUtils;
+using CL.NetUtils.Models;
 
 await Libraries.LoadAsync<NetUtilsLibrary>();   // register before ConfigureAsync()
 await CodeLogic.ConfigureAsync();
@@ -127,5 +128,3 @@ Full guide: **[CL.NetUtils documentation](https://zyntal-com.github.io/CodeLogic
 ## License
 
 MIT — see [LICENSE](https://github.com/zyntal-com/CodeLogic.Libs/blob/main/LICENSE).
-
-Audit completion notes and current limits are in [the guide](../docs/libs/netutils.md).

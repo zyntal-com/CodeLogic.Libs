@@ -67,6 +67,10 @@ All notable changes to **CodeLogic.SystemStats** are documented here. Versions f
 
 - Configuration examples in the README and the docs use the camelCase keys the CodeLogic loader reads.
   The PascalCase keys shown before are matched case-sensitively and were ignored, leaving defaults active.
+- The guide shows the models as plain (unsealed) records and the MiB helpers (`TotalMiB`, `UsedMiB`,
+  `WorkingSetMiB`) as `double`, as in the code. The quick-start examples add the `CL.SystemStats.Models` and
+  `CodeLogic.Core.Results` usings they need.
+- The README's last line, a relative link that broke on nuget.org, is removed.
 
 ## 2026-10-24
 

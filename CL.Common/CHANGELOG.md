@@ -77,6 +77,20 @@ All notable changes to **CodeLogic.Common** are documented here. Versions follow
 - `FastHash.XxHash128` is about 10x faster (~70 ns instead of ~700 ns per call on .NET 11): `XxHash128.HashToUInt128` has a large fixed cost, so the hash is now computed into bytes and read back. The values are unchanged.
 - `StringHelper` (`ToSlug`, `ToPascalCase`, `ToSnakeCase`, `ToKebabCase`, `StripHtml`, `WordCount`, `ExtractNumbers`) uses source-generated regexes (`[GeneratedRegex]`) instead of looking each pattern up in the static `Regex` cache and running it through the interpreter on every call. Output is unchanged.
 
+### Documentation
+
+- The docs' API tables now use the real parameter names (`DecryptAes(cipherText, …)`, `JsonHelper.Serialize(obj, …)`,
+  `DecompressString(compressed, …)`, `DateTimeHelper.ToIso8601(dt)`, `AssemblyHelper.GetName(obj)`, …) and list the error codes
+  of JSON, conversion, compression, HTTP, networking, file and scheduling failures.
+- Corrected: `AssemblyHelper.GetFileMetadata` loads the assembly; `CronParser.GetNextOccurrence(expression, from)`
+  returns the next minute strictly after `from`; `JsonHelper.Merge` is a shallow, top-level merge. The
+  `TypeConverter.TryConvert` example used `out long?`, which does not compile.
+- The `HtmlHelper` table is whole again (a paragraph had split it), and the ping example matches the union with
+  `switch`. The README's relative link to the guide, which is broken on nuget.org, is removed.
+- XML docs: `IdGenerator.NewGuid` returns a lowercase GUID, `DateTimeHelper.ToRelativeString` says "a day ago"
+  (never "yesterday"), and `TypeConverter.Convert` supports what `Convert.ChangeType` handles (no enums or
+  `TypeConverter` types).
+
 ### Breaking
 
 - **`HttpHeaderHelper.GetEffectiveClientIp(remoteIp, xForwardedFor)` behaviour change.** It now behaves like the
