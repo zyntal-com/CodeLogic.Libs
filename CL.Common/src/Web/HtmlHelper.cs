@@ -249,13 +249,10 @@ public static partial class HtmlHelper
     }
 
     /// <summary>
-    /// Truncates HTML content to approximately <paramref name="maxLength"/> visible characters,
-    /// stripping tags first. Appends <paramref name="suffix"/> if truncated.
+    /// Strips the tags from <paramref name="html"/> and truncates the text to at most <paramref name="maxLength"/>
+    /// characters, <paramref name="suffix"/> included, like <see cref="Strings.StringHelper.Truncate"/>: no suffix when it
+    /// would not fit, and an empty string for a <paramref name="maxLength"/> of 0 or less.
     /// </summary>
-    public static string TruncateText(string html, int maxLength, string suffix = "...")
-    {
-        var text = StripTags(html);
-        if (text.Length <= maxLength) return text;
-        return text[..(maxLength - suffix.Length)] + suffix;
-    }
+    public static string TruncateText(string html, int maxLength, string suffix = "...") =>
+        Strings.StringHelper.Truncate(StripTags(html), maxLength, suffix);
 }

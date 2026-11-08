@@ -7,6 +7,8 @@ All notable changes to **CodeLogic.GameNetQuery** are documented here. Versions 
 
 ### Breaking
 
+- **Library ID is `CL.GameNetQuery`** (was `cl.gamenetquery`), like every other library. Its folder is `Libraries/CL.GameNetQuery`; CodeLogic 5 renames an existing `CL.gamenetquery` folder on case-sensitive file systems.
+
 - Targets **.NET 11** (`net11.0`) and requires **CodeLogic 5.0** (`[5.0.0, 6.0.0)`). On .NET 10, stay on
   4.9.x. CodeLogic 5 makes `Result<T>` / `Result` C# 15 unions and `Error` a closed record with
   kind subtypes (`NotFoundError`, `ValidationError`, ...).

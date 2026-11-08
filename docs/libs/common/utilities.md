@@ -110,7 +110,7 @@ string clip = HtmlHelper.TruncateText(longHtml, 120);
 | Member | Returns | Purpose |
 |--------|---------|---------|
 | `StripTags(html)` / `Sanitize(html)` / `TrimWhitespace(html)` / `Decode(html)` / `Encode(text)` | `string` | HTML cleanup and encoding. |
-| `TruncateText(html, maxLength, suffix = "...")` | `string` | Length-limit HTML text. |
+| `TruncateText(html, maxLength, suffix = "...")` | `string` | Strip tags and cut to at most `maxLength` characters, suffix included (like `StringHelper.Truncate`: no suffix when it does not fit, empty for `maxLength <= 0`). |
 | `SanitizeAllowedTags` | `IReadOnlySet<string>` | The elements `Sanitize` keeps. |
 
 `Sanitize` is an allowlist: basic formatting elements without attributes, and links with http(s),
@@ -145,8 +145,34 @@ Result         del  = await HttpClientHelper.DeleteAsync(http, url);
 
 Headers are validated: a malformed name or value (for example one containing a line break) makes the call return a failure instead of sending it. `User-Agent`, `Authorization`, `Proxy-Authorization`, `Cookie` and `Referer` are passed through unvalidated, since real-world values often fail .NET's strict parser; content headers (`Content-Type`, `Content-Language`, …) are set on the body.
 
-A non-success status code is an `InternalError` (`internal`) with the message `HTTP {status}: {body}`, the body cut to
-`MaxErrorBodyLength` (256) characters. A transport failure is an `InternalError` with code `connection.failed`.
+A non-success status code fails with the code `http.{status}` (`HttpClientHelper.StatusErrorCode(status)`) and the
+message `HTTP {status}: {body}`, the body cut to `MaxErrorBodyLength` (256) characters. The error kind follows the status:
+
+| Status | Error |
+|---|---|
+| 400, 422 | `ValidationError` |
+| 401, 403 | `UnauthorizedError` |
+| 404, 410 | `NotFoundError` |
+| 409, 412 | `ConflictError` |
+| 408, 504 | `TimeoutError` |
+| 429, 502, 503 | `UnavailableError` |
+| any other | `InternalError` |
+
+A request that gets no response fails with `TimeoutError` (`connection.timeout`) on a timeout, `UnavailableError`
+(`connection.failed`) on a transport failure, and `ValidationError` (`invalid_argument`) when the URL or a header is not
+valid.
+
+```csharp
+var page = await HttpClientHelper.GetStringAsync(client, url);
+string status = page switch
+{
+    string body                      => $"got {body.Length} chars",
+    NotFoundError                    => "no such page",
+    UnavailableError or TimeoutError => "try again later",   // 429, 502, 503, 408, 504, transport failures
+    Error e                          => $"failed: {e.Code}",
+    null                             => "empty result",
+};
+```
 
 ### HttpHeaderHelper
 
@@ -289,7 +315,7 @@ Result<DateTimeOffset> local = CronParser.GetNextOccurrence("0 9 * * 1-5", DateT
 |--------|---------|---------|
 | `Parse(expression)` | `Result<CronExpression>` | Parse into fields. |
 | `IsValid(expression)` | `bool` | Quick validity check. |
-| `GetNextOccurrence(expression, from = null)` | `Result<DateTime>` | Next UTC fire time strictly after `from` (default now), to the minute; `from` is read as UTC. A field that can never match (`0 24 * * *`) fails at once with a validation error. |
+| `GetNextOccurrence(expression, from = null)` | `Result<DateTime>` | Next UTC fire time strictly after `from` (default now), to the minute. A `Local` `from` is converted to UTC; an `Unspecified` one is read as UTC. A field that can never match (`0 24 * * *`) fails at once with a validation error. |
 | `GetNextOccurrence(expression, from, timeZone)` | `Result<DateTimeOffset>` | Next fire time strictly after `from`, with the fields read in `timeZone` (null = UTC). Used by `JobScheduler`. |
 
 ```csharp
