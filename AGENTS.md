@@ -26,8 +26,8 @@ you are working on before changing anything.
 > build against CodeLogic `5.0.35-preview` (`CodeLogicPackageVersion` in `Directory.Build.props`). Published
 > nuspecs depend on CodeLogic `[<CodeLogicPackageVersion>, 6.0.0)`: the release workflow uses the pinned build version
 > as the floor (older 5.0 previews are unsigned and miss APIs, which broke consumers with CS0012). The `Deploy Documentation`
-> workflow is **disabled**, so the public docs site keeps showing 4.9 until the 5.x libraries are released
-> as stable. Do not run Promote or re-enable that workflow without the owner's explicit go-ahead.
+> workflow is active again (owner, 2026-11-08): the public docs site shows 5.x, like the CodeLogic site; the 4.9
+> docs live on in `support/4.x`. Do not run Promote without the owner's explicit go-ahead.
 
 - **Integration branches** (`main`, `support/**`) take changes through pull requests only, and the
   required checks must pass. That means the full suite, including the MySQL, PostgreSQL and SQL Server
