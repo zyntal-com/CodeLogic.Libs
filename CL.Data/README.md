@@ -44,5 +44,4 @@ var cheap = await db.Query<Product>().WithCache().Where(p => p.Price < 20m).Orde
 
 **Documentation:** [docs/libs/data](../docs/libs/data/index.md).
 - [Parity with the 4.x libraries](PARITY.md)
-- [Findings log](FINDINGS.md)
 - [Changelog](CHANGELOG.md)
