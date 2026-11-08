@@ -17,6 +17,23 @@ public static class ValueReader<T>
     private static readonly Type ValueType = Nullable.GetUnderlyingType(typeof(T)) ?? typeof(T);
     private static readonly bool AcceptsNull = !typeof(T).IsValueType || Nullable.GetUnderlyingType(typeof(T)) is not null;
 
+    // The registered converter for T, looked up once per ValueConverters.Version instead of once per value read.
+    private sealed record ConverterLookup(int Version, ValueConverter? Converter);
+    private static ConverterLookup _converter = new(-1, null);
+
+    private static ValueConverter? Converter
+    {
+        get
+        {
+            var current = Volatile.Read(ref _converter);
+            var version = ValueConverters.Version;
+            if (current.Version == version) return current.Converter;
+            ValueConverters.TryGet(ValueType, out var converter);
+            Volatile.Write(ref _converter, new ConverterLookup(version, converter));
+            return converter;
+        }
+    }
+
     /// <summary>Reads column <paramref name="ordinal"/> of the current row.</summary>
     public static T Read(DbDataReader reader, int ordinal)
     {
@@ -27,7 +44,7 @@ public static class ValueReader<T>
                 : throw new InvalidCastException($"Column {reader.GetName(ordinal)} is NULL but {Target.Name} is not nullable.");
         }
 
-        if (ValueConverters.TryGet(ValueType, out var converter))
+        if (Converter is { } converter)
             return (T)converter.FromStoreObject(ValueConversion.FromDb(reader.GetValue(ordinal), converter.StoreType)!)!;
 
         if (reader.GetFieldType(ordinal) == ValueType && ValueType == Target)

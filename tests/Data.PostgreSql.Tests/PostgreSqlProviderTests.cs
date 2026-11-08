@@ -43,6 +43,40 @@ public sealed class PostgreSqlProviderTests
         [PostgresColumn(Type = "inet")] public string? Address { get; set; }
     }
 
+    [Theory]
+    [InlineData(ConnectionResetMode.WhenDirty, false, true, true)]
+    [InlineData(ConnectionResetMode.Always, false, false, false)]
+    [InlineData(ConnectionResetMode.Never, false, true, false)]
+    [InlineData(ConnectionResetMode.WhenDirty, true, false, false)]   // multiplexing: Npgsql's default, no tracking
+    public void Connection_reset_mode_decides_who_resets(ConnectionResetMode mode, bool multiplexing, bool noResetOnClose, bool cldataResets)
+    {
+        var config = new DataConnectionConfig
+        {
+            Provider = "postgresql", ConnectionString = $"Host=db;No Reset On Close={!noResetOnClose}",
+            PostgreSql = new PostgreSqlOptions { ConnectionReset = mode, Multiplexing = multiplexing },
+        };
+        var cs = new Npgsql.NpgsqlConnectionStringBuilder(Provider.BuildConnectionString(config, NodeEndpoint.Primary(config)).ValueOrThrow());
+        Assert.Equal(noResetOnClose, cs.NoResetOnClose);
+        Assert.Equal(cldataResets, Provider.ResetsDirtySessions(config));
+    }
+
+    [Theory]
+    [InlineData("SELECT * FROM t WHERE id = @p0", false)]
+    [InlineData("SELECT data FROM t WHERE data @> '{\"a\":1}'", false)]     // @> is an operator, not a variable
+    [InlineData("SELECT $$SET x$$", false)]                                // a dollar-quoted string
+    [InlineData("INSERT INTO t (a) VALUES (1) ON CONFLICT DO NOTHING", false)]
+    [InlineData("SELECT pg_notify('c', 'p')", false)]
+    [InlineData("SET search_path TO x", true)]
+    [InlineData("SELECT set_config('a', 'b', false)", true)]
+    [InlineData("SELECT pg_advisory_lock(1)", true)]
+    [InlineData("CREATE TEMP TABLE x (id int)", true)]
+    [InlineData("BEGIN", true)]
+    [InlineData("LISTEN c", true)]
+    [InlineData("PREPARE s AS SELECT 1", true)]
+    [InlineData("DO $$BEGIN END$$", true)]
+    [InlineData("SELECT 1; SELECT 2", true)]
+    public void Raw_sql_session_rules(string sql, bool dirty) => Assert.Equal(dirty, Provider.MayChangeSession(sql));
+
     [Fact]
     public void Store_types_and_typed_parameters()
     {

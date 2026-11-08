@@ -157,6 +157,9 @@ public sealed class PostgreSqlDataProvider : DataProvider
         builder.MaxAutoPrepare = config.PrepareStatements ? options.MaxAutoPrepare : 0;
         builder.AutoPrepareMinUsages = Math.Max(1, options.AutoPrepareMinUsages);
         builder.Multiplexing = options.Multiplexing;
+        // Npgsql's reset on close (DISCARD ALL or its equivalent) costs server work on every command; with WhenDirty CL.Data
+        // resets only dirty sessions.
+        builder.NoResetOnClose = !options.Multiplexing && options.ConnectionReset != ConnectionResetMode.Always;
 
         switch (config.SslMode)
         {
@@ -173,6 +176,49 @@ public sealed class PostgreSqlDataProvider : DataProvider
     /// <inheritdoc />
     public override DbDataSource CreateDataSource(DataConnectionConfig config, NodeEndpoint node, string connectionString) =>
         NpgsqlDataSource.Create(connectionString);
+
+    // Raw statements that leave no session state: one plain query, DML or DDL statement without advisory locks, set_config or
+    // temporary objects. Anything else (SET, RESET, DISCARD, BEGIN/START, LOCK, LISTEN, PREPARE, DECLARE, DO, CALL, COPY,
+    // several statements) may change the session. '@' is an operator here (@>, <@), not a variable.
+    private static readonly SessionSqlRules SessionRules = new(
+        ["SELECT", "WITH", "VALUES", "TABLE", "SHOW", "EXPLAIN", "INSERT", "UPDATE", "DELETE", "MERGE",
+         "CREATE", "ALTER", "DROP", "TRUNCATE", "COMMENT", "ANALYZE", "REINDEX", "CLUSTER", "GRANT", "REVOKE"],
+        ["pg_advisory_lock", "pg_advisory_lock_shared", "pg_try_advisory_lock", "pg_try_advisory_lock_shared", "set_config",
+         "TEMP", "TEMPORARY"],
+        parameterPrefix: '@', lexicon: SqlLexicon.PostgreSql, atIsVariable: false);
+
+    /// <inheritdoc />
+    public override bool ResetsDirtySessions(DataConnectionConfig config) =>
+        config.Pooling && config.PostgreSql is not { Multiplexing: true }
+        && (config.PostgreSql?.ConnectionReset ?? ConnectionResetMode.WhenDirty) == ConnectionResetMode.WhenDirty;
+
+    /// <inheritdoc />
+    public override bool MayChangeSession(string sql) => SessionRules.MayChangeSession(sql);
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// The statements Npgsql itself sends on close when the connection has prepared statements: everything but the prepared
+    /// statements is reset (auto-prepared statements stay valid, so Npgsql's cache of them stays correct). An open transaction
+    /// left by a raw <c>BEGIN</c> is rolled back first (a <c>ROLLBACK</c> outside one only warns).
+    /// </remarks>
+    public override async Task ResetSessionAsync(DbConnection connection, DataConnectionConfig config, bool handedToUser, CancellationToken ct)
+    {
+        var command = ((NpgsqlConnection)connection).CreateCommand();
+        await using (command.ConfigureAwait(false))
+        {
+            command.CommandText =
+                "ROLLBACK; CLOSE ALL; SET SESSION AUTHORIZATION DEFAULT; RESET ALL; UNLISTEN *; SELECT pg_advisory_unlock_all(); DISCARD SEQUENCES; DISCARD TEMP";
+            await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+        }
+    }
+
+    /// <inheritdoc />
+    /// <remarks>Clears the connection's pool: idle sessions close, and sessions in use (this one) close when they are returned.</remarks>
+    public override Task DiscardSessionAsync(DbConnection connection, DataConnectionConfig config, CancellationToken ct)
+    {
+        NpgsqlConnection.ClearPool((NpgsqlConnection)connection);
+        return Task.CompletedTask;
+    }
 
     /// <inheritdoc />
     public override void Validate(DataConnectionConfig config, string path, List<ConfigFieldError> errors)

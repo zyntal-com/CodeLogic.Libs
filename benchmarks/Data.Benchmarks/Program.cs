@@ -67,7 +67,7 @@ public class MySqlBenchmarks
         _source = new MySqlDataSource(new MySqlConnectionStringBuilder(cs) { ConnectionReset = false }.ConnectionString);
         _always = Database.Create("bench-always", MySqlDataProvider.Instance, new DataConnectionConfig
         {
-            Provider = "mysql", ConnectionString = cs, MySql = new MySqlOptions { ConnectionReset = MySqlConnectionReset.Always },
+            Provider = "mysql", ConnectionString = cs, MySql = new MySqlOptions { ConnectionReset = ConnectionResetMode.Always },
         }).ValueOrThrow();
         _cached = Database.Create("bench-cached", MySqlDataProvider.Instance, new DataConnectionConfig { Provider = "mysql", ConnectionString = cs },
             new DatabaseOptions { Cache = new CL.Data.Caching.DataCache(new DataCacheConfig { EntityCache = true }) }).ValueOrThrow();
