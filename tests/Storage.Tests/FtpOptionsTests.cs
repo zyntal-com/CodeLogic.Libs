@@ -56,8 +56,8 @@ public sealed class FtpOptionsTests
     }
 
     [Theory]
-    [InlineData(SslProtocols.Tls11)]
 #pragma warning disable SYSLIB0039
+    [InlineData(SslProtocols.Tls11)]
     [InlineData(SslProtocols.Tls)]
 #pragma warning restore SYSLIB0039
     public void Obsolete_tls_versions_are_rejected(SslProtocols protocol)

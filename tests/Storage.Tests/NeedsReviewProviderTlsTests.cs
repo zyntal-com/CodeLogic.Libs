@@ -45,7 +45,7 @@ public sealed class NeedsReviewProviderTlsTests
         watch.CertificateRequested();
         await watch.WriteAsync(new byte[10]);
         Assert.Equal(300, await watch.ReadAsync(new byte[1024]));
-        await Assert.ThrowsAsync<IOException>(async () => await watch.ReadAsync(new byte[1024]));
+        await Assert.ThrowsAsync<IOException>(async () => _ = await watch.ReadAsync(new byte[1024]));
 
         Assert.Null(recorder.ClientCertificateRefusedAt);
         Assert.Equal(StorageErrors.ConnectionLostCode, TlsDiagnosis.Enrich(StorageErrors.ConnectionLost("lost"), recorder, started).Code);
@@ -61,7 +61,7 @@ public sealed class NeedsReviewProviderTlsTests
 
         watch.CertificateRequested();
         await watch.WriteAsync(new byte[10]);
-        await watch.ReadAsync(new byte[1024]); // the alert
+        _ = await watch.ReadAsync(new byte[1024]); // the alert
         await watch.DisposeAsync();
 
         Assert.NotNull(recorder.ClientCertificateRefusedAt);
@@ -81,7 +81,7 @@ public sealed class NeedsReviewProviderTlsTests
         TlsConnectionWatch.OnCertificateSelection(new object(), null, []);
 
         await watch.WriteAsync(new byte[10]);
-        await Assert.ThrowsAsync<IOException>(async () => await watch.ReadAsync(new byte[1024]));
+        await Assert.ThrowsAsync<IOException>(async () => _ = await watch.ReadAsync(new byte[1024]));
         await watch.DisposeAsync();
 
         Assert.Null(recorder.ClientCertificateRefusedAt);
