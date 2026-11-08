@@ -74,87 +74,36 @@ internal static class SqlClassifier
     {
         var first = true;
         var ended = false;
-        var span = sql.AsSpan();
-        var i = 0;
-        while (i < span.Length)
+        var tokens = new SqlTokenizer(sql);
+        while (tokens.Next())
         {
-            var c = span[i];
-            if (char.IsWhiteSpace(c)) { i++; continue; }
-            if (c == '-' && i + 1 < span.Length && span[i + 1] == '-')
+            switch (tokens.Kind)
             {
-                while (i < span.Length && span[i] != '\n') i++;
-                continue;
-            }
-            if (c == '#')
-            {
-                // MySQL line comment.
-                while (i < span.Length && span[i] != '\n') i++;
-                continue;
-            }
-            if (c == '/' && i + 1 < span.Length && span[i + 1] == '*')
-            {
-                var close = span[(i + 2)..].IndexOf("*/");
-                if (close < 0) return false;
-                i += close + 4;
-                continue;
+                case SqlTokenKind.ExecutableComment:
+                    continue;
+                case SqlTokenKind.Invalid:
+                    return false;
             }
             if (ended) return false;   // something after the statement's semicolon: a second statement
-            if (c == ';') { ended = true; i++; continue; }
-            if (c is '\'' or '"' or '`' or '[')
+            switch (tokens.Kind)
             {
-                var closing = c == '[' ? ']' : c;
-                i++;
-                while (true)
-                {
-                    if (i >= span.Length) return false;
-                    if (span[i] == closing)
-                    {
-                        if (i + 1 < span.Length && span[i + 1] == closing) { i += 2; continue; }   // doubled quote
-                        i++;
-                        break;
-                    }
-                    i++;
-                }
-                if (first) return false;
-                continue;
-            }
-            if (c == '$' && i + 1 < span.Length && (span[i + 1] == '$' || char.IsLetter(span[i + 1])))
-            {
-                // PostgreSQL dollar quoting ($$...$$ or $tag$...$tag$); $1 placeholders fall through.
-                var tagEnd = span[(i + 1)..].IndexOf('$');
-                if (tagEnd >= 0)
-                {
-                    var tag = span.Slice(i, tagEnd + 2);
-                    var tagIsWord = true;
-                    foreach (var t in tag[1..^1]) tagIsWord &= char.IsLetterOrDigit(t) || t == '_';
-                    if (tagIsWord)
-                    {
-                        var body = span[(i + tag.Length)..].IndexOf(tag);
-                        if (body < 0) return false;
-                        i += tag.Length * 2 + body;
-                        if (first) return false;
-                        continue;
-                    }
-                }
-            }
-            if (char.IsLetter(c) || c == '_')
-            {
-                var start = i;
-                while (i < span.Length && (char.IsLetterOrDigit(span[i]) || span[i] is '_' or '$')) i++;
-                var word = span[start..i];
-                if (first)
-                {
-                    if (!ReadStartLookup.Contains(word)) return false;
+                case SqlTokenKind.Semicolon:
+                    ended = true;
+                    break;
+                case SqlTokenKind.Quoted:
+                    if (first) return false;
+                    break;
+                case SqlTokenKind.Word when first:
+                    if (!ReadStartLookup.Contains(tokens.Text)) return false;
                     first = false;
-                }
-                else if (WriteWordLookup.Contains(word) && !(start > 0 && span[start - 1] == '.'))
-                {
-                    return false;
-                }
-                continue;
+                    break;
+                case SqlTokenKind.Word:
+                    if (WriteWordLookup.Contains(tokens.Text) && !tokens.AfterDot) return false;
+                    break;
+                default:
+                    if (first && tokens.Text[0] != '(') return false;   // (SELECT ...) is fine; anything else first is not a read
+                    break;
             }
-            if (first && c != '(') return false;   // (SELECT ...) is fine; anything else first is not a read
-            i++;
         }
         return !first;
     }

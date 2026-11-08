@@ -41,6 +41,8 @@ public static class DataTelemetry
     internal static readonly Counter<long> CacheHits = Meter.CreateCounter<long>("cl.data.cache.hits", "{hit}", "Reads answered from the result cache.");
     internal static readonly Counter<long> CacheMisses = Meter.CreateCounter<long>("cl.data.cache.misses", "{miss}", "Cached reads that went to the database.");
     internal static readonly Counter<long> CircuitOpened = Meter.CreateCounter<long>("cl.data.circuit.opened", "{event}", "Node circuits that opened.");
+    internal static readonly Counter<long> SessionResets = Meter.CreateCounter<long>("cl.data.session.resets", "{reset}", "Pooled connections reset by CL.Data before returning to the pool (session state may have changed).");
+    internal static readonly Counter<long> SessionResetFailures = Meter.CreateCounter<long>("cl.data.session.reset_failures", "{failure}", "Session resets that failed; the idle sessions of that pool were discarded.");
 
     private static readonly ConcurrentDictionary<Database, byte> Live = new();
 

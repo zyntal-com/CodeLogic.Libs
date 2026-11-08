@@ -33,6 +33,9 @@ internal sealed class CommandExecutor(DataProvider provider, int defaultTimeoutS
     {
         DbConnection? owned = null;
         var opening = false;
+        // Session tracking (providers that reset dirty sessions themselves): raw or rewritten SQL that may change the
+        // session, or a command interrupted by anything but a plain statement error, leaves the connection dirty.
+        var dirty = node.TracksSessions && context is not null && context.MayDirtySession(Provider);
         try
         {
             if (connection is null)
@@ -51,13 +54,26 @@ internal sealed class CommandExecutor(DataProvider provider, int defaultTimeoutS
         }
         catch (Exception ex)
         {
-            return Fail(context, ex, opening, ct);
+            var error = Fail(context, ex, opening, ct);
+            if (node.TracksSessions && !opening && !IsStatementError(error)) dirty = true;
+            return error;
         }
         finally
         {
-            if (owned is not null) await owned.DisposeAsync().ConfigureAwait(false);
+            if (owned is not null) await node.ReturnAsync(owned, dirty).ConfigureAwait(false);
+            else if (dirty && connection is not null) SessionTracker.MarkDirty(connection);
         }
     }
+
+    /// <summary>
+    /// True for errors the server raised for one statement and that leave the session as it was (constraint violations,
+    /// deadlocks, lock waits, permissions). Anything else (timeouts, cancellation, lost connections, driver or mapping
+    /// failures) may have interrupted a command half-way.
+    /// </summary>
+    internal static bool IsStatementError(Error error) => error.Code is
+        DataErrors.DuplicateKeyCode or DataErrors.ForeignKeyViolationCode or DataErrors.ConstraintViolationCode or
+        DataErrors.ConflictCode or DataErrors.ConcurrencyCode or DataErrors.DeadlockCode or DataErrors.LockTimeoutCode or
+        DataErrors.LockNotAcquiredCode or DataErrors.AccessDeniedCode or DataErrors.ValidationCode or DataErrors.ParameterLimitCode;
 
     /// <summary>Maps <paramref name="exception"/> and records on <paramref name="context"/> whether it is worth retrying.</summary>
     public Error Fail(CL.Data.Pipeline.CommandContext? context, Exception exception, bool opening, CancellationToken ct)

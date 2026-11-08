@@ -47,6 +47,8 @@ public sealed class DataLock : IAsyncDisposable
             var attempt = await session.NumberAsync(db.Provider.TryLockSql(name), ct).ConfigureAwait(false);
             if (attempt.IsFailure)
             {
+                // The server may have granted the lock before the failure (a cancelled or timed-out read): never pool it held.
+                session.MarkDirty();
                 await session.DisposeAsync().ConfigureAwait(false);
                 return attempt.Error!;
             }
@@ -75,8 +77,11 @@ public sealed class DataLock : IAsyncDisposable
     {
         if (_session is not { } session) return;
         _session = null;
-        // Closing the connection releases the lock too; the explicit release keeps pooled connections clean.
-        await session.ExecuteAsync(_db.Provider.UnlockSql(Name), CancellationToken.None).ConfigureAwait(false);
+        // The explicit release keeps the pooled connection clean. When it fails, or does not report the lock as released
+        // (MySQL RELEASE_LOCK and pg_advisory_unlock return 1/true), the session is marked dirty: providers that reset dirty
+        // sessions reset it before it can be reused (the others reset every session anyway).
+        var released = await session.NumberAsync(_db.Provider.UnlockSql(Name), CancellationToken.None).ConfigureAwait(false);
+        if (released.IsFailure || released.Value != 1) session.MarkDirty();
         await session.DisposeAsync().ConfigureAwait(false);
     }
 }

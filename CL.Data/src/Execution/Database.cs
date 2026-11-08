@@ -240,7 +240,7 @@ public sealed partial class Database : IAsyncDisposable
             var started = Stopwatch.GetTimestamp();
             var node = ctx.Node ?? Primary;
             var result = _transaction is { } tx
-                ? await tx.ExecuteAsync(ctx.Spec, state, body, ctx.CancellationToken).ConfigureAwait(false)
+                ? await tx.ExecuteAsync(ctx.Spec, state, body, ctx.CancellationToken, ctx).ConfigureAwait(false)
                 : transaction is { } isolation
                     ? await ExecuteInTransactionAsync(node, ctx, state, body, isolation).ConfigureAwait(false)
                     : await _executor.ExecuteAsync(node, ctx.Spec, state, body, null, null, ctx.CancellationToken, ctx).ConfigureAwait(false);
@@ -251,8 +251,9 @@ public sealed partial class Database : IAsyncDisposable
         });
     }
 
+    /// <summary>A context for a raw statement run as a write (<c>ExecuteSqlAsync</c>).</summary>
     private CommandContext Context(SqlText sql, CommandKind kind, CancellationToken ct, bool isWrite = false) =>
-        new(this, new CommandSpec(sql.Render(Provider.Dialect), sql.Parameters), kind, ct) { IsWrite = isWrite };
+        new(this, new CommandSpec(sql.Render(Provider.Dialect), sql.Parameters), kind, ct) { IsWrite = isWrite, RawSql = true };
 
     /// <summary>A context for a raw statement with <paramref name="intent"/>: writes go to the primary, primary reads pin it.</summary>
     private CommandContext Context(SqlText sql, CommandKind kind, CancellationToken ct, SqlIntent intent)
@@ -263,6 +264,7 @@ public sealed partial class Database : IAsyncDisposable
         {
             IsWrite = isWrite,
             ReadFrom = intent == SqlIntent.ReadPrimary ? CL.Data.Routing.ReadPreference.Primary : null,
+            RawSql = true,
         };
     }
 
@@ -294,14 +296,14 @@ public sealed partial class Database : IAsyncDisposable
         List<DataNode> created = [];
         try
         {
-            var primary = CreateNode(provider, config, NodeEndpoint.Primary(config));
+            var primary = CreateNode(name, provider, config, NodeEndpoint.Primary(config));
             if (primary.IsFailure) return primary.Error!;
             created.Add(primary.Value!);
 
             List<DataNode> replicas = [];
             foreach (var replica in config.Replicas.Where(r => r.Enabled))
             {
-                var node = CreateNode(provider, config, NodeEndpoint.Replica(config, replica));
+                var node = CreateNode(name, provider, config, NodeEndpoint.Replica(config, replica));
                 if (node.IsFailure)
                 {
                     DisposeAll(created);
@@ -498,12 +500,12 @@ public sealed partial class Database : IAsyncDisposable
         return result;
     }
 
-    private static Result<DataNode> CreateNode(DataProvider provider, DataConnectionConfig config, NodeEndpoint endpoint)
+    private static Result<DataNode> CreateNode(string database, DataProvider provider, DataConnectionConfig config, NodeEndpoint endpoint)
     {
         var connectionString = provider.BuildConnectionString(config, endpoint);
         if (connectionString.IsFailure) return connectionString.Error!;
         DbDataSource source = provider.CreateDataSource(config, endpoint, connectionString.Value!);
-        return new DataNode(endpoint, source);
+        return new DataNode(endpoint, source, provider, config, database);
     }
 
     private static void DisposeAll(List<DataNode> nodes)

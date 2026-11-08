@@ -109,7 +109,8 @@ public sealed class DataBatch
         List<RenderedSql> separate = [];
         List<string> parts = [];
         List<SqlParameterValue> parameters = [];
-        bool isWrite = false, invalidates = false, primary = false;
+        bool isWrite = false, invalidates = false, primary = false, dirtiesSession = false;
+        var tracksSessions = _db.Primary.TracksSessions;
         try
         {
             foreach (var item in _items)
@@ -127,6 +128,7 @@ public sealed class DataBatch
                     parts.Add(raw.Render(dialect, parameters.Count));
                     isWrite |= SqlClassifier.IsWrite(item.Intent, text);
                     invalidates |= SqlClassifier.Invalidates(item.Intent, text);
+                    dirtiesSession |= tracksSessions && !dirtiesSession && _db.Provider.MayChangeSession(text);
                     primary |= item.Intent == SqlIntent.ReadPrimary;
                 }
                 parameters.AddRange(separate[^1].Parameters);
@@ -142,6 +144,7 @@ public sealed class DataBatch
         {
             Operation = "batch",
             IsWrite = isWrite,
+            DirtiesSession = dirtiesSession,
             ReadFrom = primary ? CL.Data.Routing.ReadPreference.Primary : null,
         };
         var result = await _db.RunAsync(context, (Items: _items, Separate: separate, Db: _db),

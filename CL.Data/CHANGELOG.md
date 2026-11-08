@@ -14,6 +14,8 @@
 
 ### Fixed
 
+- **Packages depend on a signed CodeLogic:** published nuspecs require CodeLogic `[5.0.33-preview, 6.0.0)` (the version the libraries are built against) instead of `[5.0.0-preview, 6.0.0)`. NuGet resolved the lowest match, 5.0.28-preview, whose `CodeLogic.dll` is not strong-name signed, so projects failed with `CS0012 'Result<>' is defined in an assembly that is not referenced` unless they referenced a newer CodeLogic themselves.
+- **Advisory-lock release failures are no longer ignored:** when `RELEASE_LOCK` (or `pg_advisory_unlock`) fails or does not report the lock as released, the lock's connection is reset (MySQL) before it can be reused.
 - **Provider table hints are applied:** `[PostgresTable(Unlogged, FillFactor, Tablespace)]` and `[SqlServerTable(FileGroup, DataCompression)]` now shape `CREATE TABLE` (new `DdlGenerator.CreateTableKeyword` hook). They apply when sync creates a table; existing tables are not altered. `[SqlServerColumn(Sparse)]` and `[MySqlColumn(Charset)]` are still not applied and are marked `[Obsolete]` (set `Collation`, which implies the MySQL character set). Before, all of them were declared and documented but ignored.
 - **Compiled queries keep `WithCache()` and `ReadFrom()`:** a compiled chain's cache policy and read preference apply to every call. Before, both were dropped silently, so a compiled query was never cached and always followed the connection's read preference.
 - **`SeedAppliedEvent` is published** for every seed a `SeedRunner` applies (and forwarded to the CodeLogic event bus by `DataLibrary`). Before, it was declared and documented but never raised.
@@ -46,10 +48,12 @@
 
 ### Changed
 
+- **MySQL skips the connection reset round trip (behaviour change):** pooled MySQL connections are no longer reset by the driver on every open, which cost one full round trip per command (a lookup by key took about twice as long against a remote server). CL.Data resets a connection itself, before it returns to the pool, only when it may carry session state: raw SQL that is not one plain query, DML or DDL statement (`SET`, `CALL`, transaction control, user variables, `GET_LOCK`, temporary tables, several statements), connections handed to `WithConnectionAsync`, advisory locks that were not released cleanly, SQL rewritten by an interceptor, and commands interrupted by anything but a plain statement error. `mySql.connectionReset` (`WhenDirty`, the default; `Always`, the old behaviour; `Never`) chooses. Without the reset on open, a pooled connection dropped while idle fails on its first command: keep `mySql.connectionIdleTimeoutSeconds` (default 180) below any proxy's idle timeout. See the MySQL section of the provider docs.
 - N+1 diagnostics use a dedicated `System.Threading.Lock` for each counting window.
 
 ### Added
 
+- **Dirty-session tracking for providers:** `DataProvider.ResetsDirtySessions`, `ResetSessionAsync`, `DiscardSessionAsync` and `MayChangeSession` let a provider run its pool without a reset on every open and reset only connections that may carry session state. `SessionSqlRules` classifies raw SQL conservatively (single statement, neutral first word, no user variables, executable comments or listed words; CL.Data's numbered parameters are not taken for variables). New metrics `cl.data.session.resets` and `cl.data.session.reset_failures`.
 - **MySQL: index changes join the table's single ALTER:** `DROP INDEX` / `ADD [UNIQUE] INDEX` become clauses of the one `ALTER TABLE` per table (with the column changes), so a table copy no longer rebuilds an index that is dropped right after, and index-only changes are one in-place pass.
 - **Slow-query log includes the plan:** with `captureExplainOnSlowQuery` the captured EXPLAIN is written to the library log under the SQL (`SlowQueryWithPlan`), not only carried on `SlowQueryEvent.Plan`.
 - **Schema scripts:** `db.Schema.ScriptAsync(maps, level)` / `ScriptAsync<T>()` compares the models with the database and returns the DDL table sync would run, without running it (`SchemaScript`: per-table changes, pending items, `Statements`, `ToSql()`). Generate reviewed migration scripts from the models against a copy of production; an empty script means the database matches.

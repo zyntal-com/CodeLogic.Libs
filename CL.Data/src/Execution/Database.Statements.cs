@@ -52,7 +52,12 @@ public sealed partial class Database
         DbConnection? owned = null;
         try
         {
-            if (_transaction is { } tx) return await work(tx.Handles.Connection, tx.Handles.Transaction, ct).ConfigureAwait(false);
+            if (_transaction is { } tx)
+            {
+                // User code may change the session: the transaction resets it before its connection returns to the pool.
+                if (Primary.TracksSessions) SessionTracker.MarkDirty(tx.Handles.Connection);
+                return await work(tx.Handles.Connection, tx.Handles.Transaction, ct).ConfigureAwait(false);
+            }
             owned = await Primary.DataSource.OpenConnectionAsync(ct).ConfigureAwait(false);
             return await work(owned, null, ct).ConfigureAwait(false);
         }
@@ -62,7 +67,7 @@ public sealed partial class Database
         }
         finally
         {
-            if (owned is not null) await owned.DisposeAsync().ConfigureAwait(false);
+            if (owned is not null) await Primary.ReturnAsync(owned, dirty: true, handedToUser: true).ConfigureAwait(false);
         }
     }
 
@@ -502,6 +507,7 @@ public sealed partial class Database
             }
             catch (Exception ex)
             {
+                stream.Dirty = true;
                 throw new DataQueryException(Executor.Map(ex, ct));
             }
             yield return row;
@@ -509,16 +515,35 @@ public sealed partial class Database
     }
 
     /// <summary>An open reader and what it needs; disposing it closes the reader, the command and an owned connection.</summary>
-    private sealed class OpenStream(DbConnection? connection, DbCommand command, DbDataReader reader, int[] ordinals) : IAsyncDisposable
+    private sealed class OpenStream(DataNode node, DbConnection? connection, DbCommand command, DbDataReader reader, int[] ordinals, bool dirty)
+        : IAsyncDisposable
     {
+        // The transaction's connection when the stream runs inside one (captured before the command is disposed).
+        private readonly DbConnection? _shared = connection is null ? command.Connection : null;
+
         public DbDataReader Reader { get; } = reader;
         public int[] Ordinals { get; } = ordinals;
 
+        /// <summary>Set when reading failed half-way: the session is reset before the connection is reused.</summary>
+        public bool Dirty { get; set; } = dirty;
+
         public async ValueTask DisposeAsync()
         {
-            await Reader.DisposeAsync().ConfigureAwait(false);
-            await command.DisposeAsync().ConfigureAwait(false);
-            if (connection is not null) await connection.DisposeAsync().ConfigureAwait(false);
+            try
+            {
+                await Reader.DisposeAsync().ConfigureAwait(false);
+                await command.DisposeAsync().ConfigureAwait(false);
+            }
+            catch
+            {
+                Dirty = true;
+                throw;
+            }
+            finally
+            {
+                if (connection is not null) await node.ReturnAsync(connection, Dirty).ConfigureAwait(false);
+                else if (Dirty && node.TracksSessions && _shared is not null) SessionTracker.MarkDirty(_shared);
+            }
         }
     }
 
@@ -549,6 +574,7 @@ public sealed partial class Database
         DbCommand? command = null;
         DbDataReader? reader = null;
         var opening = false;
+        var dirty = node.TracksSessions && ctx.MayDirtySession(Provider);
         try
         {
             if (_transaction is { } tx)
@@ -565,14 +591,17 @@ public sealed partial class Database
             }
             _executor.Prepare(command, ctx.Spec);
             reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
-            return new OpenStream(owned, command, reader, RowReader.Ordinals(reader, map, NamingPolicy));
+            return new OpenStream(node, owned, command, reader, RowReader.Ordinals(reader, map, NamingPolicy), dirty);
         }
         catch (Exception ex)
         {
+            var error = _executor.Fail(ctx, ex, opening, ct);
+            if (node.TracksSessions && !opening && !CommandExecutor.IsStatementError(error)) dirty = true;
             if (reader is not null) await reader.DisposeAsync().ConfigureAwait(false);
             if (command is not null) await command.DisposeAsync().ConfigureAwait(false);
-            if (owned is not null) await owned.DisposeAsync().ConfigureAwait(false);
-            return _executor.Fail(ctx, ex, opening, ct);
+            if (owned is not null) await node.ReturnAsync(owned, dirty).ConfigureAwait(false);
+            else if (dirty && _transaction is { } tx) SessionTracker.MarkDirty(tx.Handles.Connection);
+            return error;
         }
     }
 
@@ -589,7 +618,8 @@ public sealed partial class Database
             return Executor.Fail(ctx, ex, opening: true, ctx.CancellationToken);
         }
 
-        await using (connection.ConfigureAwait(false))
+        var dirty = false;
+        try
         {
             DbTransaction transaction;
             try
@@ -598,6 +628,7 @@ public sealed partial class Database
             }
             catch (Exception ex)
             {
+                dirty = true;
                 return Executor.Map(ex, ctx.CancellationToken);
             }
 
@@ -612,12 +643,17 @@ public sealed partial class Database
                 catch (Exception ex)
                 {
                     // A failed commit leaves the outcome unknown: report it, but never retry it.
+                    dirty = true;
                     var error = Executor.Map(ex, ctx.CancellationToken);
                     ctx.FailedTransient = false;
                     return error;
                 }
                 return result;
             }
+        }
+        finally
+        {
+            await node.ReturnAsync(connection, dirty).ConfigureAwait(false);
         }
     }
 }

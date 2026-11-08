@@ -25,10 +25,36 @@ size themselves to stay under the limit.
 ```json
 { "provider": "mysql", "host": "db1", "database": "app", "username": "app", "password": "secret",
   "failoverHosts": ["db1b"],
-  "mySql": { "allowLoadLocalInfile": true, "characterSet": "utf8mb4", "collation": "utf8mb4_0900_ai_ci", "defaultEngine": "InnoDB" } }
+  "mySql": { "allowLoadLocalInfile": true, "characterSet": "utf8mb4", "collation": "utf8mb4_0900_ai_ci", "defaultEngine": "InnoDB",
+             "connectionReset": "WhenDirty", "connectionIdleTimeoutSeconds": 180 } }
 ```
 
 - **Failover:** `failoverHosts` turns on MySqlConnector's failover load balancing for the primary.
+- **Connection reset:** MySqlConnector normally resets every pooled connection when it is opened, which costs one full
+  round trip on every command (it roughly doubles the latency of a lookup by key). With `connectionReset: "WhenDirty"`
+  (the default), the pool skips that reset and CL.Data resets a connection itself, before it returns to the pool, only
+  when the connection may carry session state:
+  - raw SQL (`SqlQueryAsync`, `ExecuteSqlAsync`, `DataBatch.Sql`, migrations) that is not one plain `SELECT`, `WITH`,
+    `SHOW`, `INSERT`, `REPLACE`, `UPDATE`, `DELETE` or DDL statement: `SET`, `CALL`, `DO`, `START TRANSACTION`, `LOCK TABLES`,
+    `USE`, `PREPARE`, user variables (`@v`), `GET_LOCK`, temporary tables, executable comments (`/*! */`) or several
+    statements;
+  - every connection handed to `WithConnectionAsync`;
+  - an advisory lock that was not released cleanly, and SQL changed by an interceptor (checked by the same rules);
+  - a command, stream, bulk copy or commit interrupted by anything but a plain statement error (a duplicate key or
+    constraint violation does not count).
+
+  The reset (`COM_RESET_CONNECTION`) drops user variables, session settings, temporary tables, locks, prepared statements
+  and open transactions at once, so nothing lingers while the connection idles. CL.Data then restores the character set
+  and the database. `connectionReset: "Always"` keeps the driver's reset on every open (the behaviour of earlier 5.0 previews), and
+  `"Never"` turns resets off completely; only use it when nothing ever changes session state. The option overrides a
+  `ConnectionReset` key in `connectionString`. The `cl.data.session.resets` metric counts CL.Data's resets.
+  - **Limit:** a stored function that changes session state from inside a plain `SELECT` can't be seen. Use `Always` if
+    you have such functions.
+  - **Dead connections:** without the reset on open, nothing checks a pooled connection before it is reused. A connection
+    that a proxy, load balancer or server dropped while idle fails on its first command. Reads are retried
+    (`retryCount`); a write reports `data.unavailable`. Keep `connectionIdleTimeoutSeconds` (default 180) below the idle
+    timeout of anything between the application and the server, or use `Always` behind a proxy that kills idle
+    connections early.
 - **Storage:** GUIDs are stored as `BINARY(16)`, and dates are UTC. `[MySqlTable]` sets the engine, charset, collation and row format per table; `[MySqlColumn]` sets the collation (which implies the character set) per column. `[MySqlColumn(Charset)]` is not applied yet.
 - **Bulk copy** needs `allowLoadLocalInfile` and the server's `local_infile`. When either is off, CL.Data batches multi-row inserts instead, and it remembers when the server refuses.
 - **Lag probe:** it needs the `REPLICATION CLIENT` privilege. Without it, the lag is unknown and the replica counts as usable.

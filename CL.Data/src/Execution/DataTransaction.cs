@@ -20,6 +20,7 @@ public sealed class DataTransaction : IAsyncDisposable
     private readonly IReadOnlyList<string> _teardown;
     private List<string>? _deferredInvalidations;
     private bool _completed;
+    private bool _dirty;
 
     private DataTransaction(Database owner, DbConnection connection, DbTransaction transaction, IReadOnlyList<string> teardown)
     {
@@ -54,6 +55,8 @@ public sealed class DataTransaction : IAsyncDisposable
         try
         {
             connection = await owner.Primary.DataSource.OpenConnectionAsync(ct).ConfigureAwait(false);
+            // Session setup changes the session on purpose; reset it before the connection returns to the pool.
+            if (setup is { Count: > 0 }) SessionTracker.MarkDirty(connection);
             foreach (var statement in setup ?? [])
             {
                 var command = connection.CreateCommand();
@@ -68,7 +71,7 @@ public sealed class DataTransaction : IAsyncDisposable
         }
         catch (Exception ex)
         {
-            if (connection is not null) await connection.DisposeAsync().ConfigureAwait(false);
+            if (connection is not null) await owner.Primary.ReturnAsync(connection, dirty: true).ConfigureAwait(false);
             return owner.Executor.Map(ex, ct);
         }
     }
@@ -86,6 +89,7 @@ public sealed class DataTransaction : IAsyncDisposable
         }
         catch (Exception ex)
         {
+            _dirty = true;   // the outcome is unknown: reset the session before it is reused
             return _owner.Executor.Map(ex, ct);
         }
     }
@@ -105,6 +109,7 @@ public sealed class DataTransaction : IAsyncDisposable
         }
         catch (Exception ex)
         {
+            _dirty = true;
             return _owner.Executor.Map(ex, ct);
         }
     }
@@ -157,11 +162,12 @@ public sealed class DataTransaction : IAsyncDisposable
 
     /// <summary>Runs a command on the transaction's connection.</summary>
     internal ValueTask<Result<TResult>> ExecuteAsync<TState, TResult>(CommandSpec spec, TState state,
-        Func<DbCommand, TState, CancellationToken, ValueTask<TResult>> body, CancellationToken ct)
+        Func<DbCommand, TState, CancellationToken, ValueTask<TResult>> body, CancellationToken ct,
+        CL.Data.Pipeline.CommandContext? context = null)
     {
         if (_completed)
             return ValueTask.FromResult<Result<TResult>>(DataErrors.Validation("The transaction is already completed."));
-        return _owner.Executor.ExecuteAsync(_owner.Primary, spec, state, body, _connection, _transaction, ct);
+        return _owner.Executor.ExecuteAsync(_owner.Primary, spec, state, body, _connection, _transaction, ct, context);
     }
 
     /// <summary>The connection and transaction, for streaming inside the transaction.</summary>
@@ -173,7 +179,7 @@ public sealed class DataTransaction : IAsyncDisposable
         if (!_completed)
         {
             try { await _transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false); }
-            catch { /* the connection may already be broken; disposing it ends the transaction */ }
+            catch { _dirty = true; /* the connection may already be broken; a reset (or disposing it) ends the transaction */ }
             _completed = true;
         }
         await _transaction.DisposeAsync().ConfigureAwait(false);
@@ -186,8 +192,8 @@ public sealed class DataTransaction : IAsyncDisposable
                 command.CommandText = statement;
                 await command.ExecuteNonQueryAsync(CancellationToken.None).ConfigureAwait(false);
             }
-            catch { /* a broken connection is discarded by the pool anyway */ }
+            catch { _dirty = true; /* a broken connection is discarded by the pool anyway */ }
         }
-        await _connection.DisposeAsync().ConfigureAwait(false);
+        await _owner.Primary.ReturnAsync(_connection, _dirty).ConfigureAwait(false);
     }
 }
