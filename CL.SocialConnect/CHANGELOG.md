@@ -16,6 +16,17 @@ All notable changes to **CodeLogic.SocialConnect** are documented here. Versions
   4.9.x. CodeLogic 5 makes `Result<T>` / `Result` C# 15 unions and `Error` a closed record with
   kind subtypes (`NotFoundError`, `ValidationError`, ...). Results can now be matched
   exhaustively with `switch`.
+- **The `SocialError` enum is removed; error codes are `SocialConnectErrorCodes` constants.** The codes keep their
+  values (`social.discord.*`, `social.steam.*`), and messages no longer start with the enum name in brackets.
+
+  | Old | New |
+  |---|---|
+  | `SocialError` enum | `SocialConnectErrorCodes` string constants, matched against `Error.Code` |
+  | `"[WebhookDeliveryFailed] HTTP 400"` | `"Webhook delivery failed: HTTP 400"` (`social.discord.delivery_failed`) |
+  | `"[Timeout] ..."`, `"[NetworkError] ..."`, `"[AuthenticationFailed] ..."`, `"[UserNotFound] ..."`, `"[SerializationError] ..."`, `"[ConfigurationError] ..."` | the same message without the bracketed prefix; also in the failure text of `WebhookSentEvent`, `SteamAuthenticatedEvent` and `SteamOpenIdVerifiedEvent` |
+  | `"social.discord.no_url"`, `"social.steam.timeout"`, ... (string literals) | `SocialConnectErrorCodes.DiscordNoUrl`, `SocialConnectErrorCodes.SteamTimeout`, ... (same values) |
+
+  Code that parsed the `[Name]` prefix out of `Error.Message` must switch on `Error.Code` (or the `Error` kind).
 - `Auth.AuthenticateAsync` returns `Result<SteamTicketIdentity>` instead of `Result<SteamAuthResult>`.
   The mutable `SteamAuthResult` class (with `IsAuthenticated`, `ErrorDescription` and `0`/`1` ints for
   bans) is gone: the immutable `SteamTicketIdentity(SteamId, OwnerSteamId, AppId, VacBanned, PublisherBanned)`

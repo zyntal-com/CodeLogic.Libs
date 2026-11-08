@@ -17,6 +17,8 @@ dotnet add package CodeLogic.SocialConnect
 
 ```csharp
 using CL.SocialConnect;
+using CL.SocialConnect.Models;   // SteamPlayer, SocialConnectErrorCodes, ...
+using CodeLogic.Core.Results;
 
 await Libraries.LoadAsync<SocialConnectLibrary>();
 await CodeLogic.ConfigureAsync();
@@ -33,8 +35,14 @@ if (sent.IsFailure)
 if (social.HasSteam)
 {
     Result<SteamPlayer> player = await social.Steam.GetPlayerAsync("76561198012345678");
-    if (player is SteamPlayer p)
-        Console.WriteLine($"{p.PersonaName} — {p.ProfileUrl}");
+    Console.WriteLine(player switch
+    {
+        SteamPlayer p   => $"{p.PersonaName} — {p.ProfileUrl}",
+        NotFoundError   => "No such player",                       // social.steam.player_not_found
+        TimeoutError    => "Steam did not answer in time",         // social.steam.timeout
+        Error e         => $"Steam lookup failed: {e.Code}",       // a SocialConnectErrorCodes constant
+        null            => "No result",
+    });
 }
 
 // Steam — "Sign in through Steam" on a website (OpenID 2.0; returns the Steam ID)
@@ -71,6 +79,7 @@ Accessing a disabled service throws `InvalidOperationException`. Guard with `Has
 - **Steam authentication** — `Auth.AuthenticateAsync` validates a session ticket (per-call `appId` override) and returns `Result<SteamTicketIdentity>`; a rejected ticket is an `UnauthorizedError`.
 - **Steam sign-in** — `OpenId.BuildLoginUrl` / `OpenId.VerifyAsync` implement "Sign in through Steam" (OpenID 2.0): local checks of the signed assertion (endpoint, `return_to`, identity, signed fields, `response_nonce` age), a replay check against an `IOpenIdNonceStore` (`social.steam.openid_replayed`), then confirmation by Steam (`check_authentication`). `OpenIdRealm` pins `return_to` to your site; `CreateState()` gives the per-attempt state.
 - **Cancellation** — every network call takes a `CancellationToken` (last parameter); a cancelled call is an `UnavailableError` (`social.steam.cancelled` / `social.discord.cancelled`), never an exception.
+- **Stable error codes** — every failure is a CodeLogic `Error` whose `Code` is a `SocialConnectErrorCodes` constant (`social.discord.*`, `social.steam.*`); switch on the code or the `Error` kind, not on the message.
 - **Testable** — every service has a constructor taking an `HttpMessageHandler` (fakes, outbound proxies).
 - **Events** — `WebhookSentEvent`, `SteamProfileFetchedEvent`, `SteamAuthenticatedEvent`, and `SteamOpenIdVerifiedEvent` on the CodeLogic event bus.
 

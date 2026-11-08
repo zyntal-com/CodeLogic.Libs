@@ -135,7 +135,7 @@ public sealed class SteamProfileServiceTests
         foreach (var error in new[] { player.Error, bans.Error, games.Error })
         {
             Assert.IsType<UnavailableError>(error);
-            Assert.Equal("social.steam.cancelled", error!.Code);
+            Assert.Equal(SocialConnectErrorCodes.SteamCancelled, error!.Code);
         }
     }
 
@@ -145,7 +145,7 @@ public sealed class SteamProfileServiceTests
         using var service = Service(new FakeSteam(_ => throw new TaskCanceledException("timed out", new TimeoutException())));
         var r = await service.GetPlayerAsync(Id(0));
         Assert.IsType<TimeoutError>(r.Error);
-        Assert.Equal("social.steam.timeout", r.Error!.Code);
+        Assert.Equal(SocialConnectErrorCodes.SteamTimeout, r.Error!.Code);
     }
 
     [Fact]
