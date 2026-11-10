@@ -9,6 +9,8 @@
 
 ### Changed
 
+- `System.Security.Cryptography.Pkcs` 11.0.0 (the released version; the previews used RC3).
+
 - `Encrypt` and `TrustServerCertificate` written in a connection string are no longer overridden by the `SqlServer` option defaults. An explicit `sslMode` still applies.
 
 ### Fixed
