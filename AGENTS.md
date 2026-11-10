@@ -20,7 +20,9 @@ you are working on before changing anything.
 | 5.x | .NET 11, C# 15 | `main` | `prerelease/5.x` | `release/5.x` | `5.0` | `[<CodeLogicPackageVersion>, 6.0.0)` (the pinned build version as the floor) |
 | 4.x | .NET 10, C# 13 | `support/4.x` | `prerelease/4.x` | `release/4.x` | `4.9` | `[4.9.0, 5.0.0)` |
 
-> **Current state (2026-11-01):** `main` is the 5.x line (net11, CodeLogic 5 `Result`/`Error`). CL.Data, the
+> **Current state (2026-11-10):** `main` is the 5.x line (net11, CodeLogic 5 `Result`/`Error`). .NET 11.0.0 was
+> released on 2026-11-10: `global.json` pins SDK `11.0.100` (prerelease SDKs not accepted) and the `Microsoft.*` /
+> `System.*` packages are the released `11.0.0` versions. CL.Data, the
 > redesigned database framework, is on `main` (PR #37). The 5.x libraries are published as previews
 > (`CodeLogic.Data`, `CodeLogic.Common`, `CodeLogic.Storage` and the rest at `5.0.115-preview` and later) and
 > build against CodeLogic `5.0.35-preview` (`CodeLogicPackageVersion` in `Directory.Build.props`). Published
