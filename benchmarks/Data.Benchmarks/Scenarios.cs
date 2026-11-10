@@ -195,3 +195,64 @@ public class PostgreSqlBenchmarks
     [Benchmark, BenchmarkCategory("PgGetById")]
     public async Task<BenchItem?> CLData_GetById() => (await _db.Repository<BenchItem>().GetByIdAsync(_id)).Value;
 }
+
+/// <summary>
+/// SQLite on a local file: no network, so a call costs microseconds and CL.Data's own work (and what it does when a pooled
+/// connection is opened) is most of it. Raw ADO.NET with the same pooled connection string is the floor.
+/// </summary>
+[CategoriesColumn]
+public class SqliteBenchmarks
+{
+    private string _path = null!;
+    private string _cs = null!;
+    private Database _db = null!;
+    private long _id;
+
+    [GlobalSetup]
+    public async Task Setup()
+    {
+        _path = Path.Combine(Path.GetTempPath(), $"cl-data-bench-{Guid.NewGuid():N}.db");
+        _db = Database.Create("bench-sqlite", CL.Data.Sqlite.SqliteDataProvider.Instance, new DataConnectionConfig { Provider = "sqlite", Database = _path })
+            .ValueOrThrow();
+        _cs = _db.Primary.DataSource.ConnectionString;
+        var ids = await BenchSeed.SeedAsync(_db);
+        _id = ids[500];
+    }
+
+    [GlobalCleanup]
+    public async Task Cleanup()
+    {
+        await _db.DisposeAsync();
+        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+        foreach (var file in new[] { _path, _path + "-wal", _path + "-shm" })
+            if (File.Exists(file)) File.Delete(file);
+    }
+
+    [Benchmark(Baseline = true), BenchmarkCategory("SqliteGetById")]
+    public async Task<BenchItem?> Ado_GetById()
+    {
+        await using var c = new Microsoft.Data.Sqlite.SqliteConnection(_cs);
+        await c.OpenAsync();
+        await using var cmd = c.CreateCommand();
+        cmd.CommandText = "SELECT \"Id\", \"Sku\", \"Name\", \"Price\", \"Stock\", \"CreatedAt\" FROM \"bench_items\" WHERE \"Id\" = @id";
+        cmd.Parameters.AddWithValue("@id", _id);
+        await using var r = await cmd.ExecuteReaderAsync();
+        return await r.ReadAsync()
+            ? new BenchItem { Id = r.GetInt64(0), Sku = r.GetString(1), Name = r.GetString(2), Price = r.GetDecimal(3), Stock = r.GetInt32(4), CreatedAt = r.GetDateTime(5) }
+            : null;
+    }
+
+    [Benchmark, BenchmarkCategory("SqliteGetById")]
+    public async Task<BenchItem?> CLData_GetById() => (await _db.Repository<BenchItem>().GetByIdAsync(_id)).Value;
+
+    [Benchmark, BenchmarkCategory("SqliteGetById")]
+    public async Task<int> CLData_Filter100()
+    {
+        var min = 10m;
+        return (await _db.Query<BenchItem>().Where(i => i.Price > min).OrderBy(i => i.Id).Take(100).ToListAsync()).Value!.Count;
+    }
+
+    [Benchmark, BenchmarkCategory("SqliteGetById")]
+    public async Task<long> CLData_Insert() =>
+        (await _db.Repository<BenchItem>().InsertAsync(new BenchItem { Sku = "N-1", Name = "new", Price = 1, Stock = 1, CreatedAt = DateTime.UtcNow })).Value!.Id;
+}

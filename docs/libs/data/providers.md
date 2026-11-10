@@ -78,11 +78,14 @@ await db.MySql.AnalyzeTableAsync<Product>();
   with the next command), which is extra server work on every command. With `connectionReset: "WhenDirty"` (the default)
   that reset is skipped and CL.Data resets a connection only when it may carry session state: raw SQL that is not one plain
   query, DML or DDL statement (`SET`, `RESET`, `BEGIN`, `LOCK`, `LISTEN`, `PREPARE`, `DO`, `CALL`, `set_config`, advisory
-  locks, temporary tables, several statements), connections handed to `WithConnectionAsync`, locks not released cleanly
-  and interrupted commands. The reset rolls back an open transaction and runs the statements Npgsql uses when it has
+  locks, temporary tables and anything in `pg_temp`, several statements), connections handed to `WithConnectionAsync`,
+  locks not released cleanly and interrupted commands. The reset rolls back an open transaction and runs the statements Npgsql uses when it has
   prepared statements, so auto-prepared statements stay valid. `"Always"` keeps Npgsql's reset; `"Never"` turns resets off.
   The option overrides `No Reset On Close` in `connectionString` and is ignored with `multiplexing`. A lookup by key took
   594 µs with the reset and 543 µs without it, against PostgreSQL 18 in Docker Desktop.
+  - **Limits:** a function that changes session state from inside a plain `SELECT` (it calls `set_config` or takes a
+    session advisory lock itself) can't be seen, and a statement prepared by name with raw `PREPARE` stays prepared on its
+    connection (the reset keeps prepared statements; `DEALLOCATE` it yourself). Use `Always` if you rely on either.
 
 - **Failover:** `failoverHosts` maps to Npgsql multi-host with `TargetSessionAttributes=primary`.
 - **Tables** are qualified with `defaultSchema` unless `[Table(Schema = ...)]` says otherwise.
@@ -126,7 +129,7 @@ await db.SqlServer.UpdateStatisticsAsync<Product>(fullScan: true);
   "sqlite": { "journalMode": "Wal", "synchronous": "Normal", "busyTimeoutMs": 5000, "foreignKeys": true, "createFile": true } }
 ```
 
-- **Connections:** PRAGMAs are applied to every pooled connection. `:memory:` databases use a shared cache, so every connection sees the same data.
+- **Connections:** the PRAGMAs (`foreign_keys`, `synchronous`, `busy_timeout`) are applied once to every pooled native connection, not on every open, which saves about 3 µs and 1 KB per command. A connection that may have changed them gets them again at its next open: after a raw `PRAGMA` (or any raw SQL that is not one plain query, DML or DDL statement), after `WithConnectionAsync`, after a schema sync and after an interrupted command. Read a pragma with `SELECT * FROM pragma_foreign_keys`. With `pooling: false` every open applies them. `:memory:` databases use a shared cache, so every connection sees the same data.
 - **Storage:** decimals have NUMERIC affinity, dates are UTC ISO-8601 text, and GUIDs are 16-byte BLOBs.
 - **Emulated behaviour:**
   - Row locks are emulated with `BEGIN IMMEDIATE`.

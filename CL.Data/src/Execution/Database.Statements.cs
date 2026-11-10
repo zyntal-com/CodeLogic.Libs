@@ -26,7 +26,7 @@ public sealed partial class Database
         Dialect = Provider.Dialect,
         Capabilities = Provider.Capabilities,
         Policy = NamingPolicy,
-        DefaultSchema = Provider.GetDefaultSchema(Config),
+        DefaultSchema = DefaultSchema,
         MaxBatchSize = Config.MaxBatchSize,
         Time = Options.Time,
         User = CurrentUser,
@@ -180,13 +180,22 @@ public sealed partial class Database
         var rendered = Render(statement);
         if (rendered.IsFailure) return rendered.Error!;
         return await QuerySpecAsync(new CommandSpec(rendered.Value!.Text, rendered.Value.Parameters), statement is not SelectStatement,
-            accessor, table, tags, ct, cache, statement).ConfigureAwait(false);
+            accessor, table, tags, ct, cache, statement, SelectsColumnsInOrder(statement, accessor?.Map)).ConfigureAwait(false);
     }
+
+    /// <summary>
+    /// True when <paramref name="statement"/> selects exactly the columns of <paramref name="map"/>, in mapping order: its
+    /// projection is the entity's shared whole-entity projection (<see cref="EntityNames.Projection"/>), which every read
+    /// planner uses unless columns were excluded. Rows of such a result are read by position, without column names.
+    /// </summary>
+    internal bool SelectsColumnsInOrder(SqlStatement statement, EntityMap? map) =>
+        map is not null && statement is SelectStatement select
+        && ReferenceEquals(select.Projection, map.GetNames(NamingPolicy).Projection(select.From.Alias));
 
     /// <summary>Runs a pre-rendered query and materializes every row (compiled queries).</summary>
     [System.Runtime.CompilerServices.AsyncMethodBuilder(typeof(System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder<>))]
     internal async ValueTask<Result<List<T>>> QuerySpecAsync<T>(CommandSpec spec, bool isWrite, IEntityAccessor<T>? accessor, string? table,
-        IReadOnlyList<string> tags, CancellationToken ct, CachePolicy? cache = null, SqlStatement? tablesFrom = null)
+        IReadOnlyList<string> tags, CancellationToken ct, CachePolicy? cache = null, SqlStatement? tablesFrom = null, bool columnOrder = false)
     {
         var context = new CommandContext(this, spec, CommandKind.Query, ct)
         {
@@ -195,8 +204,11 @@ public sealed partial class Database
             Tags = tags,
             IsWrite = isWrite,
         };
-        var result = await ReadAsync(context, isWrite ? null : cache, tablesFrom, table, (Accessor: accessor, Policy: NamingPolicy),
-            static (reader, state, token) => RowReader.ReadAllAsync(reader, state.Accessor, state.Policy, token),
+        // An interceptor may replace the SQL while the command runs; the column order is only trusted when none did.
+        var result = await ReadAsync(context, isWrite ? null : cache, tablesFrom, table,
+            (Accessor: accessor, Policy: NamingPolicy, Context: columnOrder ? context : null),
+            static (reader, state, token) => RowReader.ReadAllAsync(reader, state.Accessor, state.Policy, token,
+                state.Context is { SqlRewritten: false }),
             static list => list.Count).ConfigureAwait(false);
         if (isWrite) InvalidateCache(tags);
         return result;
@@ -212,8 +224,10 @@ public sealed partial class Database
             Table = table,
             Tags = tags,
         };
-        return ReadAsync(context, cache, null, table, (Accessor: accessor, Policy: NamingPolicy),
-            static (reader, state, token) => RowReader.ReadFirstAsync(reader, state.Accessor, state.Policy, token),
+        // A key lookup's SQL selects every mapped column in order (KeyLookupPlan), unless an interceptor replaces it.
+        return ReadAsync(context, cache, null, table, (Accessor: accessor, Policy: NamingPolicy, Context: context),
+            static (reader, state, token) => RowReader.ReadFirstAsync(reader, state.Accessor, state.Policy, token,
+                !state.Context.SqlRewritten),
             static row => row is null ? 0 : 1);
     }
 
@@ -298,7 +312,33 @@ public sealed partial class Database
                 }, rows).ConfigureAwait(false);
         }
 
-        var loaded = await store.GetOrLoadAsync(CacheKey(context), cache, async token =>
+        // A hit on an ordinary policy needs neither the loader nor its closure (which is why the miss path is a method of
+        // its own): look the result up first.
+        var key = CacheKey(context);
+        var plain = cache.Refresh is null && cache.InvalidateOnWrite;
+        object? cached;
+        if (plain && store.TryGetPlain(key, out cached))
+        {
+            if (store.Config.PublishEvents)
+                Publish(new CL.Data.Events.CacheHitEvent(Name, Provider.Name, Options.Time.GetUtcNow(), context.Table));
+        }
+        else
+        {
+            var loaded = await LoadCachedAsync(store, key, context, cache, tablesFrom, table, lookedUp: plain).ConfigureAwait(false);
+            if (loaded.IsFailure) return loaded.Error!;
+            cached = loaded.Value;
+        }
+
+        var replay = ((BufferedResultSet)cached!).CreateReader();
+        await using var replayLifetime = replay.ConfigureAwait(false);
+        return Result<TResult>.Success(await read(replay, state, context.CancellationToken).ConfigureAwait(false));
+    }
+
+    /// <summary>The buffered result of <paramref name="context"/> from the cache, loading (and storing) it on a miss.</summary>
+    private ValueTask<Result<object>> LoadCachedAsync(DataCache store, UInt128 key, CommandContext context, CachePolicy cache,
+        SqlStatement? tablesFrom, string? table, bool lookedUp)
+    {
+        return store.GetOrLoadAsync(key, cache, async token =>
         {
             // Background refreshes run later with their own token; the caller's request may be long gone.
             var run = token == context.CancellationToken ? context : context.Renew(token);
@@ -314,26 +354,42 @@ public sealed partial class Database
             return Result<(object, long, IReadOnlyList<string>)>.Success((buffered.Value!, buffered.Value!.Size, CacheTags(tables, context)));
         }, context.CancellationToken, store.Config.PublishEvents ? hit => Publish(hit
             ? new CL.Data.Events.CacheHitEvent(Name, Provider.Name, Options.Time.GetUtcNow(), context.Table)
-            : new CL.Data.Events.CacheMissEvent(Name, Provider.Name, Options.Time.GetUtcNow(), context.Table)) : null).ConfigureAwait(false);
-        if (loaded.IsFailure) return loaded.Error!;
-
-        var replay = ((BufferedResultSet)loaded.Value!).CreateReader();
-        await using var replayLifetime = replay.ConfigureAwait(false);
-        return Result<TResult>.Success(await read(replay, state, context.CancellationToken).ConfigureAwait(false));
+            : new CL.Data.Events.CacheMissEvent(Name, Provider.Name, Options.Time.GetUtcNow(), context.Table)) : null, lookedUp);
     }
 
     /// <summary>The cache key of a command: connection, kind, SQL and parameter values.</summary>
     private UInt128 CacheKey(CommandContext context)
     {
-        var sb = new System.Text.StringBuilder(context.Spec.Sql.Length + 64);
+        // One builder per thread is reused (the key is built synchronously), and its characters are hashed in place.
+        var sb = _keyBuilder ?? new System.Text.StringBuilder(512);
+        _keyBuilder = null;
         sb.Append(Name).Append('\u0001').Append((int)context.Kind).Append('\u0001').Append(context.Spec.Sql);
-        foreach (var parameter in context.Spec.Parameters)
+        var parameters = context.Spec.Parameters;
+        for (var i = 0; i < parameters.Count; i++)
         {
             sb.Append('\u0001');
-            AppendKeyValue(sb, parameter.BoxedValue, 0);
+            AppendKeyValue(sb, parameters[i].BoxedValue, 0);
         }
-        return CL.Common.Hashing.FastHash.XxHash128(sb.ToString().AsSpan());
+
+        ReadOnlyMemory<char> only = default;
+        var chunks = 0;
+        foreach (var chunk in sb.GetChunks())
+        {
+            only = chunk;
+            chunks++;
+        }
+        var key = chunks == 1
+            ? CL.Common.Hashing.FastHash.XxHash128(only.Span)
+            : CL.Common.Hashing.FastHash.XxHash128(sb.ToString().AsSpan());   // grown past its first chunk: one chunk again after Clear
+        if (sb.Capacity <= 32 * 1024)
+        {
+            sb.Clear();
+            _keyBuilder = sb;
+        }
+        return key;
     }
+
+    [ThreadStatic] private static System.Text.StringBuilder? _keyBuilder;
 
     /// <summary>
     /// Writes <paramref name="value"/> into a cache key. Arrays and other sequences (PostgreSQL <c>= ANY(@p)</c>, table-valued
@@ -346,8 +402,10 @@ public sealed partial class Database
             case null or DBNull: sb.Append('\u0002'); break;
             case byte[] bytes: sb.Append("b:").Append(Convert.ToBase64String(bytes)); break;
             case string text: sb.Append("s:").Append(text.Length).Append(':').Append(text); break;
-            case DateTimeOffset dto: sb.Append("o:").Append(dto.ToString("O", System.Globalization.CultureInfo.InvariantCulture)); break;
-            case DateTime dt: sb.Append("d:").Append(dt.ToString("O", System.Globalization.CultureInfo.InvariantCulture)); break;
+            case DateTimeOffset dto: sb.Append("o:").Append(System.Globalization.CultureInfo.InvariantCulture, $"{dto:O}"); break;
+            case DateTime dt: sb.Append("d:").Append(System.Globalization.CultureInfo.InvariantCulture, $"{dt:O}"); break;
+            // Numbers, GUIDs and the like format straight into the builder.
+            case ISpanFormattable f: sb.Append(value.GetType().Name).Append(':').Append(System.Globalization.CultureInfo.InvariantCulture, $"{f}"); break;
             case IFormattable f: sb.Append(value.GetType().Name).Append(':').Append(f.ToString(null, System.Globalization.CultureInfo.InvariantCulture)); break;
             case System.Collections.IEnumerable items when depth < 4:
                 sb.Append(value.GetType().Name).Append('[');
@@ -387,8 +445,16 @@ public sealed partial class Database
         if (Options.Cache is null || tags.Count == 0) return;
         var prefixed = new string[tags.Count];
         for (var i = 0; i < tags.Count; i++) prefixed[i] = Name + "|" + tags[i];
-        if (_transaction is { } transaction) transaction.DeferInvalidation(prefixed);
-        else Options.Cache.Invalidate(prefixed);
+        if (_transaction is not { } transaction)
+        {
+            Options.Cache.Invalidate(prefixed);
+            return;
+        }
+        // Whether a write names its rows is decided per write, here: at commit the tags of all the transaction's writes are
+        // invalidated together, and a row named by one write must not keep the key lookups a set-based write of the same
+        // table has to drop.
+        transaction.DeferInvalidation(prefixed);
+        transaction.DeferInvalidation(DataCache.WholeTableEntityTags(prefixed));
     }
 
     /// <summary>
@@ -396,6 +462,7 @@ public sealed partial class Database
     /// last-insert-id) are written back to <paramref name="entities"/>; row checks turn a missing row into
     /// <c>data.concurrency</c> or <c>data.not_found</c>; success hooks run after each statement succeeds.
     /// </summary>
+    [System.Runtime.CompilerServices.AsyncMethodBuilder(typeof(System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder<>))]
     internal async ValueTask<Result<int>> ExecuteWritesAsync<T>(IReadOnlyList<WriteCommand> commands, IReadOnlyList<T> entities,
         IEntityAccessor<T> accessor, CancellationToken ct)
     {
@@ -412,18 +479,26 @@ public sealed partial class Database
         }
     }
 
-    private static List<string> WriteTags<T>(IReadOnlyList<WriteCommand> commands, IReadOnlyList<T> entities, IEntityAccessor<T> accessor)
+    private const int MaxNamedInsertRows = 64;
+
+    private static IReadOnlyList<string> WriteTags<T>(IReadOnlyList<WriteCommand> commands, IReadOnlyList<T> entities, IEntityAccessor<T> accessor)
     {
+        // The usual write is one command with its own tags and no inserted rows to name.
+        if (commands.Count == 1 && commands[0].Kind != WriteKind.Insert) return commands[0].Tags;
+
         HashSet<string> tags = [];
+        string? named = null;   // the table whose inserted rows are already named (every insert command covers all entities)
         foreach (var command in commands)
         {
             foreach (var tag in command.Tags) tags.Add(tag);
-            if (command.Kind != WriteKind.Insert) continue;
-            List<string> keys = [];
+            // A large insert drops the table's key lookups as a whole (the table tag alone does that) instead of one tag per row.
+            if (command.Kind != WriteKind.Insert || entities.Count > MaxNamedInsertRows || command.Table == named) continue;
+            named = command.Table;
+            List<string> keys = new(entities.Count);
             foreach (var entity in entities)
             {
                 var key = accessor.GetKey(entity);
-                if (!IsKnownKey(key)) { keys = []; break; }
+                if (!IsKnownKey(key)) { keys.Clear(); break; }
                 keys.Add(DataTags.Entity(command.Table, key));
             }
             foreach (var key in keys) tags.Add(key);
@@ -459,6 +534,7 @@ public sealed partial class Database
         }).ConfigureAwait(false);
     }
 
+    [System.Runtime.CompilerServices.AsyncMethodBuilder(typeof(System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder<>))]
     private async ValueTask<Result<int>> ExecuteWritesCoreAsync<T>(IReadOnlyList<WriteCommand> commands, IReadOnlyList<T> entities,
         IEntityAccessor<T> accessor, CancellationToken ct)
     {
@@ -470,14 +546,21 @@ public sealed partial class Database
 
             var context = new CommandContext(this, new CommandSpec(rendered.Value!.Text, rendered.Value.Parameters), CommandKind.NonQuery, ct)
             {
-                Operation = command.Kind.ToString().ToLowerInvariant(),
+                Operation = command.Kind switch
+                {
+                    WriteKind.Insert => "insert",
+                    WriteKind.Update => "update",
+                    WriteKind.Delete => "delete",
+                    WriteKind.Upsert => "upsert",
+                    _ => command.Kind.ToString().ToLowerInvariant(),
+                },
                 Table = command.Table,
                 IsWrite = true,
                 Tags = command.Tags,
             };
 
             var state = (Command: command, Entities: entities, Accessor: accessor, Provider);
-            var result = await RunAsync(context, state, static async (cmd, s, token) =>
+            var result = await RunAsync(context, state, [System.Runtime.CompilerServices.AsyncMethodBuilder(typeof(System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder<>))] static async ValueTask<int> (cmd, s, token) =>
                 {
                     var c = s.Command;
                     if (c.Check == RowCheck.Empty)
@@ -553,7 +636,7 @@ public sealed partial class Database
         {
             Operation = "select",
             Table = table,
-            Tags = table is null ? [] : [DataTags.Table(table)],
+            Tags = table is null ? [] : DataTags.TableOnly(table),
         };
 
         var opened = await OpenStreamAsync(context, accessor.Map).ConfigureAwait(false);

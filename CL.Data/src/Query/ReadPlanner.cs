@@ -35,10 +35,9 @@ internal static class ReadPlanner
         if (filters.IsFailure) return filters.Error!;
 
         var names = map.GetNames(db.NamingPolicy);
-        var table = WritePlanner.TableOf(map, names, db.WriteContext) with { Alias = alias };
-        return new SelectStatement(table)
+        return new SelectStatement(db.TableOf(map, names, alias))
         {
-            Projection = map.Columns.Select(c => new ProjectionItem(new ColumnExpr(names.Of(c), alias))).ToArray(),
+            Projection = names.Projection(alias),
             Where = And(where, filters.Value),
         };
     }

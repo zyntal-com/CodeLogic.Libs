@@ -44,7 +44,9 @@ var report = await db.Query<Order>().WithCache()
   increments and adjustments by key, and inserts (they drop a cached "not found" for their keys). Updating one customer
   keeps every other customer's lookup cached.
 - **Whole-table eviction:** a write whose rows are not known drops every lookup of the table: set-based updates and
-  deletes, upserts, bulk copy, raw SQL, and an `Invalidate` call with the table tag.
+  deletes, upserts, bulk copy, inserts of more than 64 rows, raw SQL, and an `Invalidate` call with the table tag.
+- **Transactions:** every write of a transaction is judged on its own, and all of it takes effect at commit. An update by
+  key next to a set-based update of the same table drops every lookup of that table.
 - **Query results** (`WithCache()` queries) are dropped on any write to a table they read, as before.
 
 **How results are stored:**

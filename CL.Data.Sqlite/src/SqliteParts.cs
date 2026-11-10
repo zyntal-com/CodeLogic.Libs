@@ -36,24 +36,50 @@ internal sealed class SqliteDataSource : InitializingDataSource
 
     protected override DbConnection CreateDriverConnection() => new SqliteConnection(ConnectionString);
 
-    protected override async ValueTask InitializeAsync(DbConnection connection, CancellationToken ct)
+    // The pragma batch each native connection was last given. Microsoft.Data.Sqlite keeps a pooled native connection, and
+    // with it these per-connection settings, between opens; running the batch on every open cost about 3 microseconds and
+    // 1 KB per command. It runs again for a new native connection, for one last used with other settings (two data sources
+    // can share the driver's pool) and after Forget, which the provider calls when something may have changed the settings.
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<object, string> Applied = new();
+
+    private bool IsInitialized(DbConnection connection) =>
+        ((SqliteConnection)connection).Handle is { } handle && Applied.TryGetValue(handle, out var applied)
+        && string.Equals(applied, _pragmas, StringComparison.Ordinal);
+
+    private void MarkInitialized(DbConnection connection)
+    {
+        if (((SqliteConnection)connection).Handle is { } handle) Applied.AddOrUpdate(handle, _pragmas);
+    }
+
+    /// <summary>Makes the next open of <paramref name="connection"/>'s native connection apply the pragmas again.</summary>
+    internal static void Forget(DbConnection connection)
+    {
+        if (connection is SqliteConnection { Handle: { } handle }) Applied.Remove(handle);
+    }
+
+    // journal_mode is a property of the database file; set it once per data source.
+    private string InitializationSql() =>
+        _journalPragma is not null && Interlocked.Exchange(ref _journalApplied, 1) == 0 ? _journalPragma + " " + _pragmas : _pragmas;
+
+    protected override ValueTask InitializeAsync(DbConnection connection, CancellationToken ct) =>
+        IsInitialized(connection) ? ValueTask.CompletedTask : ApplyAsync(connection, ct);
+
+    private async ValueTask ApplyAsync(DbConnection connection, CancellationToken ct)
     {
         var command = connection.CreateCommand();
         await using var commandLifetime = command.ConfigureAwait(false);
-        // journal_mode is a property of the database file; set it once per data source.
-        command.CommandText = _journalPragma is not null && Interlocked.Exchange(ref _journalApplied, 1) == 0
-            ? _journalPragma + " " + _pragmas
-            : _pragmas;
+        command.CommandText = InitializationSql();
         await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+        MarkInitialized(connection);
     }
 
     protected override void Initialize(DbConnection connection)
     {
+        if (IsInitialized(connection)) return;
         using var command = connection.CreateCommand();
-        command.CommandText = _journalPragma is not null && Interlocked.Exchange(ref _journalApplied, 1) == 0
-            ? _journalPragma + " " + _pragmas
-            : _pragmas;
+        command.CommandText = InitializationSql();
         command.ExecuteNonQuery();
+        MarkInitialized(connection);
     }
 
     protected override void Dispose(bool disposing)

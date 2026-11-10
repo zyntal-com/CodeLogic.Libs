@@ -73,6 +73,8 @@ public sealed class PostgreSqlProviderTests
     [InlineData("BEGIN", true)]
     [InlineData("LISTEN c", true)]
     [InlineData("PREPARE s AS SELECT 1", true)]
+    [InlineData("CREATE TABLE pg_temp.scratch (id int)", true)]
+    [InlineData("SELECT pg_temp_count FROM stats", false)]
     [InlineData("DO $$BEGIN END$$", true)]
     [InlineData("SELECT 1; SELECT 2", true)]
     public void Raw_sql_session_rules(string sql, bool dirty) => Assert.Equal(dirty, Provider.MayChangeSession(sql));

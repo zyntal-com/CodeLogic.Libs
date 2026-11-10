@@ -244,10 +244,45 @@ public sealed class DataCache : IDisposable
         _store.Clear();
     }
 
+    /// <summary>
+    /// The cached value for <paramref name="key"/> under an ordinary policy (no refresh, dropped on write): the hit path,
+    /// which needs no loader. After a miss, call <see cref="GetOrLoadAsync"/> with <c>lookedUp</c>.
+    /// </summary>
+    internal bool TryGetPlain(UInt128 key, out object? value)
+    {
+        if (_store.TryGet<object>(key, out var cached) && cached is not null)
+        {
+            Interlocked.Increment(ref _hits);
+            CL.Data.Telemetry.DataTelemetry.CacheHits.Add(1);
+            value = cached;
+            return true;
+        }
+        value = null;
+        return false;
+    }
+
+    /// <summary>The policy of entity-cache entries (<see cref="DataCacheConfig.EntityCacheTtlSeconds"/>), built once per setting.</summary>
+    internal CachePolicy EntityPolicy
+    {
+        get
+        {
+            var ttl = TimeSpan.FromSeconds(Config.EntityCacheTtlSeconds);
+            var policy = _entityPolicy;
+            if (policy is null || policy.Ttl != ttl) _entityPolicy = policy = CachePolicy.For(ttl);
+            return policy;
+        }
+    }
+
+    private CachePolicy? _entityPolicy;
+
     /// <summary>The cached value for <paramref name="key"/>, or the result of <paramref name="load"/> (stored when it succeeds).</summary>
-    /// <remarks><paramref name="load"/> also returns the result's tags, so they are only computed on a miss.</remarks>
+    /// <remarks>
+    /// <paramref name="load"/> also returns the result's tags, so they are only computed on a miss. <paramref name="lookedUp"/>
+    /// says the caller just missed in <see cref="TryGetPlain"/>, so the store is not asked (or counted) twice.
+    /// </remarks>
     internal async ValueTask<Result<object>> GetOrLoadAsync(UInt128 key, CachePolicy policy,
-        Func<CancellationToken, ValueTask<Result<(object Value, long Size, IReadOnlyList<string> Tags)>>> load, CancellationToken ct, Action<bool>? hit = null)
+        Func<CancellationToken, ValueTask<Result<(object Value, long Size, IReadOnlyList<string> Tags)>>> load, CancellationToken ct, Action<bool>? hit = null,
+        bool lookedUp = false)
     {
         if (policy.Refresh is not null || !policy.InvalidateOnWrite)
         {
@@ -258,7 +293,7 @@ public sealed class DataCache : IDisposable
             Interlocked.Exchange(ref warm.LastHit, Now());
         }
 
-        if (_store.TryGet<object>(key, out var cached) && cached is not null)
+        if (!lookedUp && _store.TryGet<object>(key, out var cached) && cached is not null)
         {
             Interlocked.Increment(ref _hits);
             CL.Data.Telemetry.DataTelemetry.CacheHits.Add(1);

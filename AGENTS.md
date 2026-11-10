@@ -77,6 +77,7 @@ dotnet test tests/Storage.Tests -c Release -p:CodeLogicFromNuGet=true           
     Live replica pairs: `docker compose -f tests/replicas/docker-compose.yml up -d`, then `CL_DATA_REPLICAS=1`.
     `CL_DATA_FORCE_REFLECTION=1` runs the suites without generated mapping; run both modes before a release.
     Performance budgets: `dotnet run -c Release --project benchmarks/Data.Benchmarks -- --check-budgets benchmarks/budgets.json`.
+    While optimizing: `-- --quick [name]` prints bytes and microseconds per call in seconds (`CL_BENCH_TYPES=1` adds the most allocated types).
   - **4.x database libraries:** `CL_MYSQL2_TEST_HOST/PORT/DB/USER/PASS`, `CL_PG_TEST_HOST/PORT/DB/USER/PASS`,
     `CL_MSSQL_TEST_CONNECTION_STRING` (database `cl_test` created first).
   - **Storage:** `docker compose -f tests/Storage.Integration.Tests/docker-compose.yml up -d --build`,

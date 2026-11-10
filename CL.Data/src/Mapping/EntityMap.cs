@@ -61,6 +61,29 @@ public sealed class EntityNames
 
     /// <summary>Database name of <paramref name="column"/>.</summary>
     public string Of(ColumnMap column) => Columns[column.Ordinal];
+
+    // Every mapped column as a SELECT projection, per table alias: a query of the whole entity uses these as they are
+    // (the nodes are immutable), instead of building one node pair per column on every call.
+    private CL.Data.Sql.ProjectionItem[]? _projection;
+    private System.Collections.Concurrent.ConcurrentDictionary<string, CL.Data.Sql.ProjectionItem[]>? _aliasedProjections;
+
+    /// <summary>All columns in mapping order, qualified by <paramref name="alias"/> when given.</summary>
+    internal CL.Data.Sql.ProjectionItem[] Projection(string? alias)
+    {
+        if (alias is null) return _projection ??= Build(null);
+        var aliased = _aliasedProjections ?? Interlocked.CompareExchange(ref _aliasedProjections, new(StringComparer.Ordinal), null) ?? _aliasedProjections;
+        if (aliased.TryGetValue(alias, out var cached)) return cached;
+        var built = Build(alias);
+        if (aliased.Count < 64) aliased.TryAdd(alias, built);   // aliases are few (t0, i0, t1, ...); never grow without limit
+        return built;
+
+        CL.Data.Sql.ProjectionItem[] Build(string? tableAlias)
+        {
+            var items = new CL.Data.Sql.ProjectionItem[Columns.Count];
+            for (var i = 0; i < items.Length; i++) items[i] = new(new CL.Data.Sql.ColumnExpr(Columns[i], tableAlias));
+            return items;
+        }
+    }
 }
 
 /// <summary>Input for a multi-column index declared on the class (<c>[CompositeIndex]</c>).</summary>
@@ -163,6 +186,25 @@ public sealed class EntityMap
 
     /// <summary>Provider hint attributes on the type.</summary>
     public IReadOnlyList<Attribute> TableHints { get; }
+
+    /// <summary>
+    /// Reader ordinals of a result whose columns are exactly <see cref="Columns"/>, in order (0, 1, 2, ...): what CL.Data's
+    /// own whole-entity SELECTs return. Shared and never changed.
+    /// </summary>
+    internal int[] ColumnOrderOrdinals
+    {
+        get
+        {
+            return field ??= Build(Columns.Count);
+
+            static int[] Build(int count)
+            {
+                var ordinals = new int[count];
+                for (var i = 0; i < count; i++) ordinals[i] = i;
+                return ordinals;
+            }
+        }
+    }
 
     /// <summary>Column for <paramref name="propertyName"/>, or null.</summary>
     public ColumnMap? FindProperty(string propertyName) => _byProperty.GetValueOrDefault(propertyName);
