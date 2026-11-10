@@ -220,6 +220,30 @@ public abstract class CacheConformance(ProviderFixture fixture) : ConformanceSui
     }
 
     [SkippableFact]
+    public async Task A_transaction_mixing_keyed_and_set_based_writes_drops_every_key_lookup_of_the_table()
+    {
+        RequireProvider();
+        var (db, _, _) = Cached(entityCache: true);
+        await using var __ = db;
+        var rows = await SeedAsync(db);
+        var repo = db.Repository<Product>();
+        foreach (var row in rows) (await repo.GetByIdAsync(row.Id)).ValueOrThrow();   // every key lookup is cached
+
+        // The update by key names its row; the set-based update in the same transaction does not. Its rows must not stay cached.
+        var tx = (await db.BeginTransactionAsync()).ValueOrThrow();
+        await using (tx)
+        {
+            rows[1].Name = "keyed";
+            (await tx.Repository<Product>().UpdateAsync(rows[1])).ValueOrThrow();
+            (await tx.Query<Product>().Where(p => p.Sku == "C-1").UpdateAsync(p => new Product { Name = "set1" })).ValueOrThrow();
+            (await tx.CommitAsync()).ThrowIfFailure();
+        }
+
+        Assert.Equal("set1", (await repo.GetByIdAsync(rows[0].Id)).ValueOrThrow()!.Name);
+        Assert.Equal("keyed", (await repo.GetByIdAsync(rows[1].Id)).ValueOrThrow()!.Name);
+    }
+
+    [SkippableFact]
     public async Task Concurrent_misses_run_once_and_entries_expire()
     {
         RequireProvider();

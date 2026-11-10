@@ -387,8 +387,16 @@ public sealed partial class Database
         if (Options.Cache is null || tags.Count == 0) return;
         var prefixed = new string[tags.Count];
         for (var i = 0; i < tags.Count; i++) prefixed[i] = Name + "|" + tags[i];
-        if (_transaction is { } transaction) transaction.DeferInvalidation(prefixed);
-        else Options.Cache.Invalidate(prefixed);
+        if (_transaction is not { } transaction)
+        {
+            Options.Cache.Invalidate(prefixed);
+            return;
+        }
+        // Whether a write names its rows is decided per write, here: at commit the tags of all the transaction's writes are
+        // invalidated together, and a row named by one write must not keep the key lookups a set-based write of the same
+        // table has to drop.
+        transaction.DeferInvalidation(prefixed);
+        transaction.DeferInvalidation(DataCache.WholeTableEntityTags(prefixed));
     }
 
     /// <summary>
