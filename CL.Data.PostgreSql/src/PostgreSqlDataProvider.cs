@@ -178,13 +178,13 @@ public sealed class PostgreSqlDataProvider : DataProvider
         NpgsqlDataSource.Create(connectionString);
 
     // Raw statements that leave no session state: one plain query, DML or DDL statement without advisory locks, set_config or
-    // temporary objects. Anything else (SET, RESET, DISCARD, BEGIN/START, LOCK, LISTEN, PREPARE, DECLARE, DO, CALL, COPY,
+    // temporary objects (TEMP, TEMPORARY, or anything in the pg_temp schema). Anything else (SET, RESET, DISCARD, BEGIN/START, LOCK, LISTEN, PREPARE, DECLARE, DO, CALL, COPY,
     // several statements) may change the session. '@' is an operator here (@>, <@), not a variable.
     private static readonly SessionSqlRules SessionRules = new(
         ["SELECT", "WITH", "VALUES", "TABLE", "SHOW", "EXPLAIN", "INSERT", "UPDATE", "DELETE", "MERGE",
          "CREATE", "ALTER", "DROP", "TRUNCATE", "COMMENT", "ANALYZE", "REINDEX", "CLUSTER", "GRANT", "REVOKE"],
         ["pg_advisory_lock", "pg_advisory_lock_shared", "pg_try_advisory_lock", "pg_try_advisory_lock_shared", "set_config",
-         "TEMP", "TEMPORARY"],
+         "TEMP", "TEMPORARY", "pg_temp"],
         parameterPrefix: '@', lexicon: SqlLexicon.PostgreSql, atIsVariable: false);
 
     /// <inheritdoc />
