@@ -135,6 +135,32 @@ public sealed class SqliteDataProvider : DataProvider
         new SqliteDataSource(connectionString, config.Sqlite ?? new SqliteOptions(),
             !string.IsNullOrWhiteSpace(config.Database) && IsMemory(config.Database));
 
+    // Raw statements that cannot change the connection's pragmas: one plain query, DML or DDL statement. Anything else
+    // (PRAGMA, ATTACH, several statements) may.
+    private static readonly SessionSqlRules SessionRules = new(
+        ["SELECT", "WITH", "VALUES", "EXPLAIN", "INSERT", "REPLACE", "UPDATE", "DELETE", "CREATE", "ALTER", "DROP", "ANALYZE",
+         "REINDEX", "VACUUM"],
+        [], parameterPrefix: '@', atIsVariable: false);
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// The connection pragmas (<c>foreign_keys</c>, <c>synchronous</c>, <c>busy_timeout</c>) are applied once per pooled native
+    /// connection instead of on every open; a connection that may have changed them (a raw <c>PRAGMA</c>, user code through
+    /// <c>WithConnectionAsync</c>, schema sync's foreign-key switch, an interrupted command) gets them again at its next open.
+    /// </remarks>
+    public override bool ResetsDirtySessions(DataConnectionConfig config) => config.Pooling;
+
+    /// <inheritdoc />
+    public override bool MayChangeSession(string sql) => SessionRules.MayChangeSession(sql);
+
+    /// <inheritdoc />
+    /// <remarks>Nothing is sent: the native connection is marked, and its next open applies the pragmas again.</remarks>
+    public override Task ResetSessionAsync(DbConnection connection, DataConnectionConfig config, bool handedToUser, CancellationToken ct)
+    {
+        SqliteDataSource.Forget(connection);
+        return Task.CompletedTask;
+    }
+
     /// <inheritdoc />
     public override void Validate(DataConnectionConfig config, string path, List<ConfigFieldError> errors)
     {
