@@ -45,7 +45,7 @@ size themselves to stay under the limit.
 
   The reset (`COM_RESET_CONNECTION`) drops user variables, session settings, temporary tables, locks, prepared statements
   and open transactions at once, so nothing lingers while the connection idles. CL.Data then restores the character set
-  and the database. `connectionReset: "Always"` keeps the driver's reset on every open (the behaviour of earlier 5.0 previews), and
+  and the database. `connectionReset: "Always"` keeps the driver's reset on every open (the behaviour of the first 5.0 previews), and
   `"Never"` turns resets off completely; only use it when nothing ever changes session state. The option overrides a
   `ConnectionReset` key in `connectionString`. The `cl.data.session.resets` metric counts CL.Data's resets.
   - **Limit:** a stored function that changes session state from inside a plain `SELECT` can't be seen. Use `Always` if

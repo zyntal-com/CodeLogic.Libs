@@ -1,7 +1,5 @@
 # CodeLogic.Data.SqlServer
 
-> **Status: 5.0 preview.**
-
 The SQL Server and Azure SQL provider for [CodeLogic.Data](../CL.Data/README.md), built on Microsoft.Data.SqlClient.
 
 ```bash

@@ -1,7 +1,5 @@
 # CodeLogic.Data.PostgreSql
 
-> **Status: 5.0 preview.**
-
 The PostgreSQL provider for [CodeLogic.Data](../CL.Data/README.md), built on Npgsql.
 
 ```bash
