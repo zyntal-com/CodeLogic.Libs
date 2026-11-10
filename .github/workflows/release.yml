@@ -47,7 +47,7 @@ jobs:
           # the version's +sha and the release tag must all still describe the same commit.
           ref: ${{ github.sha }}
 
-      # SDK version comes from global.json (11.0 line; prerelease allowed until GA).
+      # SDK version comes from global.json (the released .NET 11 SDK, 11.0.100 or a later 11.0 feature band).
       - name: Setup .NET 11
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
         with:

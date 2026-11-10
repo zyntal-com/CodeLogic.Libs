@@ -23,7 +23,7 @@
 | Package | Version | Description |
 |---------|---------|-------------|
 | [CodeLogic.Common](CL.Common/) | [![NuGet](https://img.shields.io/nuget/v/CodeLogic.Common?label=)](https://www.nuget.org/packages/CodeLogic.Common) | Utility toolkit — encryption, hashing, ID/password generation, JSON, cron, networking |
-| [CodeLogic.Data](CL.Data/) | [![NuGet](https://img.shields.io/nuget/v/CodeLogic.Data?label=)](https://www.nuget.org/packages/CodeLogic.Data) | Database framework (preview): typed LINQ, repositories, joins, schema sync and migrations, unified caching, read replicas, resilience, OpenTelemetry, bulk copy; providers `CodeLogic.Data.MySql`, `CodeLogic.Data.PostgreSql`, `CodeLogic.Data.SqlServer` and `CodeLogic.Data.Sqlite` |
+| [CodeLogic.Data](CL.Data/) | [![NuGet](https://img.shields.io/nuget/v/CodeLogic.Data?label=)](https://www.nuget.org/packages/CodeLogic.Data) | Database framework: typed LINQ, repositories, joins, schema sync and migrations, unified caching, read replicas, resilience, OpenTelemetry, bulk copy; providers `CodeLogic.Data.MySql`, `CodeLogic.Data.PostgreSql`, `CodeLogic.Data.SqlServer` and `CodeLogic.Data.Sqlite` |
 | [CodeLogic.Mail](CL.Mail/) | [![NuGet](https://img.shields.io/nuget/v/CodeLogic.Mail?label=)](https://www.nuget.org/packages/CodeLogic.Mail) | SMTP send, IMAP read + IDLE, and a lightweight template engine |
 | [CodeLogic.Mqtt](CL.Mqtt/) | [![NuGet](https://img.shields.io/nuget/v/CodeLogic.Mqtt?label=)](https://www.nuget.org/packages/CodeLogic.Mqtt) | MQTT clients with automatic reconnect and resubscribe, plus an embedded broker with users, topic permissions and persistent retained messages |
 | [CodeLogic.Storage](CL.Storage/) | [![NuGet](https://img.shields.io/nuget/v/CodeLogic.Storage?label=)](https://www.nuget.org/packages/CodeLogic.Storage) | Safe mounted local, S3, FTP/SFTP, WebDAV, Azure, GCS, and Swift storage, with verified and resumable transfers, a durable transfer queue, three-way sync, and change watching |
@@ -35,7 +35,7 @@
 | [CodeLogic.GitHelper](CL.GitHelper/) | [![NuGet](https://img.shields.io/nuget/v/CodeLogic.GitHelper?label=)](https://www.nuget.org/packages/CodeLogic.GitHelper) | Git repository automation via LibGit2Sharp |
 | [CodeLogic.TwoFactorAuth](CL.TwoFactorAuth/) | [![NuGet](https://img.shields.io/nuget/v/CodeLogic.TwoFactorAuth?label=)](https://www.nuget.org/packages/CodeLogic.TwoFactorAuth) | TOTP 2FA with QR-code generation |
 
-All packages target **.NET 11** and depend on **CodeLogic 5.0** (range `[5.0.35-preview, 6.0.0)` today: the floor is the CodeLogic version the libraries are built against). On .NET 10, use the 4.9.x packages (CodeLogic `[4.9.0, 5.0.0)`), maintained on the `support/4.x` branch.
+All packages target **.NET 11** and depend on **CodeLogic 5.0** (range `[5.0.37, 6.0.0)` today: the floor is the CodeLogic version the libraries are built against). On .NET 10, use the 4.9.x packages (CodeLogic `[4.9.0, 5.0.0)`), maintained on the `support/4.x` branch.
 
 Every library and the CodeLogic framework itself share one version line: **`5.0.<patch>`** (4.9 on the .NET 10 maintenance line).
 The `major.minor` is hand-controlled in the repo-root `version.txt`; the patch is the CI run

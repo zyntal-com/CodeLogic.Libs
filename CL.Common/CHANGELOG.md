@@ -3,9 +3,11 @@
 All notable changes to **CodeLogic.Common** are documented here. Versions follow
 [Semantic Versioning](https://semver.org/).
 
-## 5.0 (unreleased)
+## 5.0 (2026-11-10)
 
 ### Changed
+
+- `System.IO.Hashing` 11.0.0 (was 10.0.9).
 
 - Share log formatting/async-cleanup source helpers across libraries and split oversized source files by operation without new package dependencies.
 

@@ -18,7 +18,7 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Data.SqlClient" Version="7.1.1" />
     <PackageReference Include="Microsoft.Data.SqlClient.Extensions.Azure" Version="7.1.1" />
-    <PackageReference Include="System.Security.Cryptography.Pkcs" Version="11.0.0-rc.3.26522.148" />
+    <PackageReference Include="System.Security.Cryptography.Pkcs" Version="11.0.0" />
   </ItemGroup>
   <ItemGroup>
     <!-- PrivateAssets="none" so the source generator (an analyzer asset of CodeLogic.Data) flows to

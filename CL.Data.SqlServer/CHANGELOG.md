@@ -1,6 +1,6 @@
 # Changelog
 
-## 5.0 (unreleased)
+## 5.0 (2026-11-10)
 
 ### Added
 
@@ -8,6 +8,8 @@
   of the CL.Data database framework that replaces CL.MSSQL in the CodeLogic 5 line. Targets .NET 11 and CodeLogic 5.
 
 ### Changed
+
+- `System.Security.Cryptography.Pkcs` 11.0.0 (the released version; the previews used RC3).
 
 - `Encrypt` and `TrustServerCertificate` written in a connection string are no longer overridden by the `SqlServer` option defaults. An explicit `sslMode` still applies.
 

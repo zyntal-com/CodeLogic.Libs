@@ -1,7 +1,5 @@
 # CodeLogic.Data
 
-> **Status: 5.0 preview.**
-
 One database framework for MySQL, PostgreSQL, SQL Server and SQLite. It's the CodeLogic 5 replacement for CL.MySQL2,
 CL.MSSQL, CL.PostgreSQL and CL.SQLite: one core package plus one small package per database, with the same API and the
 same behaviour everywhere.

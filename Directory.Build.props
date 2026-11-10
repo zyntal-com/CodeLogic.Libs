@@ -78,11 +78,11 @@
   <PropertyGroup>
     <CodeLogicFromNuGet Condition="'$(CodeLogicFromNuGet)' == '' And Exists('$(MSBuildThisFileDirectory)../CodeLogic/src/CodeLogic.csproj')">false</CodeLogicFromNuGet>
     <CodeLogicFromNuGet Condition="'$(CodeLogicFromNuGet)' == ''">true</CodeLogicFromNuGet>
-    <!-- Pinned to the latest CodeLogic 5.0 preview on nuget.org (net11, union Result/Error). Bump it
-         as new previews ship; switch to a 5.0.x GA version once CodeLogic 5.0 is stable. The release
+    <!-- Pinned to a stable CodeLogic 5.0 on nuget.org (5.0.37 is the first stable 5.0). Bump it when the
+         libraries need a newer CodeLogic. The release
          pipeline rewrites each published nuspec's CodeLogic dependency to [this version, 6.0.0), so bumping
          the pin also raises the floor consumers get. -->
-    <CodeLogicPackageVersion Condition="'$(CodeLogicPackageVersion)' == ''">5.0.35-preview</CodeLogicPackageVersion>
+    <CodeLogicPackageVersion Condition="'$(CodeLogicPackageVersion)' == ''">5.0.37</CodeLogicPackageVersion>
   </PropertyGroup>
   <Import Project="build/StrongName.props" />
 </Project>

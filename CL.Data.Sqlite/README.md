@@ -1,7 +1,5 @@
 # CodeLogic.Data.Sqlite
 
-> **Status: 5.0 preview.**
-
 The SQLite provider for [CodeLogic.Data](../CL.Data/README.md), built on Microsoft.Data.Sqlite.
 
 ```bash

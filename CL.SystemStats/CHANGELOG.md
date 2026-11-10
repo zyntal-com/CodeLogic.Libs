@@ -3,7 +3,7 @@
 All notable changes to **CodeLogic.SystemStats** are documented here. Versions follow
 [Semantic Versioning](https://semver.org/).
 
-## 5.0 (unreleased)
+## 5.0 (2026-11-10)
 
 ### Breaking
 
@@ -23,7 +23,7 @@ All notable changes to **CodeLogic.SystemStats** are documented here. Versions f
 
 - Make synchronous disposal nonblocking and serialize Windows counter disposal against sampling.
 
-- `System.Diagnostics.PerformanceCounter` 11.0 (RC3 until .NET 11 GA).
+- `System.Diagnostics.PerformanceCounter` 11.0.0 (the released version; the previews used RC3).
 - **`System.Management` dependency removed**: nothing used it.
 - `GetSystemSnapshotAsync()` is composed by `SystemStatsService` (fresh CPU, memory and uptime, the top
   `MaxTopProcesses` processes) instead of the provider's `GetSystemSnapshotAsync`, so it honours the switches below.

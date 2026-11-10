@@ -3,7 +3,7 @@
 All notable changes to **CodeLogic.SocialConnect** are documented here. Versions follow
 [Semantic Versioning](https://semver.org/).
 
-## 5.0 (unreleased)
+## 5.0 (2026-11-10)
 
 ### Changed
 

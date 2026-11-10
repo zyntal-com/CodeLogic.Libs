@@ -18,7 +18,7 @@
   <!-- Always restored so the project compiles on all platforms. The Windows provider uses it at runtime;
        the Linux provider doesn't. -->
   <ItemGroup>
-    <PackageReference Include="System.Diagnostics.PerformanceCounter" Version="11.0.0-rc.3.26522.148" />
+    <PackageReference Include="System.Diagnostics.PerformanceCounter" Version="11.0.0" />
     <InternalsVisibleTo Include="SystemStats.Tests" />
   </ItemGroup>
   <ItemGroup>

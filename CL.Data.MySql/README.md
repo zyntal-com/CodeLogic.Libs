@@ -1,7 +1,5 @@
 # CodeLogic.Data.MySql
 
-> **Status: 5.0 preview.**
-
 The MySQL and MariaDB provider for [CodeLogic.Data](../CL.Data/README.md), built on MySqlConnector.
 
 ```bash
