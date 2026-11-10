@@ -267,7 +267,7 @@ public sealed class QueryBuilder<T>
         var plan = BuildSelect();
         if (plan.IsFailure) return plan.Error!;
         var (select, accessor, table) = plan.Value!;
-        return await _db.QueryAsync(select, accessor, table, [DataTags.Table(table)], ct, _state.Cache).ConfigureAwait(false);
+        return await _db.QueryAsync(select, accessor, table, DataTags.TableOnly(table), ct, _state.Cache).ConfigureAwait(false);
     }
 
     /// <summary>The first row, or null.</summary>
@@ -295,7 +295,7 @@ public sealed class QueryBuilder<T>
         if (plan.IsFailure) return plan.Error!;
         var (select, _, table) = plan.Value!;
         var rows = await _db.QueryAsync<long>(select with { Projection = [new ProjectionItem(new LiteralExpr(1))], Limit = LimitParam(1), OrderBy = [] },
-            null, table, [DataTags.Table(table)], ct, _state.Cache).ConfigureAwait(false);
+            null, table, DataTags.TableOnly(table), ct, _state.Cache).ConfigureAwait(false);
         return rows.IsSuccess ? Result<bool>.Success(rows.Value!.Count > 0) : rows.Error!;
     }
 
@@ -344,7 +344,7 @@ public sealed class QueryBuilder<T>
 
         var statement = select with { Projection = [new ProjectionItem(new AggregateExpr(aggregate, operand))], OrderBy = [] };
         // Read as TValue? so an aggregate over no rows (SQL NULL) stays null instead of becoming 0.
-        var result = await _db.ScalarAsync<TValue?>(statement, table, [DataTags.Table(table)], ct, _state.Cache).ConfigureAwait(false);
+        var result = await _db.ScalarAsync<TValue?>(statement, table, DataTags.TableOnly(table), ct, _state.Cache).ConfigureAwait(false);
         return result.IsSuccess ? Result<TValue?>.Success(result.Value) : result.Error!;
     }
 
@@ -431,7 +431,7 @@ public sealed class QueryBuilder<T>
             select = select with { Where = ReadPlanner.And(select.Where, seek) };
         }
 
-        var rows = await _db.QueryAsync(select, accessor.Value, table, [DataTags.Table(table)], ct, _state.Cache).ConfigureAwait(false);
+        var rows = await _db.QueryAsync(select, accessor.Value, table, DataTags.TableOnly(table), ct, _state.Cache).ConfigureAwait(false);
         if (rows.IsFailure) return rows.Error!;
         var items = rows.Value!;
         string? next = null;
@@ -507,7 +507,7 @@ public sealed class QueryBuilder<T>
             };
         }
 
-        var command = new WriteCommand(statement, WriteKind.Delete, names.Table, 0, [DataTags.Table(names.Table)]);
+        var command = new WriteCommand(statement, WriteKind.Delete, names.Table, 0, DataTags.TableOnly(names.Table));
         return await _db.ExecuteWritesAsync([command], Array.Empty<T>(), accessor.Value!, ct).ConfigureAwait(false);
     }
 
@@ -531,8 +531,8 @@ public sealed class QueryBuilder<T>
         if (set.IsFailure) return set.Error!;
 
         var names = map.GetNames(_db.NamingPolicy);
-        var statement = new UpdateStatement(WritePlanner.TableOf(map, names, _db.WriteContext), set.Value!) { Where = where.Value };
-        var command = new WriteCommand(statement, WriteKind.Update, names.Table, 0, [DataTags.Table(names.Table)]);
+        var statement = new UpdateStatement(_db.TableOf(map, names), set.Value!) { Where = where.Value };
+        var command = new WriteCommand(statement, WriteKind.Update, names.Table, 0, DataTags.TableOnly(names.Table));
         return await _db.ExecuteWritesAsync([command], Array.Empty<T>(), accessor.Value!, ct).ConfigureAwait(false);
     }
 
@@ -566,7 +566,7 @@ public sealed class QueryBuilder<T>
         var keys = await _db.QueryProjectedAsync(
             select with { Projection = keyColumns.Select((c, i) => new ProjectionItem(new ColumnExpr(names.Of(c), alias), "k" + i)).ToArray() },
             reader => EntityKey.Of(keyColumns.Select((c, i) => ValueConversion.FromDb(reader.GetValue(i), c.ValueType)).ToArray()),
-            table, [DataTags.Table(table)], ct).ConfigureAwait(false);
+            table, DataTags.TableOnly(table), ct).ConfigureAwait(false);
         if (keys.IsFailure) return keys.Error!;
         if (keys.Value!.Count == 0) return Result<List<T>>.Success([]);
 
@@ -575,18 +575,18 @@ public sealed class QueryBuilder<T>
             ? new InListExpr(new ColumnExpr(names.Of(keyColumns[0])),
                 keys.Value.Select(k => (SqlExpr)new ParameterExpr(SqlParameterValue.ForColumn(k[0], keyColumns[0]))).ToArray())
             : keys.Value.Select(k => WritePlanner.KeyPredicate(map, names, k)).Aggregate((l, r) => new BinaryExpr(SqlBinaryOperator.Or, l, r));
-        var update = new UpdateStatement(WritePlanner.TableOf(map, names, _db.WriteContext), set.Value!) { Where = byKeys };
+        var update = new UpdateStatement(_db.TableOf(map, names), set.Value!) { Where = byKeys };
 
         if (_db.Provider.Capabilities.Returning)
             return await _db.QueryAsync(update with { Returning = map.Columns.Select(names.Of).ToArray() }, accessor.Value, table,
-                [DataTags.Table(table)], ct).ConfigureAwait(false);
+                DataTags.TableOnly(table), ct).ConfigureAwait(false);
 
-        var command = new WriteCommand(update, WriteKind.Update, names.Table, 0, [DataTags.Table(names.Table)]);
+        var command = new WriteCommand(update, WriteKind.Update, names.Table, 0, DataTags.TableOnly(names.Table));
         var updated = await _db.ExecuteWritesAsync([command], Array.Empty<T>(), accessor.Value!, ct).ConfigureAwait(false);
         if (updated.IsFailure) return updated.Error!;
         var reread = ReadPlanner.Select(_db, map, byKeys, includeDeleted: true, ignore: FilterSelection.All);   // show the updated rows even if they no longer match
         if (reread.IsFailure) return reread.Error!;
-        return await _db.QueryAsync(reread.Value!, accessor.Value, table, [DataTags.Table(table)], ct).ConfigureAwait(false);
+        return await _db.QueryAsync(reread.Value!, accessor.Value, table, DataTags.TableOnly(table), ct).ConfigureAwait(false);
     }
 
     /// <summary>The SET list of a member-initializer setter, plus audit columns and the concurrency token.</summary>

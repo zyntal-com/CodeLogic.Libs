@@ -59,6 +59,8 @@ public sealed partial class Database : IAsyncDisposable
         Options = options;
         Primary = primary;
         Replicas = replicas;
+        Root = this;
+        DefaultSchema = provider.GetDefaultSchema(config);
         _executor = new CommandExecutor(provider, config.CommandTimeoutSeconds);
         List<ICommandMiddleware> middleware = [];
         if (options.Interceptors.Count > 0) middleware.Add(new InterceptorMiddleware(options.Interceptors));
@@ -114,6 +116,8 @@ public sealed partial class Database : IAsyncDisposable
         Options = parent.Options;
         Primary = parent.Primary;
         Replicas = parent.Replicas;
+        Root = parent.Root;
+        DefaultSchema = parent.DefaultSchema;
         _executor = parent._executor;
         _pipeline = parent._pipeline;
         _routing = parent._routing;
@@ -136,6 +140,8 @@ public sealed partial class Database : IAsyncDisposable
         Options = options;
         Primary = parent.Primary;
         Replicas = parent.Replicas;
+        Root = parent.Root;
+        DefaultSchema = parent.DefaultSchema;
         _executor = parent._executor;
         _pipeline = parent._pipeline;
         _routing = parent._routing;
@@ -197,6 +203,19 @@ public sealed partial class Database : IAsyncDisposable
 
     /// <summary>Naming policy of this connection.</summary>
     public NamingPolicy NamingPolicy => Config.NamingPolicy;
+
+    /// <summary>
+    /// The database that owns the connection pools: this one, or the one a view (transaction, <see cref="ReadFrom"/>,
+    /// <see cref="ForTenant"/>) was made from. Caches that outlive a view are kept per root.
+    /// </summary>
+    internal Database Root { get; }
+
+    /// <summary>The provider's default schema for this connection (null where there are no schemas), worked out once.</summary>
+    internal string? DefaultSchema { get; }
+
+    /// <summary>The table of <paramref name="map"/> on this connection: its declared schema, else the default one where schemas exist.</summary>
+    internal TableRef TableOf(EntityMap map, CL.Data.Mapping.EntityNames names, string? alias = null) =>
+        new(names.Table, Provider.Capabilities.Schemas ? map.Schema ?? DefaultSchema : null, alias);
 
     internal CommandExecutor Executor => _executor;
 

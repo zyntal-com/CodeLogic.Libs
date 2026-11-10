@@ -116,15 +116,15 @@ public sealed class SqlWriter
     /// <summary>Appends a quoted identifier.</summary>
     public SqlWriter Identifier(string name)
     {
-        _sb.Append(Dialect.QuoteIdentifier(name));
+        _sb.Append(Dialect.Quoted(name));
         return this;
     }
 
     /// <summary>Appends a (possibly qualified and aliased) table.</summary>
     public SqlWriter Table(TableRef table, bool withAlias = true)
     {
-        _sb.Append(Dialect.QuoteTable(table.Name, table.Schema));
-        if (withAlias && table.Alias is not null) _sb.Append(' ').Append(Dialect.QuoteIdentifier(table.Alias));
+        _sb.Append(Dialect.QuotedTable(table.Name, table.Schema));
+        if (withAlias && table.Alias is not null) _sb.Append(' ').Append(Dialect.Quoted(table.Alias));
         return this;
     }
 

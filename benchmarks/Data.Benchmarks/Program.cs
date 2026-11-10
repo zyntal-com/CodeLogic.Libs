@@ -3,6 +3,7 @@
 //
 //   set CL_DATA_MYSQL_CS=Server=...;Database=...;User ID=...;Password=...
 //   dotnet run -c Release --project benchmarks/Data.Benchmarks -- --filter *
+//   dotnet run -c Release --project benchmarks/Data.Benchmarks -- --quick [name]    (seconds: allocations and rough times while optimizing)
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Configs;
 using BenchmarkDotNet.Diagnosers;
@@ -20,6 +21,8 @@ using MySqlConnector;
 
 if (args is ["--check-budgets", ..])
     return Data.Benchmarks.BudgetCheck.Run(args.Length > 1 ? args[1] : "benchmarks/budgets.json");
+if (args is ["--quick", ..])
+    return await Data.Benchmarks.QuickProfile.RunAsync(args.Length > 1 ? args[1] : null);
 
 var config = ManualConfig.CreateMinimumViable()
     .AddDiagnoser(MemoryDiagnoser.Default)
@@ -124,6 +127,26 @@ public class MySqlBenchmarks
 
     [Benchmark, BenchmarkCategory("GetById")]
     public async Task<BenchItem?> CLData_Cached_GetById() => (await _cached.Repository<BenchItem>().GetByIdAsync(_id)).Value;
+
+    // ── Get by key inside a transaction (begin, read, commit) ───────────────
+
+    [Benchmark(Baseline = true), BenchmarkCategory("GetByIdTx")]
+    public async Task<BenchItem?> Dapper_GetById_Tx()
+    {
+        await using var c = await _source.OpenConnectionAsync();
+        await using var tx = await c.BeginTransactionAsync();
+        var row = await c.QueryFirstOrDefaultAsync<BenchItem>("SELECT Id, Sku, Name, Price, Stock, CreatedAt FROM bench_items WHERE Id = @id", new { id = _id }, tx);
+        await tx.CommitAsync();
+        return row;
+    }
+
+    [Benchmark, BenchmarkCategory("GetByIdTx")]
+    public async Task<BenchItem?> CLData_GetById_Tx() =>
+        (await _db.InTransactionAsync((tx, ct) => tx.Repository<BenchItem>().GetByIdAsync(_id, ct))).Value;
+
+    [Benchmark, BenchmarkCategory("GetByIdTx")]
+    public async Task<BenchItem?> CLData_Compiled_GetById_Tx() =>
+        (await _db.InTransactionAsync((tx, ct) => ById.FirstOrDefaultAsync(tx.Db, _id, ct))).Value;
 
     // ── Filtered list of 100 ────────────────────────────────────────────────
 

@@ -161,7 +161,7 @@ public sealed class DataBulk<T>
         }
         finally
         {
-            if (total > 0) _db.InvalidateCache([DataTags.Table(names.Table)]);
+            if (total > 0) _db.InvalidateCache(DataTags.TableOnly(names.Table));
         }
 
         var receipt = new BulkCopyReceipt(names.Table, total, Stopwatch.GetElapsedTime(started), native);

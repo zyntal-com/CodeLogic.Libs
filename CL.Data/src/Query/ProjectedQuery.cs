@@ -43,7 +43,7 @@ public sealed class ProjectedQuery<T, TResult>
         if (projection.IsFailure) return projection.Error!;
 
         var statement = select with { Projection = projection.Value!.Columns, Distinct = _distinct };
-        return await _source.Database.QueryProjectedAsync(statement, projection.Value.Materialize, table, [DataTags.Table(table)], ct, _source.CachePolicy)
+        return await _source.Database.QueryProjectedAsync(statement, projection.Value.Materialize, table, DataTags.TableOnly(table), ct, _source.CachePolicy)
             .ConfigureAwait(false);
     }
 

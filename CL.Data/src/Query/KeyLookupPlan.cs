@@ -48,8 +48,8 @@ internal sealed class KeyLookupPlan
         var tenant = map.TenantKey is null ? null : db.CurrentTenant;
         if (map.TenantKey is not null && tenant is null) return null;   // the general path reports the missing tenant
 
-        var context = db.WriteContext;
-        var planKey = new PlanKey(context.Dialect, context.Policy, context.DefaultSchema, context.Capabilities.Schemas, map);
+        var provider = db.Provider;
+        var planKey = new PlanKey(provider.Dialect, db.NamingPolicy, db.DefaultSchema, provider.Capabilities.Schemas, map);
         var plan = Plans.TryGetValue(planKey, out var cached) ? cached : Plans.GetOrAdd(planKey, Build(db, map, key, tenant));
         return plan?.Bind(map, key, tenant);
     }
@@ -96,9 +96,9 @@ internal sealed class KeyLookupPlan
         }
 
         var limit = SqlParameterValue.Of(1);
-        var select = new SelectStatement(WritePlanner.TableOf(map, names, db.WriteContext))
+        var select = new SelectStatement(db.TableOf(map, names))
         {
-            Projection = map.Columns.Select(c => new ProjectionItem(new ColumnExpr(names.Of(c)))).ToArray(),
+            Projection = names.Projection(null),
             Where = ReadPlanner.And(where, filters),
             Limit = new ParameterExpr(limit),
         };

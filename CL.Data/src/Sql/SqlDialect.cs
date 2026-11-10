@@ -28,12 +28,44 @@ public abstract class SqlDialect
     public virtual string QuoteIdentifier(string identifier)
     {
         ArgumentException.ThrowIfNullOrEmpty(identifier);
-        var close = CloseQuote.ToString();
-        return string.Concat(OpenQuote.ToString(), identifier.Replace(close, close + close, StringComparison.Ordinal), close);
+        var close = CloseQuote;
+        if (!identifier.Contains(close))
+            return string.Create(identifier.Length + 2, (identifier, OpenQuote, close), static (span, state) =>
+            {
+                span[0] = state.OpenQuote;
+                state.identifier.CopyTo(span[1..]);
+                span[^1] = state.close;
+            });
+        var text = close.ToString();
+        return string.Concat(OpenQuote.ToString(), identifier.Replace(text, text + text, StringComparison.Ordinal), text);
     }
 
     /// <summary>Appends a quoted identifier.</summary>
-    public void AppendIdentifier(StringBuilder sb, string identifier) => sb.Append(QuoteIdentifier(identifier));
+    public void AppendIdentifier(StringBuilder sb, string identifier) => sb.Append(Quoted(identifier));
+
+    // Quoted names by identifier and by (table, schema): statements quote the same few table and column names on every
+    // render. Bounded, so identifiers built at run time (aliases) cannot grow it without limit.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _quoted = new(StringComparer.Ordinal);
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<(string Table, string? Schema), string> _quotedTables = new();
+    private const int MaxCachedQuotedNames = 4096;
+
+    /// <summary><see cref="QuoteIdentifier"/>, remembered per identifier.</summary>
+    internal string Quoted(string identifier)
+    {
+        if (_quoted.TryGetValue(identifier, out var quoted)) return quoted;
+        quoted = QuoteIdentifier(identifier);
+        if (_quoted.Count < MaxCachedQuotedNames) _quoted.TryAdd(identifier, quoted);
+        return quoted;
+    }
+
+    /// <summary><see cref="QuoteTable"/>, remembered per table and schema.</summary>
+    internal string QuotedTable(string table, string? schema)
+    {
+        if (_quotedTables.TryGetValue((table, schema), out var quoted)) return quoted;
+        quoted = QuoteTable(table, schema);
+        if (_quotedTables.Count < MaxCachedQuotedNames) _quotedTables.TryAdd((table, schema), quoted);
+        return quoted;
+    }
 
     /// <summary>Quotes a possibly schema-qualified table name.</summary>
     public virtual string QuoteTable(string table, string? schema) =>

@@ -42,31 +42,44 @@ public sealed class Repository<T>
     }
 
     /// <summary>Inserts <paramref name="entities"/> in batches that fit the provider's limits; returns the rows inserted.</summary>
-    public async ValueTask<Result<int>> InsertManyAsync(IEnumerable<T> entities, CancellationToken ct = default)
+    public ValueTask<Result<int>> InsertManyAsync(IEnumerable<T> entities, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(entities);
         var accessor = Accessor();
-        if (accessor.IsFailure) return accessor.Error!;
+        if (accessor.IsFailure) return new(accessor.Error!);
         var list = entities as IReadOnlyList<T> ?? entities.ToList();
-        return await SaveAsync(SaveKind.Insert, list, null, async () =>
-        {
-            // Large inserts with nothing to read back (no server-generated identity or row version) take the native bulk path,
-            // but only when no command interceptor or middleware is configured: the bulk copy does not run through the command
-            // pipeline, and an auditing or policy interceptor must see every insert.
-            if (_db.Config.BulkThreshold > 0 && list.Count >= _db.Config.BulkThreshold && _db.Options.Interceptors.Count == 0
-                && _db.Options.Middleware.Count == 0 && WritePlanner.CanBulkInsert(accessor.Value!, list))
-            {
-                var receipt = await _db.Bulk<T>().InsertAsync(list, new CL.Data.Bulk.BulkOptions { KeepIdentity = accessor.Value!.Map.Identity is not null }, ct)
-                    .ConfigureAwait(false);
-                return receipt.IsFailure ? receipt.Error! : (int)receipt.Value!.Rows;
-            }
-            var plan = WritePlanner.Insert(accessor.Value!, list, _db.WriteContext);
-            if (plan.IsFailure) return plan.Error!;
-            return await _db.ExecuteWritesAsync(plan.Value!, list, accessor.Value!, ct).ConfigureAwait(false);
-        }).ConfigureAwait(false);
+        return Intercepted ? InsertInterceptedAsync(accessor.Value!, list, ct) : InsertPlannedAsync(accessor.Value!, list, ct);
     }
 
-    /// <summary>Runs <paramref name="save"/> between the interceptors' save hooks (nothing extra when there are none).</summary>
+    // The intercepted variants are methods of their own: a lambda that captures a method's parameters makes the compiler
+    // allocate its closure on entry, also on the path that never creates the delegate.
+    private ValueTask<Result<int>> InsertInterceptedAsync(IEntityAccessor<T> accessor, IReadOnlyList<T> list, CancellationToken ct) =>
+        SaveAsync(SaveKind.Insert, list, null, () => InsertPlannedAsync(accessor, list, ct));
+
+    private async ValueTask<Result<int>> InsertPlannedAsync(IEntityAccessor<T> accessor, IReadOnlyList<T> list, CancellationToken ct)
+    {
+        // Large inserts with nothing to read back (no server-generated identity or row version) take the native bulk path,
+        // but only when no command interceptor or middleware is configured: the bulk copy does not run through the command
+        // pipeline, and an auditing or policy interceptor must see every insert.
+        if (_db.Config.BulkThreshold > 0 && list.Count >= _db.Config.BulkThreshold && _db.Options.Interceptors.Count == 0
+            && _db.Options.Middleware.Count == 0 && WritePlanner.CanBulkInsert(accessor, list))
+        {
+            var receipt = await _db.Bulk<T>().InsertAsync(list, new CL.Data.Bulk.BulkOptions { KeepIdentity = accessor.Map.Identity is not null }, ct)
+                .ConfigureAwait(false);
+            return receipt.IsFailure ? receipt.Error! : (int)receipt.Value!.Rows;
+        }
+        var plan = WritePlanner.Insert(accessor, list, _db.WriteContext);
+        if (plan.IsFailure) return plan.Error!;
+        return await _db.ExecuteWritesAsync(plan.Value!, list, accessor, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// True when save hooks have to run around entity writes. Without interceptors the write methods call their planned work
+    /// directly: no delegate, no closure and no extra async frame per write.
+    /// </summary>
+    private bool Intercepted => _db.Options.Interceptors.Count > 0;
+
+    /// <summary>Runs <paramref name="save"/> between the interceptors' save hooks.</summary>
     private async ValueTask<Result<TResult>> SaveAsync<TResult>(SaveKind kind, IReadOnlyList<T> entities, IReadOnlyList<string>? changed,
         Func<ValueTask<Result<TResult>>> save)
     {
@@ -149,18 +162,23 @@ public sealed class Repository<T>
         return snapshot.IsFailure ? ValueTask.FromResult<Result<T>>(snapshot.Error!) : UpdateAsync(modified, snapshot.Value!, ct);
     }
 
-    private async ValueTask<Result<T>> UpdateCoreAsync(T entity, IReadOnlyCollection<string>? only, CancellationToken ct)
+    private ValueTask<Result<T>> UpdateCoreAsync(T entity, IReadOnlyCollection<string>? only, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(entity);
         var accessor = Accessor();
-        if (accessor.IsFailure) return accessor.Error!;
-        return await SaveAsync(SaveKind.Update, [entity], only as IReadOnlyList<string> ?? only?.ToArray(), async () =>
-        {
-            var plan = WritePlanner.Update(accessor.Value!, entity, _db.WriteContext, only);
-            if (plan.IsFailure) return plan.Error!;
-            var result = await _db.ExecuteWritesAsync([plan.Value!], [entity], accessor.Value!, ct).ConfigureAwait(false);
-            return result.IsSuccess ? Result<T>.Success(entity) : result.Error!;
-        }).ConfigureAwait(false);
+        if (accessor.IsFailure) return new(accessor.Error!);
+        return Intercepted ? UpdateInterceptedAsync(accessor.Value!, entity, only, ct) : UpdatePlannedAsync(accessor.Value!, entity, only, ct);
+    }
+
+    private ValueTask<Result<T>> UpdateInterceptedAsync(IEntityAccessor<T> accessor, T entity, IReadOnlyCollection<string>? only, CancellationToken ct) =>
+        SaveAsync(SaveKind.Update, [entity], only as IReadOnlyList<string> ?? only?.ToArray(), () => UpdatePlannedAsync(accessor, entity, only, ct));
+
+    private async ValueTask<Result<T>> UpdatePlannedAsync(IEntityAccessor<T> accessor, T entity, IReadOnlyCollection<string>? only, CancellationToken ct)
+    {
+        var plan = WritePlanner.Update(accessor, entity, _db.WriteContext, only);
+        if (plan.IsFailure) return plan.Error!;
+        var result = await _db.ExecuteWritesAsync([plan.Value!], [entity], accessor, ct).ConfigureAwait(false);
+        return result.IsSuccess ? Result<T>.Success(entity) : result.Error!;
     }
 
     /// <summary>
@@ -172,18 +190,23 @@ public sealed class Repository<T>
     /// <summary>Removes the row of <paramref name="entity"/>, even when the entity uses soft delete.</summary>
     public ValueTask<Result<bool>> HardDeleteAsync(T entity, CancellationToken ct = default) => DeleteCoreAsync(entity, hard: true, ct);
 
-    private async ValueTask<Result<bool>> DeleteCoreAsync(T entity, bool hard, CancellationToken ct)
+    private ValueTask<Result<bool>> DeleteCoreAsync(T entity, bool hard, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(entity);
         var accessor = Accessor();
-        if (accessor.IsFailure) return accessor.Error!;
-        return await SaveAsync(SaveKind.Delete, [entity], null, async () =>
-        {
-            var plan = WritePlanner.Delete(accessor.Value!, entity, _db.WriteContext, hard);
-            if (plan.IsFailure) return plan.Error!;
-            var result = await _db.ExecuteWritesAsync([plan.Value!], [entity], accessor.Value!, ct).ConfigureAwait(false);
-            return result.IsSuccess ? Result<bool>.Success(result.Value > 0) : result.Error!;
-        }).ConfigureAwait(false);
+        if (accessor.IsFailure) return new(accessor.Error!);
+        return Intercepted ? DeleteInterceptedAsync(accessor.Value!, entity, hard, ct) : DeletePlannedAsync(accessor.Value!, entity, hard, ct);
+    }
+
+    private ValueTask<Result<bool>> DeleteInterceptedAsync(IEntityAccessor<T> accessor, T entity, bool hard, CancellationToken ct) =>
+        SaveAsync(SaveKind.Delete, [entity], null, () => DeletePlannedAsync(accessor, entity, hard, ct));
+
+    private async ValueTask<Result<bool>> DeletePlannedAsync(IEntityAccessor<T> accessor, T entity, bool hard, CancellationToken ct)
+    {
+        var plan = WritePlanner.Delete(accessor, entity, _db.WriteContext, hard);
+        if (plan.IsFailure) return plan.Error!;
+        var result = await _db.ExecuteWritesAsync([plan.Value!], [entity], accessor, ct).ConfigureAwait(false);
+        return result.IsSuccess ? Result<bool>.Success(result.Value > 0) : result.Error!;
     }
 
     /// <summary>Deletes by a single-column key (soft delete when the entity has one). Returns false when no row matched.</summary>
@@ -323,9 +346,7 @@ public sealed class Repository<T>
         // The entity cache (DataCacheConfig.EntityCache) serves repeated key lookups; writes to the row (or set-based writes
         // to the table) drop them. The row tag is only needed when there is a cache.
         var cache = _db.Options.Cache;
-        var entityCache = cache is { Config.EntityCache: true }
-            ? CL.Data.Caching.CachePolicy.For(TimeSpan.FromSeconds(cache.Config.EntityCacheTtlSeconds))
-            : null;
+        var entityCache = cache is { Config.EntityCache: true } ? cache.EntityPolicy : null;
         IReadOnlyList<string> tags = cache is null ? [] : [DataTags.Entity(names.Table, key)];
 
         // Usually the lookup's SQL is built once per entity and only the key is bound (KeyLookupPlan).
@@ -404,7 +425,7 @@ public sealed class Repository<T>
                 Limit = limit is { } l ? Limit(l) : null,
                 Offset = offset is > 0 ? new ParameterExpr(SqlParameterValue.Of(offset.Value)) : null,
             };
-        return await _db.QueryAsync(statement, accessor.Value, names.Table, [DataTags.Table(names.Table)], ct).ConfigureAwait(false);
+        return await _db.QueryAsync(statement, accessor.Value, names.Table, DataTags.TableOnly(names.Table), ct).ConfigureAwait(false);
     }
 
     private async ValueTask<Result<long>> CountCoreAsync(Expression<Func<T, bool>>? predicate, CancellationToken ct)
@@ -419,7 +440,7 @@ public sealed class Repository<T>
         var select = ReadPlanner.Select(_db, map, where.Value, includeDeleted: false);
         if (select.IsFailure) return select.Error!;
         var count = select.Value! with { Projection = [new ProjectionItem(new AggregateExpr(SqlAggregate.Count, null))] };
-        var result = await _db.ScalarAsync<long>(count, names.Table, [DataTags.Table(names.Table)], ct).ConfigureAwait(false);
+        var result = await _db.ScalarAsync<long>(count, names.Table, DataTags.TableOnly(names.Table), ct).ConfigureAwait(false);
         return result.IsSuccess ? Result<long>.Success(result.Value) : result.Error!;
     }
 

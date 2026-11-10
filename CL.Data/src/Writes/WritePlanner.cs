@@ -9,7 +9,20 @@ namespace CL.Data.Writes;
 public static class DataTags
 {
     /// <summary>Tag of everything read from <paramref name="table"/>.</summary>
-    public static string Table(string table) => "table:" + table;
+    public static string Table(string table) => TableOnly(table)[0];
+
+    // The table tag (and the one-tag list most reads and writes carry) is built once per table name. Bounded, should table
+    // names ever be made up at run time.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, string[]> TableTags = new(StringComparer.Ordinal);
+
+    /// <summary>The list holding only <see cref="Table"/> of <paramref name="table"/>. Shared: never change it.</summary>
+    internal static string[] TableOnly(string table)
+    {
+        if (TableTags.TryGetValue(table, out var tags)) return tags;
+        tags = ["table:" + table];
+        if (TableTags.Count < 4096) TableTags.TryAdd(table, tags);
+        return tags;
+    }
 
     /// <summary>Tag of one row of <paramref name="table"/>.</summary>
     public static string Entity(string table, EntityKey key) => $"entity:{table}:{key}";
@@ -102,7 +115,7 @@ public static class WritePlanner
                     Returning = useReturning ? shape.GeneratedNames : [],
                     ExplicitIdentity = explicitIdentity && identity is not null,
                 };
-                commands.Add(new WriteCommand(statement, WriteKind.Insert, names.Table, chunk.Length, [DataTags.Table(names.Table)])
+                commands.Add(new WriteCommand(statement, WriteKind.Insert, names.Table, chunk.Length, DataTags.TableOnly(names.Table))
                 {
                     FirstRow = chunk[0],
                     // Rows with and without explicit identities are planned in separate groups, so a chunk's rows need not be
@@ -154,7 +167,8 @@ public static class WritePlanner
         if (Stamp(accessor, entity, ctx, ctx.Time.GetUtcNow(), insert: false) is { } error) return error;
 
         var names = map.GetNames(ctx.Policy);
-        List<SetItem> set = [];
+        List<SetItem> set = new(onlyProperties is null ? map.Columns.Count : onlyProperties.Count + 2);
+        var collector = new ValueCollector();
         foreach (var column in map.Columns)
         {
             if (!IsWritable(column) || column.Has(ColumnRoles.Key) || column.Has(ColumnRoles.Identity) || column.Has(ColumnRoles.CreatedAt)
@@ -162,7 +176,7 @@ public static class WritePlanner
                 continue;
             var forced = column.Has(ColumnRoles.UpdatedAt) || column.Has(ColumnRoles.UpdatedBy);
             if (onlyProperties is not null && !forced && !onlyProperties.Contains(column.PropertyName)) continue;
-            set.Add(new SetItem(names.Of(column), Value(accessor, entity, column)));
+            set.Add(new SetItem(names.Of(column), Value(accessor, entity, column, collector)));
         }
 
         var key = accessor.GetKey(entity);
@@ -172,14 +186,14 @@ public static class WritePlanner
         where = And(where, tenantScope.Value);
 
         Action? onSuccess = null;
-        List<ColumnMap> returned = [];
+        ColumnMap[] returned = [];
         if (map.ConcurrencyToken is { } token)
         {
             var current = accessor.GetValue(entity, token.Ordinal);
             if (token.DataType == DataType.RowVersion || token.ValueType == typeof(byte[]))
             {
                 where = And(where, Equal(names.Of(token), current, token));
-                if (map.Columns.Any(c => c.DataType == DataType.RowVersion) && ctx.Capabilities.Returning) returned.Add(token);
+                if (map.Columns.Any(c => c.DataType == DataType.RowVersion) && ctx.Capabilities.Returning) returned = [token];
             }
             else
             {
@@ -195,7 +209,7 @@ public static class WritePlanner
         var statement = new UpdateStatement(TableOf(map, names, ctx), set)
         {
             Where = where,
-            Returning = returned.Select(names.Of).ToArray(),
+            Returning = returned.Length == 0 ? [] : [names.Of(returned[0])],
         };
         return new WriteCommand(statement, WriteKind.Update, names.Table, 1, Tags(names.Table, key))
         {
@@ -365,9 +379,16 @@ public static class WritePlanner
         var perStatement = RowsPerStatement(columns.Length, ctx, ctx.Dialect.UpsertParameterMultiplier);
         List<WriteCommand> commands = [];
         var first = 0;
+        var collector = new ValueCollector();
         foreach (var chunk in entities.Chunk(perStatement))
         {
-            var values = chunk.Select(e => (IReadOnlyList<SqlExpr>)columns.Select(c => Value(accessor, e, c)).ToArray()).ToArray();
+            var values = new IReadOnlyList<SqlExpr>[chunk.Length];
+            for (var r = 0; r < chunk.Length; r++)
+            {
+                var row = new SqlExpr[columns.Length];
+                for (var c = 0; c < columns.Length; c++) row[c] = Value(accessor, chunk[r], columns[c], collector);
+                values[r] = row;
+            }
             var insert = new InsertStatement(table, columns.Select(names.Of).ToArray(), values)
             {
                 ExplicitIdentity = map.Identity is { } identityColumn && columns.Contains(identityColumn),
@@ -398,7 +419,7 @@ public static class WritePlanner
                 var check = new SelectStatement(table) { Projection = [new ProjectionItem(new LiteralExpr(1))], Where = foreign, Limit = new LiteralExpr(1) };
                 commands.Add(new WriteCommand(check, WriteKind.Upsert, names.Table, 0, []) { Check = RowCheck.Empty });
             }
-            commands.Add(new WriteCommand(statement, WriteKind.Upsert, names.Table, chunk.Length, [DataTags.Table(names.Table)])
+            commands.Add(new WriteCommand(statement, WriteKind.Upsert, names.Table, chunk.Length, DataTags.TableOnly(names.Table))
             {
                 FirstRow = first,
                 RequiresTransaction = ctx.Dialect.UpsertRequiresTransaction,
@@ -539,9 +560,6 @@ public static class WritePlanner
         return row;
     }
 
-    private static SqlExpr Value<T>(IEntityAccessor<T> accessor, T entity, ColumnMap column) =>
-        Value(accessor, entity, column, new ValueCollector());
-
     private static SqlExpr Value<T>(IEntityAccessor<T> accessor, T entity, ColumnMap column, ValueCollector collector)
     {
         collector.Result = null;
@@ -558,6 +576,7 @@ public static class WritePlanner
         left is null ? right : right is null ? left : new BinaryExpr(SqlBinaryOperator.And, left, right);
 
     private static IReadOnlyList<string> Tags(string table, EntityKey key) => [DataTags.Table(table), DataTags.Entity(table, key)];
+
 
     private static int RowsPerStatement(int columns, WriteContext ctx, int multiplier)
     {
