@@ -12,8 +12,15 @@ internal static class RowReader
     public static bool IsScalar<T>() => ScalarCache<T>.Value || ValueConverters.TryGet(typeof(T), out _);
 
     /// <summary>Reads every row of the current result.</summary>
+    /// <param name="reader">The open reader.</param>
+    /// <param name="accessor">The entity accessor, or null to read a scalar from the first column.</param>
+    /// <param name="policy">Naming policy for matching columns by name.</param>
+    /// <param name="ct">Cancellation.</param>
+    /// <param name="columnOrder">
+    /// True when the result's columns are known to be the map's columns in order (see <see cref="Ordinals(DbDataReader, EntityMap, NamingPolicy, bool)"/>).
+    /// </param>
     public static async ValueTask<List<T>> ReadAllAsync<T>(DbDataReader reader, IEntityAccessor<T>? accessor, NamingPolicy policy,
-        CancellationToken ct)
+        CancellationToken ct, bool columnOrder = false)
     {
         List<T> rows = [];
         if (accessor is null)
@@ -23,7 +30,7 @@ internal static class RowReader
             return rows;
         }
 
-        var ordinals = Ordinals(reader, accessor.Map, policy);
+        var ordinals = Ordinals(reader, accessor.Map, policy, columnOrder);
         while (await reader.ReadAsync(ct).ConfigureAwait(false))
             rows.Add(accessor.Materialize(reader, ordinals));
         return rows;
@@ -31,11 +38,24 @@ internal static class RowReader
 
     /// <summary>Reads the first row of the current result, or default when there is none.</summary>
     public static async ValueTask<T?> ReadFirstAsync<T>(DbDataReader reader, IEntityAccessor<T>? accessor, NamingPolicy policy,
-        CancellationToken ct)
+        CancellationToken ct, bool columnOrder = false)
     {
         if (!await reader.ReadAsync(ct).ConfigureAwait(false)) return default;
-        return accessor is null ? ValueReader<T>.Read(reader, 0) : accessor.Materialize(reader, Ordinals(reader, accessor.Map, policy));
+        return accessor is null
+            ? ValueReader<T>.Read(reader, 0)
+            : accessor.Materialize(reader, Ordinals(reader, accessor.Map, policy, columnOrder));
     }
+
+    /// <summary>
+    /// The reader ordinal of each mapped column. With <paramref name="columnOrder"/> (CL.Data wrote the SELECT list itself: every
+    /// mapped column, in order, and nothing rewrote the SQL) the ordinals are known and no column name is read. That matters:
+    /// asking a driver for a column name can make it decode all of the column's metadata (MySqlConnector decodes six strings per
+    /// column), on every query. A replayed cached result and a result with another column count are matched by name.
+    /// </summary>
+    public static int[] Ordinals(DbDataReader reader, EntityMap map, NamingPolicy policy, bool columnOrder) =>
+        columnOrder && reader.FieldCount == map.Columns.Count && !CL.Data.Caching.BufferedResultSet.IsReplay(reader)
+            ? map.ColumnOrderOrdinals
+            : Ordinals(reader, map, policy);
 
     /// <summary>
     /// Reader ordinal of each mapped column (-1 when absent). Result columns match the database name under

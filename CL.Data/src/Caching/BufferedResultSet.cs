@@ -64,6 +64,9 @@ internal sealed class BufferedResultSet
     /// <summary>A reader over the buffered rows.</summary>
     public DbDataReader CreateReader() => new Reader(this);
 
+    /// <summary>True when <paramref name="reader"/> replays a buffered result (its column names cost nothing to read).</summary>
+    public static bool IsReplay(DbDataReader reader) => reader is Reader;
+
     private sealed class Reader(BufferedResultSet set) : DbDataReader
     {
         private int _row = -1;

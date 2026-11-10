@@ -68,7 +68,7 @@ internal sealed class JoinCore
             if (standing.IsFailure) return standing.Error!;
 
             var names = map.Value!.GetNames(_db.NamingPolicy);
-            var table = WritePlanner.TableOf(map.Value!, names, _db.WriteContext) with { Alias = alias };
+            var table = _db.TableOf(map.Value!, names, alias);
             joins.Add(new SqlJoin(spec.Kind, table, ReadPlanner.And(on.Value, standing.Value)));
         }
 

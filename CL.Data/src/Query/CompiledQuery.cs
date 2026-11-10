@@ -38,7 +38,16 @@ public sealed class CompiledQuery<T, TArgs>
 {
     private const int MaxVariants = 8;
     private readonly Expression<Func<QueryBuilder<T>, TArgs, QueryBuilder<T>>> _query;
-    private readonly ConditionalWeakTable<Database, ConcurrentDictionary<(CompiledTerminal, object?), Variant[]>> _plans = new();
+    // Plans are kept per root database, so the short-lived views of it (a transaction's Db, ReadFrom, ForTenant) reuse them
+    // instead of planning (and compiling the argument readers) again for every view.
+    private readonly ConditionalWeakTable<Database, ConcurrentDictionary<PlanKey, Variant[]>> _plans = new();
+
+    /// <summary>
+    /// What a plan depends on besides the root database: the tenant (tenant filters bake it into the SQL parameters), the user
+    /// filters, the view's read preference (the chain's own is stored relative to it) and whether there is a transaction
+    /// (locking reads are only planned inside one).
+    /// </summary>
+    private readonly record struct PlanKey(CompiledTerminal Terminal, object? Tenant, object Filters, CL.Data.Routing.ReadPreference? ReadFrom, bool InTransaction);
 
     internal CompiledQuery(Expression<Func<QueryBuilder<T>, TArgs, QueryBuilder<T>>> query)
     {
@@ -52,7 +61,7 @@ public sealed class CompiledQuery<T, TArgs>
         var variant = Plan(db, CompiledTerminal.List, args, out var spec);
         if (variant.IsFailure) return variant.Error!;
         var v = variant.Value!;
-        return await v.On(db).QuerySpecAsync(spec, false, v.Accessor, v.Table, v.Tags, ct, v.Cache).ConfigureAwait(false);
+        return await v.On(db).QuerySpecAsync(spec, false, v.Accessor, v.Table, v.Tags, ct, v.Cache, columnOrder: v.ColumnOrder).ConfigureAwait(false);
     }
 
     /// <summary>The first matching row, or null.</summary>
@@ -61,7 +70,7 @@ public sealed class CompiledQuery<T, TArgs>
         var variant = Plan(db, CompiledTerminal.First, args, out var spec);
         if (variant.IsFailure) return variant.Error!;
         var v = variant.Value!;
-        var rows = await v.On(db).QuerySpecAsync(spec, false, v.Accessor, v.Table, v.Tags, ct, v.Cache).ConfigureAwait(false);
+        var rows = await v.On(db).QuerySpecAsync(spec, false, v.Accessor, v.Table, v.Tags, ct, v.Cache, columnOrder: v.ColumnOrder).ConfigureAwait(false);
         return rows.IsSuccess ? Result<T?>.Success(rows.Value!.Count > 0 ? rows.Value[0] : default) : rows.Error!;
     }
 
@@ -96,6 +105,9 @@ public sealed class CompiledQuery<T, TArgs>
         public CL.Data.Caching.CachePolicy? Cache { get; init; }
         public CL.Data.Routing.ReadPreference? ReadFrom { get; init; }
 
+        /// <summary>True when the SQL selects every mapped column in order, so rows are read by position.</summary>
+        public bool ColumnOrder { get; init; }
+
         /// <summary><paramref name="db"/>, or its view with the chain's read preference.</summary>
         public Database On(Database db) => ReadFrom is { } preference && db.ReadPreferenceOverride != preference ? db.ReadFrom(preference) : db;
     }
@@ -107,8 +119,8 @@ public sealed class CompiledQuery<T, TArgs>
     {
         ArgumentNullException.ThrowIfNull(db);
         spec = default;
-        var plans = _plans.GetValue(db, static _ => new ConcurrentDictionary<(CompiledTerminal, object?), Variant[]>());
-        var key = (terminal, db.CurrentTenant);   // tenant filters bake the tenant into the SQL parameters
+        var plans = _plans.GetValue(db.Root, static _ => new ConcurrentDictionary<PlanKey, Variant[]>());
+        var key = new PlanKey(terminal, db.CurrentTenant, db.Options.Filters, db.ReadPreferenceOverride, db.Transaction is not null);
         object?[] slots = [args];
 
         if (plans.TryGetValue(key, out var variants))
@@ -191,9 +203,10 @@ public sealed class CompiledQuery<T, TArgs>
         var sources = rendered.Value!.Parameters
             .Select(p => roots is not null && bySlot.TryGetValue(p, out var slot) ? new ParameterSource(null, slot.Root, slot.Binder) : new ParameterSource(p, -1, null))
             .ToArray();
-        return new Variant(roots, rendered.Value.Text, sources, accessor, table, [DataTags.Table(table)])
+        return new Variant(roots, rendered.Value.Text, sources, accessor, table, DataTags.TableOnly(table))
         {
             Cache = builder.CachePolicy,
+            ColumnOrder = db.SelectsColumnsInOrder(select, accessor.Map),
             ReadFrom = builder.Database.ReadPreferenceOverride is { } preference && preference != db.ReadPreferenceOverride ? preference : null,
         };
     }

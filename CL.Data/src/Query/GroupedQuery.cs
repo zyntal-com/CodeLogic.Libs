@@ -146,7 +146,7 @@ public sealed class GroupedQuery<T, TKey>
             Limit = limit is { } l ? new ParameterExpr(SqlParameterValue.Of((long)l)) : null,
             Offset = _skip is > 0 ? new ParameterExpr(SqlParameterValue.Of((long)_skip.Value)) : null,
         };
-        return await _source.Database.QueryProjectedAsync(statement, projection.Value.Materialize, table, [DataTags.Table(table)], ct, _source.CachePolicy)
+        return await _source.Database.QueryProjectedAsync(statement, projection.Value.Materialize, table, DataTags.TableOnly(table), ct, _source.CachePolicy)
             .ConfigureAwait(false);
     }
 }

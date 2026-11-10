@@ -79,6 +79,35 @@ public abstract class CompiledQueryConformance(ProviderFixture fixture) : Confor
         Assert.Equal(2, (await SkuPrefix.ToListAsync(Db, "CQ-")).ValueOrThrow().Count);
     }
 
+    private static readonly CompiledQuery<Product, long> LockedById =
+        CompiledQuery.For<Product, long>((q, id) => q.Where(p => p.Id == id).ForUpdate());
+
+    [SkippableFact]
+    public async Task Compiled_queries_run_on_views_of_the_database()
+    {
+        RequireProvider();
+        var rows = await SeedAsync();
+
+        // Every transaction (and ReadFrom, ForTenant) is a new view of the database; they share the plans of the database itself.
+        foreach (var row in rows.Take(3))
+        {
+            var inTransaction = await Db.InTransactionAsync((tx, ct) => ById.FirstOrDefaultAsync(tx.Db, row.Id, ct));
+            Assert.Equal(row.Sku, inTransaction.ValueOrThrow()!.Sku);
+        }
+        var view = Db.ReadFrom(CL.Data.Routing.ReadPreference.Primary);
+        Assert.Equal(rows[3].Sku, (await ById.FirstOrDefaultAsync(view, rows[3].Id)).ValueOrThrow()!.Sku);
+        Assert.Equal(rows[4].Sku, (await ById.FirstOrDefaultAsync(Db, rows[4].Id)).ValueOrThrow()!.Sku);
+
+        // A locking read is planned inside a transaction only; that plan is never reused outside one.
+        var locked = await Db.InTransactionAsync((tx, ct) => LockedById.FirstOrDefaultAsync(tx.Db, rows[0].Id, ct));
+        Assert.Equal(rows[0].Sku, locked.ValueOrThrow()!.Sku);
+        var outside = await LockedById.FirstOrDefaultAsync(Db, rows[0].Id);
+        Assert.True(outside.IsFailure);
+        Assert.Equal(DataErrors.ValidationCode, outside.Error!.Code);
+        locked = await Db.InTransactionAsync((tx, ct) => LockedById.FirstOrDefaultAsync(tx.Db, rows[1].Id, ct));
+        Assert.Equal(rows[1].Sku, locked.ValueOrThrow()!.Sku);
+    }
+
     [SkippableFact]
     public async Task Standing_filters_apply_and_bad_chains_are_reported()
     {
