@@ -3,6 +3,8 @@
   // (CI job data-perf). maxAllocatedBytes: per operation, ~12% above the measurements (2026-10-31; single-row operations
   // lowered 2026-11-08 twice: no MySQL reset on open, then the lean execution round; 2026-11-10: rows read by position,
   // cheaper cache hits and writes).
+  // The limits are set from the CI runner's numbers (Linux), about 10% above them: the same benchmark allocates 0.6-1 KB
+  // more per operation there than on the Windows machine the baseline tables come from.
   // maxRatio: mean time relative to the category baseline in the same run (Dapper or raw ADO.NET, both without the driver's
   // reset on open, like CL.Data's default), so it holds across machines.
   // Lower a budget when an optimization lands; raise one only with a reason in the commit message.
@@ -12,20 +14,20 @@
   // The 100-row filters allow more (2026-11-08): without the reset round trip on every open, the CI baseline fell
   // from ~550 to ~165 us while CL.Data's own overhead stayed ~45 us, so the same overhead is a larger ratio (CI 1.24-1.28).
   "benchmarks": {
-    "CLData_GetById":            { "maxAllocatedBytes": 8100,   "maxRatio": 1.25 },
-    "CLData_Compiled_GetById":   { "maxAllocatedBytes": 8500,   "maxRatio": 1.25 },
+    "CLData_GetById":            { "maxAllocatedBytes": 8700,   "maxRatio": 1.25 },
+    "CLData_Compiled_GetById":   { "maxAllocatedBytes": 9100,   "maxRatio": 1.25 },
     "CLData_GetById_Tx":         { "maxAllocatedBytes": 12100,   "maxRatio": 1.25 },
     "CLData_Compiled_GetById_Tx":{ "maxAllocatedBytes": 12250,   "maxRatio": 1.25 },
     "CLData_Cached_GetById":     { "maxAllocatedBytes": 720,    "maxRatio": 0.05 },
-    "CLData_Filter100":          { "maxAllocatedBytes": 40900,   "maxRatio": 1.40 },
-    "CLData_Compiled_Filter100": { "maxAllocatedBytes": 36600,   "maxRatio": 1.35 },
+    "CLData_Filter100":          { "maxAllocatedBytes": 41000,   "maxRatio": 1.40 },
+    "CLData_Compiled_Filter100": { "maxAllocatedBytes": 36700,   "maxRatio": 1.35 },
     "CLData_Cached_Filter100":   { "maxAllocatedBytes": 15500,   "maxRatio": 0.10 },
-    "CLData_Insert":             { "maxAllocatedBytes": 9100,   "maxRatio": 1.25 },
+    "CLData_Insert":             { "maxAllocatedBytes": 9800,   "maxRatio": 1.25 },
     "CLData_InsertMany100":      { "maxAllocatedBytes": 253000,  "maxRatio": 0.10 },
     "CLData_Bulk5000":           { "maxAllocatedBytes": 6200000, "maxRatio": 0.80 },
-    "CLData_Update":             { "maxAllocatedBytes": 8800,   "maxRatio": 1.25 },
-    "CLData_UpdateChanged":      { "maxAllocatedBytes": 7600,   "maxRatio": 1.25 },
-    "CLData_Count":              { "maxAllocatedBytes": 9700,   "maxRatio": 1.25 },
-    "CLData_Compiled_Count":     { "maxAllocatedBytes": 6950,    "maxRatio": 1.25 }
+    "CLData_Update":             { "maxAllocatedBytes": 9700,   "maxRatio": 1.25 },
+    "CLData_UpdateChanged":      { "maxAllocatedBytes": 8300,   "maxRatio": 1.25 },
+    "CLData_Count":              { "maxAllocatedBytes": 10450,   "maxRatio": 1.25 },
+    "CLData_Compiled_Count":     { "maxAllocatedBytes": 7550,    "maxRatio": 1.25 }
   }
 }
