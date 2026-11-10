@@ -84,6 +84,44 @@ allocations are exact.
 - **LINQ queries** still build an expression tree (the C# compiler does) and render their SQL on every call; compiled
   queries avoid both.
 
+## Third round (2026-11-10): rows by position, cache hits, writes, SQLite pragmas
+
+Same machine and containers, full BenchmarkDotNet runs before and after on the same day (the server was a little slower
+during the second run, so compare times with the baselines of the same run; allocations are exact).
+
+| Scenario | Before | **After** | Baseline in the after run |
+|---|---:|---:|---:|
+| MySQL get by key | 765 µs / 8.5 KB | **821 µs / 7.1 KB** | raw ADO.NET 771 µs / 5.1 KB, Dapper 812 µs / 6.9 KB |
+| MySQL get by key, compiled | 752 µs / 8.8 KB | **801 µs / 7.5 KB** | |
+| MySQL get by key, entity cache hit | 0.75 µs / 1.63 KB | **0.69 µs / 0.62 KB** | |
+| Get by key inside a transaction (compiled) | 2,341 µs / 24.4 KB ¹ | **2,140 µs / 10.7 KB** | Dapper 2,204 µs / 10.1 KB |
+| Get by key inside a transaction (repository) | 12.4 KB ¹ | **2,274 µs / 10.6 KB** | |
+| Filter, 100 rows (LINQ / compiled) | 38.9 KB / 33.3 KB | **35.6 KB / 31.9 KB** | Dapper 33.8 KB |
+| Filter, 100 rows, cached | 17.1 µs / 16.2 KB | **16.0 µs / 13.5 KB** | |
+| Count (LINQ / compiled) | 9.5 KB / 5.9 KB | **8.4 KB** / 6.0 KB | Dapper 4.1 KB |
+| Insert one row | 3.22 ms / 9.4 KB | **3.35 ms / 7.9 KB** | Dapper 3.28 ms / 5.5 KB |
+| Update one row (all columns / changed) | 9.9 KB / 8.1 KB | **7.7 KB / 6.6 KB** | Dapper 4.9 KB |
+| 95% lookups / 5% updates, entity cache | 209 µs / 2.4 KB | **208 µs / 1.3 KB** | |
+| 32 workers: get by key | 50.9 µs / 7.6 KB | **53.7 µs / 6.1 KB** | Dapper 52.5 µs / 6.8 KB |
+| 32 workers: filter 100 rows / insert | 37.8 KB / 8.7 KB | **34.5 KB / 6.7 KB** | |
+| PostgreSQL get by key | 735 µs / 4.6 KB | 739 µs / 4.6 KB | raw Npgsql 772 µs / 2.7 KB (no reset on close) |
+| SQLite get by key ¹ | 14.4 µs / 3.9 KB | **10.4 µs / 2.5 KB** | raw ADO.NET 7.7 µs / 1.7 KB |
+| SQLite insert one row ¹ | 38.5 µs / 6.4 KB | **34.5 µs / 4.4 KB** | |
+
+¹ Quick profile (`--quick`), because the scenario did not exist in the "before" BenchmarkDotNet run.
+
+- **Rows by position:** CL.Data no longer asks for column names when it wrote the SELECT list itself. MySqlConnector decodes
+  six strings per column when one name is read (about 1.4 KB per query here), which is also most of Dapper's distance to
+  raw ADO.NET. Npgsql keeps the names it already has, so PostgreSQL did not change.
+- **Compiled queries inside transactions:** every transaction is a new view of the database and planned the query again;
+  plans are now shared by the views of one database.
+- **Cache hits** build their key without a string and need no loader; **writes** lost their per-call delegate, closure and
+  three async frames.
+- **SQLite** applies its connection pragmas once per pooled native connection instead of on every open (3 µs and 1 KB per
+  command).
+- **What is left** (measured, not started): non-compiled LINQ renders its SQL on every call (count 8.4 KB against 6.0 KB
+  compiled), and single-row inserts and updates build and render their statement every time (about 2.5 KB above Dapper).
+
 ## Findings
 
 - **CL.Data runs at the speed of hand-written ADO.NET and Dapper** (within 1–2%) in every scenario; the database round
